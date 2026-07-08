@@ -1,0 +1,84 @@
+/*
+ * Copyright (c) 2015-2016, 2018, 2020, The Linux Foundation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+/ {
+	qcom,enable-legacy-adsp-hacks;
+};
+
+&soc {
+	int_codec: sound {
+		/delete-property/ qcom,cdc-us-euro-gpios;
+		/delete-property/ qcom,cdc-us-eu-gpios;
+		/delete-property/ qcom,cdc-comp-gpios;
+		/delete-property/ asoc-wsa-codec-names;
+		/delete-property/ asoc-wsa-codec-prefixes;
+		/delete-property/ msm-vdd-wsa-switch-supply;
+		/delete-property/ qcom,msm-vdd-wsa-switch-voltage;
+		/delete-property/ qcom,msm-vdd-wsa-switch-current;
+
+		qcom,msm-ext-pa = "quaternary", "quinary";
+		qcom,msm-mbhc-hphl-swh = <1>;
+		qcom,msm-hs-micbias-type = "external";
+		qcom,msm-micbias2-ext-cap;
+
+		qcom,audio-routing =
+					"RX_BIAS", "MCLK",
+					"SPK_RX_BIAS", "MCLK",
+					"INT_LDO_H", "MCLK",
+					"RX_I2S_CLK", "MCLK",
+					"TX_I2S_CLK", "MCLK",
+					"MIC BIAS External", "Handset Mic",
+					"MIC BIAS External2", "Headset Mic",
+					"MIC BIAS External", "Secondary Mic",
+					"AMIC1", "MIC BIAS External",
+					"AMIC2", "MIC BIAS External2",
+					"AMIC3", "MIC BIAS External",
+					"ADC1_IN", "ADC1_OUT",
+					"ADC2_IN", "ADC2_OUT",
+					"ADC3_IN", "ADC3_OUT",
+					"PDM_IN_RX1", "PDM_OUT_RX1",
+					"PDM_IN_RX2", "PDM_OUT_RX2",
+					"PDM_IN_RX3", "PDM_OUT_RX3";
+		qcom,use-legacy-voice-cpu-dais;
+
+		qcom,quat-mi2s-gpios = <&cdc_quat_mi2s_gpios>;
+	};
+
+	cdc_quat_mi2s_gpios: msm_cdc_pinctrl_quat {
+		compatible = "qcom,msm-cdc-pinctrl";
+		pinctrl-names = "aud_active", "aud_sleep";
+		pinctrl-0 = <&ext_cdc_tlmm_quat_i2s_lines_act>;
+		pinctrl-1 = <&ext_cdc_tlmm_quat_i2s_lines_sus>;
+	};
+
+	/delete-node/ msm_cdc_pinctrl_us_euro_sw;
+	/delete-node/ cdc_comp_pinctrl;
+
+	/delete-node/ sound-9335;
+    /delete-node/ wsa881x_analog_vi_pctrl;
+    /delete-node/ wsa881x_analog_clk_pctrl;
+    /delete-node/ wsa881x_analog_reset_pctrl;
+};
+
+&i2c_2 {
+    /delete-node/ wsa881x-i2c-codec@f;
+    /delete-node/ wsa881x-i2c-codec@45;
+};
+
+&msm_digital_codec {
+	status = "okay";
+};
+
+&pmic_analog_codec {
+	status = "okay";
+};

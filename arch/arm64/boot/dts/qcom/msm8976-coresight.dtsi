@@ -1,0 +1,1395 @@
+/*
+ * Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ */
+
+&soc {
+	tmc_etr: tmc@6026000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x0003b961>;
+
+		reg = <0x6026000 0x1000>,
+		      <0x6084000 0x15000>;
+		reg-names = "tmc-base", "bam-base";
+
+		interrupts = <0 166 0>;
+		interrupt-names = "byte-cntr-irq";
+
+		arm,buffer-size = <0x2000000>;
+		arm,default-sink;
+		arm,sg-enable;
+		qcom,force-reg-dump;
+
+		coresight-name = "coresight-tmc-etr";
+		coresight-csr = <&csr>;
+		coresight-ctis = <&cti0 &cti8>;
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+
+		port {
+			tmc_etr_in_replicator: endpoint {
+				slave-mode;
+				remote-endpoint = <&replicator_out_tmc_etr>;
+			};
+		};
+	};
+
+	tmc_etf: tmc@6025000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x0003b961>;
+
+		reg = <0x6025000 0x1000>;
+		reg-names = "tmc-base";
+
+		coresight-name = "coresight-tmc-etf";
+		coresight-csr = <&csr>;
+
+		arm,default-sink;
+		qcom,force-reg-dump;
+		coresight-ctis = <&cti0 &cti8>;
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			port@0 {
+				tmc_etf_out_replicator: endpoint {
+					remote-endpoint =
+						<&replicator_in_tmc_etf>;
+				};
+			};
+
+			port@1 {
+				reg = <0>;
+				tmc_etf_in_funnel_merg: endpoint {
+					slave-mode;
+					remote-endpoint =
+						<&funnel_merg_out_tmc_etf>;
+				};
+			};
+		};
+	};
+
+	replicator: replicator@6024000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x0003b909>;
+
+		reg = <0x6024000 0x1000>;
+		reg-names = "replicator-base";
+
+		coresight-name = "coresight-replicator";
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			port@0 {
+				replicator_out_tmc_etr: endpoint {
+					remote-endpoint =
+						<&tmc_etr_in_replicator>;
+				};
+			};
+
+			port@1 {
+				reg = <0>;
+				replicator_in_tmc_etf: endpoint {
+					slave-mode;
+					remote-endpoint =
+						<&tmc_etf_out_replicator>;
+				};
+			};
+		};
+	};
+
+	funnel_merg: funnel@6023000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x0003b908>;
+
+		reg = <0x6023000 0x1000>;
+		reg-names = "funnel-base";
+
+		coresight-name = "coresight-funnel-merg";
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			port@0 {
+				funnel_merg_out_tmc_etf: endpoint {
+					remote-endpoint =
+						<&tmc_etf_in_funnel_merg>;
+				};
+			};
+
+			port@1 {
+				reg = <0>;
+				funnel_merg_in_funnel_in0: endpoint {
+					slave-mode;
+					remote-endpoint =
+						<&funnel_in0_out_funnel_merg>;
+				};
+			};
+
+			port@2 {
+				reg = <1>;
+				funnel_merg_in_funnel_in1: endpoint {
+					slave-mode;
+					remote-endpoint =
+						<&funnel_in1_out_funnel_merg>;
+				};
+			};
+		};
+	};
+
+	funnel_in0: funnel@6021000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x0003b908>;
+
+		reg = <0x6021000 0x1000>;
+		reg-names = "funnel-base";
+
+		coresight-name = "coresight-funnel-in0";
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			port@0 {
+				funnel_in0_out_funnel_merg: endpoint {
+					remote-endpoint =
+						<&funnel_merg_in_funnel_in0>;
+				};
+			};
+
+			port@1 {
+				reg = <0>;
+				funnel_in0_in_rpm_etm0: endpoint {
+					slave-mode;
+					remote-endpoint =
+						<&rpm_etm0_out_funnel_in0>;
+				};
+			};
+
+			port@2 {
+				reg = <1>;
+				funnel_in0_in_modem_etm1: endpoint {
+					slave-mode;
+					remote-endpoint =
+						<&modem_etm1_out_funnel_in0>;
+				};
+			};
+
+			port@3 {
+				reg = <2>;
+				funnel_in0_in_audio_etm0: endpoint {
+					slave-mode;
+					remote-endpoint =
+						<&audio_etm0_out_funnel_in0>;
+				};
+			};
+
+			port@4 {
+				reg = <3>;
+				funnel_in0_in_tpda: endpoint {
+					slave-mode;
+					remote-endpoint =
+						<&tpda_out_funnel_in0>;
+				};
+			};
+
+			port@5 {
+				reg = <4>;
+				funnel_in0_in_gfx: endpoint {
+					slave-mode;
+					remote-endpoint =
+						<&gfx_out_funnel_in0>;
+				};
+			};
+
+			port@6 {
+				reg = <6>;
+				funnel_in0_in_funnel_in2: endpoint {
+					slave-mode;
+					remote-endpoint =
+						<&funnel_in2_out_funnel_in0>;
+				};
+			};
+
+			port@7 {
+				reg = <7>;
+				funnel_in0_in_stm: endpoint {
+					slave-mode;
+					remote-endpoint = <&stm_out_funnel_in0>;
+				};
+			};
+		};
+	};
+
+	funnel_in1: funnel@6022000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x0003b908>;
+
+		reg = <0x6022000 0x1000>;
+		reg-names = "funnel-base";
+
+		coresight-name = "coresight-funnel-in1";
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+
+
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			port@0 {
+				funnel_in1_out_funnel_merg: endpoint {
+					remote-endpoint =
+					  <&funnel_merg_in_funnel_in1>;
+				};
+			};
+
+			port@1 {
+				reg = <0>;
+				funnel_in1_in_wcn_etm0: endpoint {
+					slave-mode;
+					remote-endpoint =
+						<&wcn_etm0_out_funnel_in1>;
+				};
+			};
+
+			port@2 {
+				reg = <3>;
+				funnel_in1_in_dbgui: endpoint {
+					slave-mode;
+					remote-endpoint =
+						<&dbgui_out_funnel_in1>;
+				};
+			};
+
+			port@3 {
+				reg = <6>;
+				funnel_in1_in_funnel_apps_l1: endpoint {
+					slave-mode;
+					remote-endpoint =
+						<&funnel_apps_l1_out_funnel_in1>;
+				};
+			};
+
+			port@4 {
+				reg = <7>;
+				funnel_in1_in_modem_etm0: endpoint {
+					slave-mode;
+					remote-endpoint =
+						<&modem_etm0_out_funnel_in1>;
+				};
+			};
+		};
+	};
+
+	funnel_in2: funnel@6068000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x0003b908>;
+
+		reg = <0x6068000 0x1000>;
+		reg-names = "funnel-base";
+
+		coresight-name = "coresight-funnel-in2";
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+
+		port {
+			funnel_in2_out_funnel_in0: endpoint {
+				remote-endpoint =
+				  <&funnel_in0_in_funnel_in2>;
+			};
+		};
+	};
+
+	funnel_apps_l1: funnel@6b70000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x0003b908>;
+
+		reg = <0x6b70000 0x1000>;
+		reg-names = "funnel-base";
+
+		coresight-name = "coresight-funnel-apps-l1";
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			port@0 {
+				funnel_apps_l1_out_funnel_in1: endpoint {
+					remote-endpoint =
+						<&funnel_in1_in_funnel_apps_l1>;
+				};
+			};
+
+			port@1 {
+				reg = <0>;
+				funnel_apps_l1_in_funnel_apps_l0: endpoint {
+					slave-mode;
+					remote-endpoint =
+					       <&funnel_apps_l0_out_funnel_apps_l1>;
+				};
+			};
+
+			port@2 {
+				reg = <1>;
+				funnel_apps_l1_in_tpda_lmh: endpoint {
+					slave-mode;
+					remote-endpoint =
+					       <&tpda_lmh_out_funnel_apps_l1>;
+				};
+			};
+		};
+	};
+
+	funnel_apps_l0: funnel@6b60000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x0003b908>;
+
+		reg = <0x6b60000 0x1000>;
+		reg-names = "funnel-base";
+
+		coresight-name = "coresight-funnel-apps-l0";
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			port@0 {
+				funnel_apps_l0_out_funnel_apps_l1: endpoint {
+					remote-endpoint =
+						<&funnel_apps_l1_in_funnel_apps_l0>;
+				};
+			};
+
+			port@1 {
+				reg = <0>;
+				funnel_apps_l0_in_etm0: endpoint {
+					slave-mode;
+					remote-endpoint =
+						<&etm0_out_funnel_apps_l0>;
+				};
+			};
+
+			port@2 {
+				reg = <1>;
+				funnel_apps_l0_in_etm1: endpoint {
+					slave-mode;
+					remote-endpoint =
+						<&etm1_out_funnel_apps_l0>;
+				};
+			};
+
+			port@3 {
+				reg = <2>;
+				funnel_apps_l0_in_etm2: endpoint {
+					slave-mode;
+					remote-endpoint =
+						<&etm2_out_funnel_apps_l0>;
+					};
+			};
+
+			port@4 {
+				reg = <3>;
+				funnel_apps_l0_in_etm3: endpoint {
+					slave-mode;
+					remote-endpoint =
+						<&etm3_out_funnel_apps_l0>;
+				};
+			};
+
+			port@5 {
+				reg = <4>;
+				funnel_apps_l0_in_etm4: endpoint {
+					slave-mode;
+					remote-endpoint =
+						<&etm4_out_funnel_apps_l0>;
+				};
+			};
+
+			port@6 {
+				reg = <5>;
+				funnel_apps_l0_in_etm5: endpoint {
+					slave-mode;
+					remote-endpoint =
+						<&etm5_out_funnel_apps_l0>;
+				};
+			};
+
+			port@7 {
+				reg = <6>;
+				funnel_apps_l0_in_etm6: endpoint {
+					slave-mode;
+					remote-endpoint =
+						<&etm6_out_funnel_apps_l0>;
+				};
+			};
+
+			port@8 {
+				reg = <7>;
+				funnel_apps_l0_in_etm7: endpoint {
+					slave-mode;
+					remote-endpoint =
+						<&etm7_out_funnel_apps_l0>;
+				};
+			};
+		};
+	};
+
+	etm0: etm@6840000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x000bb95d>;
+
+		reg = <0x6840000 0x1000>;
+		cpu = <&CPU0>;
+
+		coresight-name = "coresight-etm0";
+
+		qcom,tupwr-disable;
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+
+		port {
+			etm0_out_funnel_apps_l0: endpoint {
+				remote-endpoint = <&funnel_apps_l0_in_etm0>;
+			};
+		};
+	};
+
+	etm1: etm@6940000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x000bb95d>;
+
+		reg = <0x6940000 0x1000>;
+		cpu = <&CPU1>;
+
+		coresight-name = "coresight-etm1";
+
+		qcom,tupwr-disable;
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+
+		port {
+			etm1_out_funnel_apps_l0: endpoint {
+				remote-endpoint = <&funnel_apps_l0_in_etm1>;
+			};
+		};
+	};
+
+	etm2: etm@6a40000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x000bb95d>;
+
+		reg = <0x6a40000 0x1000>;
+		cpu = <&CPU2>;
+
+		coresight-name = "coresight-etm2";
+
+		qcom,tupwr-disable;
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+
+		port {
+			etm2_out_funnel_apps_l0: endpoint {
+				remote-endpoint = <&funnel_apps_l0_in_etm2>;
+			};
+		};
+	};
+
+	etm3: etm@6b40000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x000bb95d>;
+
+		reg = <0x6b40000 0x1000>;
+		cpu = <&CPU3>;
+
+		coresight-name = "coresight-etm3";
+
+		qcom,tupwr-disable;
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+
+		port {
+			etm3_out_funnel_apps_l0: endpoint {
+				remote-endpoint = <&funnel_apps_l0_in_etm3>;
+			};
+		};
+	};
+
+	etm4: etm@6c40000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x000bb95d>;
+
+		reg = <0x6c40000 0x1000>;
+		cpu = <&CPU4>;
+
+		coresight-name = "coresight-etm4";
+
+		qcom,tupwr-disable;
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+
+		port {
+			etm4_out_funnel_apps_l0: endpoint {
+				remote-endpoint = <&funnel_apps_l0_in_etm4>;
+			};
+		};
+	};
+
+	etm5: etm@6d40000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x000bb95d>;
+
+		reg = <0x6d40000 0x1000>;
+		cpu = <&CPU5>;
+
+		coresight-name = "coresight-etm5";
+
+		qcom,tupwr-disable;
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+
+		port {
+			etm5_out_funnel_apps_l0: endpoint {
+				remote-endpoint = <&funnel_apps_l0_in_etm5>;
+			};
+		};
+	};
+
+	etm6: etm@6e40000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x000bb95d>;
+
+		reg = <0x6e40000 0x1000>;
+		cpu = <&CPU6>;
+
+		coresight-name = "coresight-etm6";
+
+		qcom,tupwr-disable;
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+
+		port {
+			etm6_out_funnel_apps_l0: endpoint {
+				remote-endpoint = <&funnel_apps_l0_in_etm6>;
+			};
+		};
+	};
+
+	etm7: etm@6f40000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x000bb95d>;
+
+		reg = <0x6f40000 0x1000>;
+		cpu = <&CPU7>;
+
+		coresight-name = "coresight-etm7";
+
+		qcom,tupwr-disable;
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+
+		port {
+			etm7_out_funnel_apps_l0: endpoint {
+				remote-endpoint = <&funnel_apps_l0_in_etm7>;
+			};
+		};
+	};
+
+	stm: stm@6002000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x0003b962>;
+
+		reg = <0x6002000 0x1000>,
+		      <0x9280000 0x180000>;
+		reg-names = "stm-base", "stm-stimulus-base";
+
+		coresight-name = "coresight-stm";
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+
+		port {
+			stm_out_funnel_in0: endpoint {
+				remote-endpoint = <&funnel_in0_in_stm>;
+			};
+		};
+	};
+
+	csr: csr@6001000 {
+		compatible = "qcom,coresight-csr";
+		reg = <0x6001000 0x1000>;
+		reg-names = "csr-base";
+
+		coresight-name = "coresight-csr";
+
+		qcom,usb-bam-support;
+		qcom,hwctrl-set-support;
+		qcom,set-byte-cntr-support;
+		qcom,blk-size = <1>;
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+	};
+
+	cti0: cti@6010000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x0003b966>;
+
+		reg = <0x6010000 0x1000>;
+		reg-names = "cti-base";
+
+		coresight-name = "coresight-cti0";
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+	};
+
+	cti1: cti@6011000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x0003b966>;
+
+		reg = <0x6011000 0x1000>;
+		reg-names = "cti-base";
+
+		coresight-name = "coresight-cti1";
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+	};
+
+	cti2: cti@6012000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x0003b966>;
+
+		reg = <0x6012000 0x1000>;
+		reg-names = "cti-base";
+
+		coresight-name = "coresight-cti2";
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+	};
+
+	cti3: cti@6013000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x0003b966>;
+
+		reg = <0x6013000 0x1000>;
+		reg-names = "cti-base";
+
+		coresight-name = "coresight-cti3";
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+	};
+
+	cti4: cti@6014000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x0003b966>;
+
+		reg = <0x6014000 0x1000>;
+		reg-names = "cti-base";
+
+		coresight-name = "coresight-cti4";
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+	};
+
+	cti5: cti@6015000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x0003b966>;
+
+		reg = <0x6015000 0x1000>;
+		reg-names = "cti-base";
+
+		coresight-name = "coresight-cti5";
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+	};
+
+	cti6: cti@6016000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x0003b966>;
+
+		reg = <0x6016000 0x1000>;
+		reg-names = "cti-base";
+
+		coresight-name = "coresight-cti6";
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+
+		qcom,cti-gpio-trigout = <2>;
+		pinctrl-names = "cti-trigout-pctrl";
+		pinctrl-0 = <&trigout_b0>;
+	};
+
+	cti7: cti@6017000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x0003b966>;
+
+		reg = <0x6017000 0x1000>;
+		reg-names = "cti-base";
+
+		coresight-name = "coresight-cti7";
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+	};
+
+	cti8: cti@6018000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x0003b966>;
+
+		reg = <0x6018000 0x1000>;
+		reg-names = "cti-base";
+
+		coresight-name = "coresight-cti8";
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+	};
+
+	cti9: cti@6019000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x0003b966>;
+
+		reg = <0x6019000 0x1000>;
+		reg-names = "cti-base";
+
+		coresight-name = "coresight-cti9";
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+	};
+
+	cti10: cti@601a000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x0003b966>;
+
+		reg = <0x601a000 0x1000>;
+		reg-names = "cti-base";
+
+		coresight-name = "coresight-cti10";
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+	};
+
+	cti11: cti@601b000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x0003b966>;
+
+		reg = <0x601b000 0x1000>;
+		reg-names = "cti-base";
+
+		coresight-name = "coresight-cti11";
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+	};
+
+	cti12: cti@601c000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x0003b966>;
+
+		reg = <0x601c000 0x1000>;
+		reg-names = "cti-base";
+
+		coresight-name = "coresight-cti12";
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+	};
+
+	cti13: cti@601d000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x0003b966>;
+
+		reg = <0x601d000 0x1000>;
+		reg-names = "cti-base";
+
+		coresight-name = "coresight-cti13";
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+	};
+
+	cti14: cti@601e000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x0003b966>;
+
+		reg = <0x601e000 0x1000>;
+		reg-names = "cti-base";
+
+		coresight-name = "coresight-cti14";
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+	};
+
+	cti_cpu0: cti@6820000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x0003b966>;
+
+		reg = <0x6820000 0x1000>;
+		reg-names = "cti-base";
+
+		coresight-name = "coresight-cti-cpu0";
+		cpu = <&CPU0>;
+		qcom,cti-save;
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+	};
+
+	cti_cpu1: cti@6920000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x0003b966>;
+
+		reg = <0x6920000 0x1000>;
+		reg-names = "cti-base";
+
+		coresight-name = "coresight-cti-cpu1";
+		cpu = <&CPU1>;
+		qcom,cti-save;
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+	};
+
+	cti_cpu2: cti@6a20000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x0003b966>;
+
+		reg = <0x6a20000 0x1000>;
+		reg-names = "cti-base";
+
+		coresight-name = "coresight-cti-cpu2";
+		cpu = <&CPU2>;
+		qcom,cti-save;
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+	};
+
+	cti_cpu3: cti@6b20000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x0003b966>;
+
+		reg = <0x6b20000 0x1000>;
+		reg-names = "cti-base";
+
+		coresight-name = "coresight-cti-cpu3";
+		cpu = <&CPU3>;
+		qcom,cti-save;
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+	};
+
+	cti_cpu4: cti@6c20000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x0003b966>;
+
+		reg = <0x6c20000 0x1000>;
+		reg-names = "cti-base";
+
+		coresight-name = "coresight-cti-cpu4";
+		cpu = <&CPU4>;
+		qcom,cti-save;
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+	};
+
+	cti_cpu5: cti@6d20000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x0003b966>;
+
+		reg = <0x6d20000 0x1000>;
+		reg-names = "cti-base";
+
+		coresight-name = "coresight-cti-cpu5";
+		cpu = <&CPU5>;
+		qcom,cti-save;
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+	};
+
+	cti_cpu6: cti@6e20000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x0003b966>;
+
+		reg = <0x6e20000 0x1000>;
+		reg-names = "cti-base";
+
+		coresight-name = "coresight-cti-cpu6";
+		cpu = <&CPU6>;
+		qcom,cti-save;
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+	};
+
+	cti_cpu7: cti@6f20000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x0003b966>;
+
+		reg = <0x6f20000 0x1000>;
+		reg-names = "cti-base";
+
+		coresight-name = "coresight-cti-cpu7";
+		cpu = <&CPU7>;
+		qcom,cti-save;
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+	};
+
+	cti_isdb: cti@6141000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x0003b966>;
+
+		reg = <0x6141000 0x1000>;
+		reg-names = "cti-base";
+
+		coresight-name = "coresight-cti-isdb";
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+	};
+
+	cti_cs: cti@6b80000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x0003b966>;
+
+		reg = <0x6b80000 0x1000>;
+		reg-names = "cti-base";
+
+		coresight-name = "coresight-cti-cs";
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+	};
+
+	cti_rpm_cpu0: cti@603c000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x0003b966>;
+
+		reg = <0x603c000 0x1000>;
+		reg-names = "cti-base";
+
+		coresight-name = "coresight-cti-rpm-cpu0";
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+	};
+
+	cti_modem_cpu0: cti@6060000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x0003b966>;
+
+		reg = <0x6060000 0x1000>;
+		reg-names = "cti-base";
+
+		coresight-name = "coresight-cti-modem-cpu0";
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+	};
+
+	cti_modem_cpu1: cti@6038000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x0003b966>;
+
+		reg = <0x6038000 0x1000>;
+		reg-names = "cti-base";
+
+		coresight-name = "coresight-cti-modem-cpu1";
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+	};
+
+	cti_wcn_cpu0: cti@6035000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x0003b966>;
+
+		reg = <0x6035000 0x1000>;
+		reg-names = "cti-base";
+
+		coresight-name = "coresight-cti-wcn-cpu0";
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+	};
+
+	cti_video_cpu0: cti@6030000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x0003b966>;
+
+		reg = <0x6030000 0x1000>;
+		reg-names = "cti-base";
+
+		coresight-name = "coresight-cti-video-cpu0";
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+	};
+
+	cti_audio_cpu0: cti@6064000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x0003b966>;
+
+		reg = <0x6064000 0x1000>;
+		reg-names = "cti-base";
+
+		coresight-name = "coresight-cti-audio-cpu0";
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+	};
+
+	dbgui: dbgui@606d000 {
+		compatible = "qcom,coresight-dbgui";
+		reg = <0x606d000 0x1000>;
+		reg-names = "dbgui-base";
+
+		coresight-name = "coresight-dbgui";
+
+		qcom,dbgui-addr-offset = <0x30>;
+		qcom,dbgui-data-offset = <0x130>;
+		qcom,dbgui-size = <64>;
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+
+		port {
+			dbgui_out_funnel_in1: endpoint {
+				remote-endpoint = <&funnel_in1_in_dbgui>;
+			};
+		};
+	};
+
+	tpda: tpda@6003000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x0003b969>;
+
+		reg = <0x6003000 0x1000>;
+		reg-names = "tpda-base";
+
+		coresight-name = "coresight-tpda";
+
+		qcom,tpda-atid = <64>;
+		qcom,cmb-elem-size = <0 32>;
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+
+		ports {
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+			port@0 {
+				tpda_out_funnel_in0: endpoint {
+					remote-endpoint = <&funnel_in0_in_tpda>;
+				};
+			};
+
+			port@1 {
+				reg = <0>;
+				tpda_in_tpdm_dcc: endpoint {
+					slave-mode;
+					remote-endpoint = <&tpdm_dcc_out_tpda>;
+				};
+			};
+
+			port@2 {
+				reg = <1>;
+				tpda_in_tpdm_dsat: endpoint {
+					slave-mode;
+					remote-endpoint = <&tpdm_dsat_out_tpda>;
+				};
+			};
+		};
+	};
+
+	tpdm_dcc: tpdm@60a0000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x0003b968>;
+
+		reg = <0x60a0000 0x1000>;
+		reg-names = "tpdm-base";
+
+		coresight-name = "coresight-tpdm-dcc";
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+
+		port {
+			tpdm_dcc_out_tpda: endpoint {
+				remote-endpoint = <&tpda_in_tpdm_dcc>;
+			};
+		};
+	};
+
+	tpdm_dsat: tpdm@60a4000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x0003b968>;
+
+		reg = <0x60a4000 0x1000>;
+		reg-names = "tpdm-base";
+
+		coresight-name = "coresight-tpdm-dsat";
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+
+		port {
+			tpdm_dsat_out_tpda: endpoint {
+				remote-endpoint = <&tpda_in_tpdm_dsat>;
+			};
+		};
+	};
+
+	tpda_lmh: tpda@6b91000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x0003b969>;
+
+		reg = <0x6b91000 0x1000>;
+		reg-names = "tpda-base";
+
+		coresight-name = "coresight-tpda-lmh";
+
+		qcom,tpda-atid = <65>;
+		qcom,cmb-elem-size = <0 64>;
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			port@0 {
+				tpda_lmh_out_funnel_apps_l1: endpoint {
+					remote-endpoint =
+						<&funnel_apps_l1_in_tpda_lmh>;
+				};
+			};
+
+			port@1 {
+				reg = <0>;
+				tpda_lmh_in_tpdm_lmh: endpoint {
+					slave-mode;
+					remote-endpoint =
+						<&tpdm_lmh_out_tpda_lmh>;
+				};
+			};
+		};
+	};
+
+	tpdm_lmh: tpdm@6b90000 {
+		compatible = "arm,primecell";
+		arm,primecell-periphid = <0x0003b968>;
+
+		reg = <0x6b90000 0x1000>;
+		reg-names = "tpdm-base";
+
+		coresight-name = "coresight-tpdm-lmh";
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+
+		port {
+			tpdm_lmh_out_tpda_lmh: endpoint {
+				remote-endpoint = <&tpda_lmh_in_tpdm_lmh>;
+			};
+		};
+	};
+
+	rpm_etm0 {
+		compatible = "qcom,coresight-remote-etm";
+
+		coresight-name = "coresight-rpm-etm0";
+		qcom,inst-id = <4>;
+
+		port {
+			rpm_etm0_out_funnel_in0: endpoint {
+				remote-endpoint = <&funnel_in0_in_rpm_etm0>;
+			};
+		};
+	};
+
+	wcn_etm0 {
+		compatible = "qcom,coresight-remote-etm";
+
+		coresight-name = "coresight-wcn-etm0";
+		qcom,inst-id = <3>;
+
+		port {
+			wcn_etm0_out_funnel_in1: endpoint {
+				remote-endpoint = <&funnel_in1_in_wcn_etm0>;
+			};
+		};
+	};
+
+	modem_etm0 {
+		compatible = "qcom,coresight-remote-etm";
+
+		coresight-name = "coresight-modem-etm0";
+		qcom,inst-id = <2>;
+
+		port {
+			modem_etm0_out_funnel_in1: endpoint {
+				remote-endpoint = <&funnel_in1_in_modem_etm0>;
+			};
+		};
+	};
+
+	modem_etm1 {
+		compatible = "qcom,coresight-remote-etm";
+
+		coresight-name = "coresight-modem-etm1";
+		qcom,inst-id = <11>;
+
+		port {
+			modem_etm1_out_funnel_in0: endpoint {
+				remote-endpoint = <&funnel_in0_in_modem_etm1>;
+			};
+		};
+	};
+
+	audio_etm0 {
+		compatible = "qcom,coresight-remote-etm";
+
+		coresight-name = "coresight-audio-etm0";
+		qcom,inst-id = <5>;
+
+		port {
+			audio_etm0_out_funnel_in0: endpoint {
+				remote-endpoint = <&funnel_in0_in_audio_etm0>;
+			};
+		};
+	};
+
+	hwevent: hwevent@606c000 {
+		compatible = "qcom,coresight-hwevent";
+
+		reg = <0x606c000 0x148>,
+		      <0x606cfb0 0x4>,
+		      <0x78c5010 0x4>,
+		      <0x7885010 0x4>;
+
+		reg-names = "wrapper-mux", "wrapper-lockaccess", "usbbam-mux",
+		            "blsp-mux";
+
+		coresight-name = "coresight-hwevent";
+		coresight-csr = <&csr>;
+
+		clocks = <&clock_gcc clk_qdss_clk>,
+			 <&clock_gcc clk_qdss_a_clk>;
+		clock-names = "apb_pclk";
+	};
+};

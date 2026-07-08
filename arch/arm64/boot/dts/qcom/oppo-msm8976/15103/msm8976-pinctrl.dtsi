@@ -1,0 +1,75 @@
+/*
+ * Copyright (c) 2014-2016, The Linux Foundation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+&soc {
+	msm_gpio: pinctrl@1000000 {
+		cam_sensor_rear_vana: cam_sensor_rear_vana {
+			/* VDIG */
+			mux {
+				pins = "gpio34";
+			};
+
+			config {
+				pins = "gpio34";
+			};
+		};
+
+		cam_sensor_rear_vana_sleep: cam_sensor_rear_vana_sleep {
+			/* VDIG */
+			mux {
+				pins = "gpio34";
+			};
+
+			config {
+				pins = "gpio34";
+			};
+		};
+
+		pmx_touch_key_int_active {
+			touch_key_int_active: touch_key_int_active {
+				mux {
+					pins = "gpio142";
+					function = "gpio";
+				};
+
+				config {
+					pins = "gpio142";
+					drive-strength = <8>;
+					bias-pull-up;
+				};
+			};
+		};
+
+		tlmm_gpio_key {
+			gpio_key_active: gpio_key_active {
+				mux {
+					pins = "gpio107", "gpio109", "gpio113", "gpio115";
+				};
+
+				config {
+					pins = "gpio107", "gpio109", "gpio113", "gpio115";
+				};
+			};
+
+			gpio_key_suspend: gpio_key_suspend {
+				mux {
+					pins = "gpio107", "gpio109", "gpio113", "gpio115";
+				};
+
+				config {
+					pins = "gpio107", "gpio109", "gpio113", "gpio115";
+				};
+			};
+		};
+	};
+};
