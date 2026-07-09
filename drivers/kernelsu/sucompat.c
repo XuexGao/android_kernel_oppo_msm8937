@@ -150,8 +150,8 @@ static int newfstatat_handler_pre(struct kprobe *p, struct pt_regs *regs)
 // static int vfs_statx(int dfd, const char __user *filename, int flags, struct kstat *stat, u32 request_mask)
 	int *flags = (int *)&PT_REGS_PARM3(regs);
 #else
-// int vfs_fstatat(int dfd, const char __user *filename, struct kstat *stat,int flag)
-	int *flags = (int *)&PT_REGS_CCALL_PARM4(regs);
+// this 4.9 kernel has vfs_statx backported from 4.11, use same param layout
+	int *flags = (int *)&PT_REGS_PARM3(regs);
 #endif
 
 	return ksu_handle_stat(dfd, filename_user, flags);
@@ -180,7 +180,7 @@ static struct kprobe newfstatat_kp = {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
 	.symbol_name = "vfs_statx",
 #else
-	.symbol_name = "vfs_fstatat",
+	.symbol_name = "vfs_statx",
 #endif
 	.pre_handler = newfstatat_handler_pre,
 };
