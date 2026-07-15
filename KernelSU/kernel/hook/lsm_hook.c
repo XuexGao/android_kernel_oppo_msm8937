@@ -97,6 +97,18 @@ do_umount:
 
     return 0;
 }
+
+// Wrapper to call ksu_handle_setresuid via task_fix_setuid LSM hook.
+// In SUSFS mode, ksu_handle_setresuid is defined but was never wired up to any
+// hook. This wrapper bridges the task_fix_setuid LSM hook (called during
+// setresuid/setuid/seteuid syscalls) to ksu_handle_setresuid so that manager
+// detection, seccomp disabling and fd installation actually fire.
+static int ksu_task_fix_setuid_susfs(struct cred *new, const struct cred *old, int flags)
+{
+    if (unlikely(!new || !old))
+        return 0;
+    return ksu_handle_setresuid(new->uid.val, new->euid.val, new->suid.val);
+}
 #else
 static int ksu_task_fix_setuid(struct cred *new, const struct cred *old, int flags)
 {
@@ -131,7 +143,9 @@ static struct security_hook_list ksu_hooks[] = {
     defined(CONFIG_KSU_ALLOWLIST_WORKAROUND)
     LSM_HOOK_INIT(key_permission, ksu_key_permission),
 #endif
-#ifndef CONFIG_KSU_SUSFS
+#ifdef CONFIG_KSU_SUSFS
+    LSM_HOOK_INIT(task_fix_setuid, ksu_task_fix_setuid_susfs),
+#else
     LSM_HOOK_INIT(task_fix_setuid, ksu_task_fix_setuid),
 #endif
 };
