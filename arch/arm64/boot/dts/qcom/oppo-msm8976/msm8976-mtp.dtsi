@@ -1,0 +1,188 @@
+/*
+ * Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+#include "msm8976.dtsi"
+#include "msm8976-mdss-mtp.dtsi"
+
+&i2c_6 { /* BLSP2 QUP2 */
+	status = "okay";
+	bq27541-battery@55 {
+		status = "okay";
+		compatible = "oppo,bq27541-battery";
+		reg = <0x55>;
+		qcom,modify-soc-smooth;
+	};
+
+	stm8s-vooc@26 {
+		status = "okay";
+		compatible = "oppo,stm8s-vooc";
+		reg = <0x26>;
+
+		switch-gpios = <&msm_gpio 68 GPIO_ACTIVE_HIGH>,
+			       <&msm_gpio 66 GPIO_ACTIVE_HIGH>;
+		reset-gpios = <&msm_gpio 132 GPIO_ACTIVE_HIGH>;
+		clock-gpios = <&msm_gpio 144 GPIO_ACTIVE_HIGH>;
+		data-gpios = <&msm_gpio 67 GPIO_ACTIVE_HIGH>;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&switch_default &chargerid_default
+			     &reset_default &clock_default &data_default>;
+	};
+};
+
+&i2c_8 { /* BLSP2 QUP4 */
+	ak4376@10 {
+		compatible = "akm,ak4376";
+		reg = <0x10>;
+		ak4376,pdn-gpio = <&msm_gpio 17 0x00>;
+		enable-gpio = <&msm_gpio 36 0x00>;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&ak4376_vdd_default>;
+	};
+
+	tfa98xx@36 {
+		compatible = "nxp,tfa98xx";
+		reg = <0x36>;
+		reset-gpio = <&msm_gpio 13 0x00>;
+		nxp,tfa-asymmetric;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&pa_int_default>;
+		status = "okay";
+	};
+};
+
+&soc {
+	fpc_fpc1020 {
+		compatible = "fpc,fpc1020";
+		fpc,irq-gpio = <&msm_gpio 106 0x00>;
+		vdd_io-supply = <&pm8950_l6>;
+	};
+
+	gpio_keys {
+		compatible = "gpio-keys";
+		label = "gpio-keys";
+		pinctrl-names = "default";
+		pinctrl-0 = <&gpio_key_active>;
+
+		vol_down {
+			label = "volume_down";
+			gpios = <&msm_gpio 115 0x1>;
+			linux,input-type = <1>;
+			linux,code = <114>;
+			gpio-key,wakeup;
+			debounce-interval = <15>;
+			linux,can-disable;
+		};
+
+		vol_up {
+			label = "volume_up";
+			gpios = <&msm_gpio 113 0x1>;
+			linux,input-type = <1>;
+			linux,code = <115>;
+			gpio-key,wakeup;
+			debounce-interval = <15>;
+			linux,can-disable;
+		};
+	};
+
+	devinfo {
+		compatible = "oppo-devinfo";
+		Hw,operator-gpio0 = <&msm_gpio 81 0x00>;
+		Hw,operator-gpio1 = <&msm_gpio 95 0x00>;
+		Hw,operator-gpio2 = <&msm_gpio 94 0x00>;
+		Hw,operator-gpio3 = <&msm_gpio 97 0x00>;
+
+		Hw,sub_hwid_1 = <&msm_gpio 127 0x00>;
+		Hw,sub_hwid_2 = <&msm_gpio 101 0x00>;
+		Hw,ant_select-gpio= <&msm_gpio 84 0x00>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&hw_operator_gpio0_active &hw_operator_gpio1_active &hw_operator_gpio2_active &hw_operator_gpio3_active &hw_sub_gpio1_active &hw_sub_gpio2_active>;
+	};
+};
+
+&spmi_bus {
+	qcom,pm8004@4 {
+		qcom,leds@a300 {
+			status = "okay";
+			qcom,led_mpp_4 {
+				label = "mpp";
+				linux,name = "button-backlight";
+				linux,default-trigger = "none";
+				qcom,default-state = "off";
+				qcom,max-current = <5>;
+				qcom,current-setting = <5>;
+				qcom,id = <6>;
+				qcom,mode = "manual";
+				qcom,source-sel = <1>;
+				qcom,mode-ctrl = <0x60>;
+			};
+		};
+	};
+};
+
+&blsp1_uart2 {
+	status = "ok";
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart_console_sleep>;
+};
+
+&sdhc_1 {
+	vdd-supply = <&pm8950_l8>;
+	qcom,vdd-voltage-level = <2900000 2900000>;
+	qcom,vdd-current-level = <200 570000>;
+
+	vdd-io-supply = <&pm8950_l5>;
+	qcom,vdd-io-always-on;
+	qcom,vdd-io-lpm-sup;
+	qcom,vdd-io-voltage-level = <1800000 1800000>;
+	qcom,vdd-io-current-level = <200 325000>;
+
+	pinctrl-names = "active", "sleep";
+	pinctrl-0 = <&sdc1_clk_on &sdc1_cmd_on &sdc1_data_on &sdc1_rclk_on>;
+	pinctrl-1 = <&sdc1_clk_off &sdc1_cmd_off &sdc1_data_off &sdc1_rclk_off>;
+
+	qcom,nonremovable;
+
+	status = "ok";
+};
+
+&sdhc_2 {
+	vdd-supply = <&pm8950_l11>;
+	qcom,vdd-voltage-level = <2950000 2950000>;
+	qcom,vdd-current-level = <15000 800000>;
+	vdd-gpio-en = <&msm_gpio 63 0x1>;
+
+	vdd-io-supply = <&pm8950_l12>;
+	qcom,vdd-io-voltage-level = <1800000 2950000>;
+	qcom,vdd-io-current-level = <200 22000>;
+
+	pinctrl-names = "default", "active", "sleep";
+	pinctrl-0 = <&sdc2_cd_on &sim1_cd_on &sim2_cd_on>;
+	pinctrl-1 = <&sdc2_clk_on &sdc2_cmd_on &sdc2_data_on &sdc2_cd_on>;
+	pinctrl-2 = <&sdc2_clk_off &sdc2_cmd_off &sdc2_data_off &sdc2_cd_off>;
+
+	#address-cells = <0>;
+	interrupt-parent = <&sdhc_2>;
+	interrupts = <0 1 2>;
+	#interrupt-cells = <1>;
+	interrupt-map-mask = <0xffffffff>;
+	interrupt-map = <0 &intc 0 125 0
+			1 &intc 0 221 0
+			2 &msm_gpio 100 0>;
+	interrupt-names = "hc_irq", "pwr_irq", "status_irq";
+	cd-gpios = <&msm_gpio 100 0x1>;
+
+	status = "ok";
+};

@@ -1,0 +1,62 @@
+# OPPO configuration options
+
+config MACH_OPPO
+	bool "OPPO device"
+	depends on ARCH_MSM
+	help
+	  Support for OPPO products
+
+config MACH_OPPO_MSM8940
+	bool "OPPO MSM8940"
+	depends on ARCH_MSM8940
+	select MACH_OPPO
+	help
+	  Support for MSM8940 OPPO variants
+
+config MACH_OPPO_MSM8953
+	bool "OPPO MSM8953"
+	depends on ARCH_MSM8953
+	select MACH_OPPO
+	help
+	  Support for MSM8953 OPPO variants
+
+config MACH_OPPO_MSM8976
+	bool "OPPO MSM8976"
+	depends on ARCH_MSM8976
+	select MACH_OPPO
+	help
+	  Support for MSM8976 OPPO variants
+
+menu "OPPO board selection"
+
+config MACH_15103
+	bool "R9 Plus board"
+	select MACH_OPPO_MSM8976
+	help
+	  Support for R9 Plus variants
+
+config MACH_16017
+	bool "R9s board"
+	select MACH_OPPO_MSM8953
+	help
+	  Support for R9s variants
+
+config MACH_16027
+	bool "R9sk board"
+	select MACH_OPPO_MSM8953
+	help
+	  Support for R9sk variants
+
+config MACH_16037
+	bool "R9s Plus board"
+	select MACH_OPPO_MSM8976
+	help
+	  Support for R9s Plus variants
+
+config MACH_16061
+	bool "A57 board"
+	select MACH_OPPO_MSM8940
+	help
+	  Support for A57 variants
+
+endmenu

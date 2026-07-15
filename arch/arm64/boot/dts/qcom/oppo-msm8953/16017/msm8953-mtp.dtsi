@@ -1,0 +1,79 @@
+/*
+ * Copyright (c) 2015-2019, The Linux Foundation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+#include "msm8953-mdss-panels.dtsi"
+#include "msm8953-pinctrl.dtsi"
+
+&mdss_dsi0 {
+	qcom,dsi-pref-prim-pan = <&dsi_samsung_oppo16017_ea8064_1080p_cmd>;
+
+	qcom,platform-enable-gpio = <&tlmm 41 0>;
+};
+
+&dsi_samsung_oppo16017_ea8064_1080p_cmd {
+	qcom,panel-supply-entries = <&dsi_panel_pwr_supply>;
+	qcom,ulps-enabled;
+	qcom,mdss-dsi-force-clock-lane-hs;
+};
+
+&labibb {
+	qcom,qpnp-labibb-mode = "amoled";
+	qcom,swire-control;
+};
+
+&wled {
+	qcom,disp-type-amoled;
+};
+
+&i2c_3 { /* BLSP1 QUP3 */
+	synaptics15018@20 {
+		compatible = "synaptics-s3508";
+		synaptics,tx-rx-num = <16 28>;
+		synaptics,glove-mode-enabled;
+		vcc_i2c_1v8-supply = <&pm8953_l6>;
+	};
+
+	ktd2026@30 {
+		status = "okay";
+		compatible = "ktd,ktd2026";
+		reg = <0x30>;
+		ktd2026,max_brightness = <0x18>;
+	};
+};
+
+&i2c_8 { /* BLSP2 QUP4 */
+	tfa98xx@36 {
+		reset-gpio = <&tlmm 33 0x00>;
+	};
+};
+
+/* msm8953-regulator.dtsi */
+&eldo2_8953 {
+	gpio = <&tlmm 64 0>;
+};
+
+/* msm8953-camera-sensor-mtp.dtsi */
+&led_flash0 {
+	gpios = <&tlmm 34 0>, <&tlmm 39 0>;
+};
+
+&cci {
+	eeprom1: qcom,eeprom@1 {
+		gpios = <&tlmm 36 0>;
+	};
+
+	qcom,camera@1 {
+		gpios = <&tlmm 27 0>, <&tlmm 129 0>,
+				<&tlmm 130 0>, <&tlmm 36 0>;
+	};
+};

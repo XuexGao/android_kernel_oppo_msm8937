@@ -1,0 +1,116 @@
+/*
+ * Copyright (c) 2014-2016, The Linux Foundation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+&soc {
+	msm_gpio: pinctrl@1000000 {
+		cam_sensor_rear_vana: cam_sensor_rear_vana {
+			/* VDIG */
+			mux {
+				pins = "gpio31";
+			};
+
+			config {
+				pins = "gpio31";
+			};
+		};
+
+		cam_sensor_rear_vana_sleep: cam_sensor_rear_vana_sleep {
+			/* VDIG */
+			mux {
+				pins = "gpio31";
+			};
+
+			config {
+				pins = "gpio31";
+			};
+		};
+
+		cam_sensor_rear_custom1: cam_sensor_rear_custom1 {
+			/* OIS */
+			mux {
+				pins = "gpio33";
+				function = "gpio";
+			};
+
+			config {
+				pins = "gpio33";
+				bias-disable; /* No PULL */
+				drive-strength = <2>; /* 2 MA */
+			};
+		};
+
+		cam_sensor_rear_custom1_sleep: cam_sensor_rear_custom1_sleep {
+			/* OIS */
+			mux {
+				pins = "gpio33";
+				function = "gpio";
+			};
+
+			config {
+				pins = "gpio33";
+				bias-disable; /* No PULL */
+				drive-strength = <2>; /* 2 MA */
+			};
+		};
+
+		cam_sensor_front1_default: cam_sensor_front1_default {
+			/* RESET, STANDBY */
+			mux {
+				pins = "gpio33";
+			};
+
+			config {
+				pins = "gpio33";
+			};
+		};
+
+		cam_sensor_front1_sleep: cam_sensor_front1_sleep {
+			/* RESET, STANDBY */
+			mux {
+				pins = "gpio33";
+			};
+
+			config {
+				pins = "gpio33";
+			};
+		};
+
+		cam_sensor_front1_vana: cam_sensor_front1_vana {
+			/* VDIG */
+			mux {
+				pins = "gpio20";
+				function = "gpio";
+			};
+
+			config {
+				pins = "gpio20";
+				bias-disable; /* No PULL */
+				drive-strength = <2>; /* 2 MA */
+			};
+		};
+
+		cam_sensor_front1_vana_sleep: cam_sensor_front1_vana_sleep {
+			/* VDIG */
+			mux {
+				pins = "gpio20";
+				function = "gpio";
+			};
+
+			config {
+				pins = "gpio20";
+				bias-disable; /* No PULL */
+				drive-strength = <2>; /* 2 MA */
+			};
+		};
+	};
+};

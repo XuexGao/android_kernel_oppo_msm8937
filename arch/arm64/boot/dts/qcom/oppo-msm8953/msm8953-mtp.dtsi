@@ -1,0 +1,253 @@
+/*
+ * Copyright (c) 2015-2019, The Linux Foundation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+#include "msm8953.dtsi"
+#include "msm8953-regulator.dtsi"
+#include "pmi8950.dtsi"
+#include "msm8953-pmi8950.dtsi"
+#include "msm8953-pinctrl.dtsi"
+#include "msm8953-audio.dtsi"
+#include "msm8953-camera-sensor-mtp.dtsi"
+
+&blsp1_uart0 {
+	status = "ok";
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart_console_active>;
+};
+
+&sdhc_1 {
+	/* device core power supply */
+	vdd-supply = <&pm8953_l8>;
+	qcom,vdd-voltage-level = <2900000 2900000>;
+	qcom,vdd-current-level = <200 570000>;
+
+	/* device communication power supply */
+	vdd-io-supply = <&pm8953_l5>;
+	qcom,vdd-io-always-on;
+	qcom,vdd-io-lpm-sup;
+	qcom,vdd-io-voltage-level = <1800000 1800000>;
+	qcom,vdd-io-current-level = <200 325000>;
+
+	pinctrl-names = "active", "sleep";
+	pinctrl-0 = <&sdc1_clk_on &sdc1_cmd_on &sdc1_data_on  &sdc1_rclk_on>;
+	pinctrl-1 = <&sdc1_clk_off &sdc1_cmd_off &sdc1_data_off &sdc1_rclk_off>;
+
+	qcom,clk-rates = <400000 20000000 25000000 50000000 100000000 192000000
+								384000000>;
+	qcom,nonremovable;
+	qcom,bus-speed-mode = "HS400_1p8v", "HS200_1p8v", "DDR_1p8v";
+
+	status = "ok";
+};
+
+&sdhc_2 {
+	/* device core power supply */
+	vdd-supply = <&pm8953_l11>;
+	qcom,vdd-voltage-level = <2950000 2950000>;
+	qcom,vdd-current-level = <15000 800000>;
+	vdd-gpio-en = <&tlmm 96 0x1>;
+
+	/* device communication power supply */
+	vdd-io-supply = <&pm8953_l12>;
+	qcom,vdd-io-voltage-level = <1800000 2950000>;
+	qcom,vdd-io-current-level = <200 22000>;
+
+	pinctrl-names = "default", "active", "sleep";
+	pinctrl-0 = <&sdc2_cd_on &sim1_cd_on &sim2_cd_on>;
+	pinctrl-1 = <&sdc2_clk_on &sdc2_cmd_on &sdc2_data_on &sdc2_cd_on>;
+	pinctrl-2 = <&sdc2_clk_off &sdc2_cmd_off &sdc2_data_off &sdc2_cd_off>;
+
+	#address-cells = <0>;
+	interrupt-parent = <&sdhc_2>;
+	interrupts = <0 1 2>;
+	#interrupt-cells = <1>;
+	interrupt-map-mask = <0xffffffff>;
+	interrupt-map = <0 &intc 0 125 0
+		1 &intc 0 221 0
+		2 &tlmm 133 0>;
+	interrupt-names = "hc_irq", "pwr_irq", "status_irq";
+	cd-gpios = <&tlmm 133 0x0>;
+
+	qcom,clk-rates = <400000 20000000 25000000 50000000 100000000
+								200000000>;
+	qcom,bus-speed-mode = "SDR12", "SDR25", "SDR50", "DDR50", "SDR104";
+
+	status = "ok";
+};
+
+#include "msm8953-mdss-panels.dtsi"
+
+&mdss_mdp {
+	qcom,mdss-pref-prim-intf = "dsi";
+};
+
+&mdss_dsi {
+	hw-config = "single_dsi";
+};
+
+&mdss_dsi0 {
+	pinctrl-names = "mdss_default", "mdss_sleep";
+	pinctrl-0 = <&mdss_dsi_active &mdss_te_active>;
+	pinctrl-1 = <&mdss_dsi_suspend &mdss_te_suspend>;
+
+	qcom,platform-te-gpio = <&tlmm 24 0>;
+	qcom,platform-reset-gpio = <&tlmm 131 0>;
+};
+
+&mdss_dsi1 {
+	status = "disabled";
+};
+
+&i2c_2 {
+	synaptics-rmi-ts@20 {
+		compatible = "synaptics,s1302";
+		reg = <0x20>;
+		interrupt-parent = <&tlmm>;
+		interrupts = <59 0x2008>;
+		synaptics,irq-gpio = <&tlmm 59 0x2008>;
+		vdd_2v8-supply = <&tlmm 132 0x1>;
+		vcc_i2c_1v8-supply = <&pm8953_l6>;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&touch_key_int_active>;
+	};
+};
+
+&i2c_3 { /* BLSP1 QUP3 */
+	status = "okay";
+	synaptics15018@20 {
+		reg = <0x20>;
+		interrupt-parent = <&tlmm>;
+		interrupts = <17 0x2008>;
+		synaptics,irq-gpio = <&tlmm 17 0x2008>;
+		synaptics,reset-gpio = <&tlmm 16 0x1>;
+		pinctrl-names = "default","default";
+		pinctrl-0 = <&ts_int_active>;
+		pinctrl-1 = <&ts_reset_active>;
+
+		synaptics,max-num-support = <10>;
+		synaptics,max-x-point = <10>;
+		synaptics,button-map = <200 200 2021>;
+		synaptics,display-coords = <1080 1920>;
+		synaptics,panel-coords = <1080 1920>;
+		synaptics,enable2v8-gpio = <&tlmm 132 0x1>;
+		synaptics,black-gesture-enabled;
+		synaptics,i2c-pull-up;
+		synaptics,power-down;
+		synaptics,disable-gpios;
+	};
+};
+
+&i2c_5 { /* BLSP2 QUP1 */
+	status = "okay";
+	bq27541-battery@55 {
+		status = "okay";
+		compatible = "oppo,bq27541-battery";
+		reg = <0x55>;
+		qcom,modify-soc-smooth;
+	};
+
+	stm8s-vooc@26 {
+		status = "okay";
+		compatible = "oppo,stm8s-vooc";
+		reg = <0x26>;
+
+		switch-gpios = <&tlmm 50 GPIO_ACTIVE_HIGH>,
+			       <&tlmm 9 GPIO_ACTIVE_HIGH>;
+		reset-gpios = <&tlmm 94 GPIO_ACTIVE_HIGH>;
+		clock-gpios = <&tlmm 89 GPIO_ACTIVE_HIGH>;
+		data-gpios = <&tlmm 90 GPIO_ACTIVE_HIGH>;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&switch_default &chargerid_default
+			     &reset_default &clock_default &data_default>;
+	};
+};
+
+&i2c_8 { /* BLSP2 QUP4 */
+	ak4376@10 {
+		compatible = "akm,ak4376";
+		reg = <0x10>;
+		ak4376,pdn-gpio = <&tlmm 28 0x00>;
+		enable-gpio = <&tlmm 62 0x00>;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&ak4376_vdd_default>;
+	};
+
+	tfa98xx@36 {
+		compatible = "nxp,tfa98xx";
+		reg = <0x36>;
+		nxp,tfa-asymmetric;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&pa_int_default>;
+		status = "okay";
+	};
+};
+
+&soc {
+	fpc_fpc1020 {
+		compatible = "fpc,fpc1020";
+		fpc,irq-gpio = <&tlmm 48 0x00>;
+		vdd_io-supply = <&pm8953_l6>;
+	};
+
+	gpio_keys {
+		compatible = "gpio-keys";
+		label = "gpio-keys";
+		pinctrl-names = "default";
+		pinctrl-0 = <&gpio_key_active>;
+
+		vol_up {
+			label = "volume_up";
+			gpios = <&tlmm 85 0x1>;
+			linux,input-type = <1>;
+			linux,code = <115>;
+			debounce-interval = <15>;
+			linux,can-disable;
+			gpio-key,wakeup;
+		};
+
+		vol_down {
+			label = "volume_down";
+			gpios = <&tlmm 86 0x1>;
+			linux,input-type = <1>;
+			linux,code = <114>;
+			gpio-key,wakeup;
+			debounce-interval = <15>;
+		};
+	};
+
+	devinfo {
+		compatible = "oppo-devinfo";
+		Hw,operator-gpio1 = <&tlmm 66 0x00>;
+		Hw,operator-gpio2 = <&tlmm 88 0x00>;
+		Hw,operator-gpio3 = <&tlmm 97 0x00>;
+
+		Hw,sub_hwid_1 = <&tlmm 12 0x00>;
+		Hw,ant_select-gpio= <&tlmm 84 0x00>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&hw_operator_gpio1_active &hw_operator_gpio2_active &hw_operator_gpio3_active &hw_sub_gpio1_active>;
+	};
+};
+
+&thermal_zones {
+	case-therm-step {
+		status = "disabled";
+	};
+
+	quiet-therm-step {
+		status = "disabled";
+	};
+};
