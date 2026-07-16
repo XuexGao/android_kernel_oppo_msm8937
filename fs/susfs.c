@@ -638,9 +638,9 @@ void susfs_set_uname(void __user **user_info) {
 		strscpy(my_uname.release, info.release, __NEW_UTS_LEN);
 	}
 	if (!strcmp(info.version, "default")) {
-		strscpy(my_uname.version, info.version, __NEW_UTS_LEN);
+		strscpy(my_uname.version, utsname()->version, __NEW_UTS_LEN);
 	} else {
-		strncpy(my_uname.version, info.version, __NEW_UTS_LEN);
+		strscpy(my_uname.version, info.version, __NEW_UTS_LEN);
 	}
 	write_sequnlock(&susfs_uname_seqlock);
 
@@ -1065,12 +1065,14 @@ int susfs_open_redirect_spoof_seq_show(struct inode *inode, int *out_mnt_id, uns
 	return -EINVAL;
 }
 
-int susfs_open_redirect_spoof_show_map_vma(struct inode *inode, unsigned long *out_ino, dev_t *out_dev, char *spoofed_name) {
+int susfs_open_redirect_spoof_show_map_vma(struct inode *inode, unsigned long *out_ino,
+					   dev_t *out_dev, char **spoofed_name) {
 	struct st_susfs_open_redirect_hlist *entry = NULL;
 	int srcu_idx = srcu_read_lock(&susfs_srcu_open_redirect);
 
-	if (spoofed_name) {
+	if (!spoofed_name || *spoofed_name) {
 		SUSFS_LOGE("spoofed_name must be NULL first!\n");
+		srcu_read_unlock(&susfs_srcu_open_redirect, srcu_idx);
 		return -EINVAL;
 	}
 
@@ -1078,8 +1080,8 @@ int susfs_open_redirect_spoof_show_map_vma(struct inode *inode, unsigned long *o
 		if (entry->reversed_lookup_only &&
 			entry->target_dev == inode->i_sb->s_dev)
 		{
-			spoofed_name = kzalloc(SUSFS_MAX_LEN_PATHNAME, GFP_KERNEL);
-			if (!spoofed_name) {
+			*spoofed_name = kzalloc(SUSFS_MAX_LEN_PATHNAME, GFP_KERNEL);
+			if (!*spoofed_name) {
 				SUSFS_LOGE("no enough memeory\n");
 				srcu_read_unlock(&susfs_srcu_open_redirect, srcu_idx);
 				return -ENOMEM;
@@ -1088,7 +1090,8 @@ int susfs_open_redirect_spoof_show_map_vma(struct inode *inode, unsigned long *o
 					entry->info.target_pathname);
 			*out_ino = entry->redirected_ino;
 			*out_dev = entry->redirected_dev;
-			strscpy(spoofed_name, entry->info.redirected_pathname, SUSFS_MAX_LEN_PATHNAME - 1);
+			strscpy(*spoofed_name, entry->info.redirected_pathname,
+				SUSFS_MAX_LEN_PATHNAME - 1);
 			srcu_read_unlock(&susfs_srcu_open_redirect, srcu_idx);
 			return 0;
 		}
