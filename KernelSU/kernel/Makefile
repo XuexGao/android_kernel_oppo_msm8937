@@ -154,4 +154,16 @@ endif
 ccflags-y += -Wno-strict-prototypes -Wno-int-conversion -Wno-gcc-compat -Wno-missing-prototypes
 ccflags-y += -Wno-declaration-after-statement -Wno-unused-function
 
+# Manager APK signature (SukiSU-Ultra official manager)
+ifndef KSU_EXPECTED_SIZE
+KSU_EXPECTED_SIZE := 0x35c
+endif
+
+ifndef KSU_EXPECTED_HASH
+KSU_EXPECTED_HASH := 947ae944f3de4ed4c21a7e4f7953ecf351bfa2b36239da37a34111ad29993eef
+endif
+
+ccflags-y += -DEXPECTED_SIZE=$(KSU_EXPECTED_SIZE)
+ccflags-y += -DEXPECTED_HASH=\"$(KSU_EXPECTED_HASH)\"
+
 # Keep a new line here!! Because someone may append config

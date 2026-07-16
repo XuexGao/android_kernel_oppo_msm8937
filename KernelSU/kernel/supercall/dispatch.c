@@ -401,7 +401,7 @@ int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd, void __user 
         switch(cmd) {
 #ifdef CONFIG_KSU_SUSFS_SUS_PATH
         case CMD_SUSFS_ADD_SUS_PATH:
-            susfs_add_sus_path((struct st_susfs_sus_path __user *)arg);
+            susfs_add_sus_path(arg);
             return 0;
         case CMD_SUSFS_ADD_SUS_PATH_LOOP:
             susfs_add_sus_path_loop(arg);
@@ -414,18 +414,18 @@ int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd, void __user 
 #endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
         case CMD_SUSFS_ADD_SUS_KSTAT:
-            susfs_add_sus_kstat((struct st_susfs_sus_kstat __user *)arg);
+            susfs_add_sus_kstat(arg);
             return 0;
         case CMD_SUSFS_UPDATE_SUS_KSTAT:
-            susfs_update_sus_kstat((struct st_susfs_sus_kstat __user *)arg);
+            susfs_update_sus_kstat(arg);
             return 0;
         case CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY:
-            susfs_add_sus_kstat((struct st_susfs_sus_kstat __user *)arg);
+            susfs_add_sus_kstat(arg);
             return 0;
 #endif // #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
 #ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
         case CMD_SUSFS_SET_UNAME:
-            susfs_set_uname((struct st_susfs_uname __user *)arg);
+            susfs_set_uname(arg);
             return 0;
 #endif // #ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
 #ifdef CONFIG_KSU_SUSFS_ENABLE_LOG
@@ -435,12 +435,12 @@ int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd, void __user 
 #endif // #ifdef CONFIG_KSU_SUSFS_ENABLE_LOG
 #ifdef CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
         case CMD_SUSFS_SET_CMDLINE_OR_BOOTCONFIG:
-            susfs_set_cmdline_or_bootconfig((char __user *)arg);
+            susfs_set_cmdline_or_bootconfig(arg);
             return 0;
 #endif // #ifdef CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
 #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
         case CMD_SUSFS_ADD_OPEN_REDIRECT:
-            susfs_add_open_redirect((struct st_susfs_open_redirect __user *)arg);
+            susfs_add_open_redirect(arg);
             return 0;
 #endif // #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
 #ifdef CONFIG_KSU_SUSFS_SUS_MAP
