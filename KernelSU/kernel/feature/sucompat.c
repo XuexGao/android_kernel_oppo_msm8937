@@ -235,6 +235,11 @@ int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags)
 }
 #endif // #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
 
+int ksu_handle_devpts(struct inode *inode)
+{
+    return 0;
+}
+
 #else
 __attribute__((hot)) static __always_inline bool __is_su_allowed(const void **ptr_to_check)
 {
