@@ -148,9 +148,8 @@ jobs:
       OS_VERSION: ${{ needs.setup.outputs.os_version }}
       BUILD_DATE: ${{ needs.setup.outputs.build_date }}
       KSU_VERSION: ${{ needs.setup.outputs.ksu_version }}
-      # 仓库内嵌 KernelSU 源码对应的 sukisu-ultra 版本（用于自动补齐缺失的 manager/ 目录）
-      # 注意：浅克隆只认 branch/tag，不能按 commit SHA 拉；apk_sign.h 位于 kernel/manager/（2026-03 布局调整后）
-      SUKISU_ULTRA_TAG: v4.1.3
+      # 说明：KernelSU 的 manager/ 目录必须随仓库一起提交（apk_sign.h / pkg_observer.h 等为编译所必需），
+      # 不再从 sukisu-ultra 远程拉取补齐——远程 tag 的布局/版本与仓库内定制源码不一致，会导致编译失败。
       ZIP_NAME: SukiSU_${{ matrix.device }}_${{ needs.setup.outputs.os_version }}_${{ needs.setup.outputs.build_date }}.zip
     steps:
       - name: 设置 10G swap（内核编译内存保障）
@@ -165,27 +164,33 @@ jobs:
           path: kernel
 
       # drivers/kernelsu 是指向根目录 KernelSU/kernel 的符号链接；
-      # 若其 manager/ 目录（apk_sign.h 等）缺失，则从 sukisu-ultra 按版本自动补齐。
-      - name: 补齐 KernelSU manager 目录（如缺失）
+      # manager/ 目录（apk_sign.h / pkg_observer.h 等）必须随仓库提交，这里仅做完整性校验。
+      # 更新 KernelSU 源码时请把配套的 manager/ 文件一并提交，否则编译会在此处直接报错。
+      - name: 校验 KernelSU manager 目录（已随仓库提交）
         working-directory: kernel
         run: |
           set -euo pipefail
-          if [ -f "KernelSU/kernel/manager/apk_sign.h" ]; then
-            echo "✅ KernelSU manager 已存在，跳过"
-          else
-            echo "⚠️ KernelSU manager 目录缺失，浅克隆 sukisu-ultra ${SUKISU_ULTRA_TAG} 补齐..."
-            git clone --quiet --depth 1 --filter=blob:none \
-              --branch "${SUKISU_ULTRA_TAG}" \
-              https://github.com/sukisu-ultra/sukisu-ultra.git "${GITHUB_WORKSPACE}/sukisu-ultra"
-            cd "${GITHUB_WORKSPACE}/sukisu-ultra"
-            git checkout --quiet "${SUKISU_ULTRA_TAG}"
-            mkdir -p "${GITHUB_WORKSPACE}/kernel/KernelSU/kernel/manager"
-            cp -r kernel/manager/* "${GITHUB_WORKSPACE}/kernel/KernelSU/kernel/manager/"
-            echo "✅ 已补齐 manager 目录："
-            ls "${GITHUB_WORKSPACE}/kernel/KernelSU/kernel/manager/"
-            test -f "${GITHUB_WORKSPACE}/kernel/KernelSU/kernel/manager/apk_sign.h" \
-              || { echo "::error::补齐 KernelSU manager 失败：未找到 apk_sign.h"; exit 1; }
+          REQUIRED=(
+            KernelSU/kernel/manager/apk_sign.c
+            KernelSU/kernel/manager/apk_sign.h
+            KernelSU/kernel/manager/manager_identity.h
+            KernelSU/kernel/manager/manager_observer.h
+            KernelSU/kernel/manager/pkg_observer.c
+            KernelSU/kernel/manager/pkg_observer.h
+            KernelSU/kernel/manager/pkg_observer_compat.h
+            KernelSU/kernel/manager/throne_tracker.c
+            KernelSU/kernel/manager/throne_tracker.h
+          )
+          MISSING=""
+          for f in "${REQUIRED[@]}"; do
+            [ -f "$f" ] || MISSING="$MISSING $f"
+          done
+          if [ -n "$MISSING" ]; then
+            echo "::error::KernelSU manager 目录不完整，缺失:$MISSING"
+            echo "::error::请将 KernelSU/kernel/manager/ 与 KernelSU 源码一同提交进仓库（勿从 sukisu-ultra 拉取，版本不匹配会编译失败）"
+            exit 1
           fi
+          echo "✅ KernelSU manager 目录完整（9 个必需文件）"
 
       - name: 安装编译依赖
         run: |
