@@ -149,7 +149,8 @@ jobs:
       BUILD_DATE: ${{ needs.setup.outputs.build_date }}
       KSU_VERSION: ${{ needs.setup.outputs.ksu_version }}
       # 仓库内嵌 KernelSU 源码对应的 sukisu-ultra 版本（用于自动补齐缺失的 manager/ 目录）
-      SUKISU_MANAGER_COMMIT: 03079ccc9910624344d69d544bc2dcc7235f5fe
+      # 注意：浅克隆只认 branch/tag，不能按 commit SHA 拉；apk_sign.h 位于 kernel/manager/（2026-03 布局调整后）
+      SUKISU_ULTRA_TAG: v4.1.3
       ZIP_NAME: SukiSU_${{ matrix.device }}_${{ needs.setup.outputs.os_version }}_${{ needs.setup.outputs.build_date }}.zip
     steps:
       - name: 设置 10G swap（内核编译内存保障）
@@ -172,22 +173,12 @@ jobs:
           if [ -f "KernelSU/kernel/manager/apk_sign.h" ]; then
             echo "✅ KernelSU manager 已存在，跳过"
           else
-            echo "⚠️ KernelSU manager 目录缺失，从 sukisu-ultra 自动补齐..."
-            KSU_C_HASH="$(git hash-object KernelSU/kernel/ksu.c 2>/dev/null || true)"
-            git clone --quiet --filter=blob:none --no-checkout \
+            echo "⚠️ KernelSU manager 目录缺失，浅克隆 sukisu-ultra ${SUKISU_ULTRA_TAG} 补齐..."
+            git clone --quiet --depth 1 --filter=blob:none \
+              --branch "${SUKISU_ULTRA_TAG}" \
               https://github.com/sukisu-ultra/sukisu-ultra.git "${GITHUB_WORKSPACE}/sukisu-ultra"
             cd "${GITHUB_WORKSPACE}/sukisu-ultra"
-            MATCH=""
-            if [ -n "${KSU_C_HASH}" ]; then
-              MATCH="$(git log --all --oneline --find-object="${KSU_C_HASH}" 2>/dev/null | head -1 | awk '{print $1}')"
-            fi
-            if [ -z "${MATCH}" ]; then
-              MATCH="${SUKISU_MANAGER_COMMIT}"
-              echo "未在 sukisu-ultra 历史中找到精确匹配，回退到 SUKISU_MANAGER_COMMIT=${MATCH}"
-            else
-              echo "已按 ksu.c 哈希匹配到 sukisu-ultra ${MATCH}"
-            fi
-            git checkout --quiet "${MATCH}"
+            git checkout --quiet "${SUKISU_ULTRA_TAG}"
             mkdir -p "${GITHUB_WORKSPACE}/kernel/KernelSU/kernel/manager"
             cp -r kernel/manager/* "${GITHUB_WORKSPACE}/kernel/KernelSU/kernel/manager/"
             echo "✅ 已补齐 manager 目录："
