@@ -193,9 +193,24 @@ jobs:
           echo "✅ KernelSU manager 目录完整（9 个必需文件）"
 
       - name: 安装编译依赖
+        timeout-minutes: 20
         run: |
-          sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+          set -euo pipefail
+          # 本步骤所需包均在 Ubuntu 官方源内，删除可能挂死的第三方 PPA 源，避免 apt-get update 卡住
+          sudo rm -f /etc/apt/sources.list.d/*.list
+          # apt 加固：HTTP/HTTPS/FTP 超时 + 自动重试，防止镜像挂起把 job 拖到 6 小时超时被取消
+          APT_OPTS="-o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Acquire::ftp::Timeout=30"
+          UPDATED=0
+          for i in 1 2 3; do
+            if sudo apt-get update ${APT_OPTS}; then
+              UPDATED=1
+              break
+            fi
+            echo "⚠️ apt-get update 第 ${i} 次失败，5 秒后重试"
+            sleep 5
+          done
+          [ "${UPDATED}" = "1" ] || { echo "::error::apt-get update 连续 3 次失败，请检查网络"; exit 1; }
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ${APT_OPTS} \
             build-essential bc bison flex \
             libssl-dev libncurses-dev libfl-dev libelf-dev \
             gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
