@@ -36,15 +36,26 @@ VERSION_OFFSET  := 2815
 # from `git` in the kernel checkout and from api.github.com:
 #   * the CI rate limit silently downgraded the reported version (4.1.2/13000)
 #   * `git_branch` leaked the build branch name into KSU_VERSION_FULL
-# Keep KSU_GIT_COMMITS / KSU_RELEASE / KSU_GIT_SHA in sync with the vendored
-# source when it is refreshed (KSU_VERSION == upstream's own arithmetic).
-KSU_GIT_COMMITS  ?= 3714                                  # upstream commits at v4.2.0
-KSU_RELEASE      ?= 4.2.0
-KSU_GIT_SHA      ?= 85eb4a95                               # upstream tag commit, short=8
+# Keep the three values below in sync with the vendored source when it is
+# refreshed: 3714 commits / tag commit 85eb4a95 are what v4.2.0 is on main.
+# No trailing comments on these lines - make keeps the whitespace, and a space
+# inside KSU_VERSION_FULL would split -D... into two clang arguments.
+KSU_GIT_COMMITS ?= 3714
+KSU_RELEASE ?= 4.2.0
+KSU_GIT_SHA ?= 85eb4a95
 
-KSU_VERSION      := $(shell expr $(VERSION_BASE) + $(KSU_GIT_COMMITS) - $(VERSION_OFFSET))
-VERSION_TAG      := $(KSU_RELEASE)
-KSU_VERSION_FULL := v$(KSU_RELEASE)-$(KSU_GIT_SHA)@$(REPO_BRANCH)
+KSU_VERSION := $(shell expr $(VERSION_BASE) + $(strip $(KSU_GIT_COMMITS)) - $(VERSION_OFFSET))
+VERSION_TAG := $(strip $(KSU_RELEASE))
+KSU_VERSION_FULL := v$(VERSION_TAG)-$(strip $(KSU_GIT_SHA))@$(REPO_BRANCH)
+
+# Both end up in -D... flags, so a stray space would split them into separate
+# compiler arguments and fail the build with a confusing "no such file" error.
+ifneq ($(words $(KSU_VERSION)),1)
+$(error KSU_VERSION must be a single token, got '$(KSU_VERSION)')
+endif
+ifneq ($(words $(KSU_VERSION_FULL)),1)
+$(error KSU_VERSION_FULL must not contain whitespace, got '$(KSU_VERSION_FULL)')
+endif
 
 ccflags-y += -DKSU_VERSION=$(KSU_VERSION)
 ccflags-y += -DKSU_VERSION_FULL=\"$(KSU_VERSION_FULL)\"
