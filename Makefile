@@ -1,7 +1,7 @@
 VERSION = 4
 PATCHLEVEL = 9
 SUBLEVEL = 337
-EXTRAVERSION = -sukisu-susfs-XuexGao
+EXTRAVERSION = +
 NAME = Roaring Lionus
 
 # *DOCUMENTATION*
