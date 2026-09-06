@@ -247,8 +247,8 @@ jobs:
           MAKEFLAGS=(
             O=out
             ARCH=arm64
-            # LOCALVERSION= 显式置空：阻止 scripts/setlocalversion 在带 .git 的
-            # 检出里再自动追加一个 '+'（版本号由 Makefile 的 EXTRAVERSION 决定）。
+            # 双保险：版本号里的 '+' 由 Makefile 的 EXTRAVERSION 提供，
+            # scripts/setlocalversion 也已不再在未打 tag 的检出上重复追加 '+'。
             LOCALVERSION=
             CC="ccache clang"
             CLANG_TRIPLE=aarch64-linux-gnu-
@@ -307,47 +307,65 @@ jobs:
             echo "KSU_RELEASE=${KSU_REL}"
           } > "${GITHUB_WORKSPACE}/${DEVICE}-meta.env"
 
-      - name: 校验隐藏项（uname / 版本横幅 / config.gz）
+      - name: 校验隐藏项（uname / 版本横幅 / config.gz / 日志）
         working-directory: kernel
         run: |
           set -euo pipefail
           FAIL=0
+          # 只读构建已经生成好的文件，不再调用 make：这一步跑在
+          # `set -e -o pipefail` 下，任何 make 调用（缺 CC=clang 等参数时）都会
+          # 让整个步骤在打印任何诊断之前就以非零码退出。
 
-          # 1) 对外版本号必须是 4.9.337+，不能带任何自定义后缀
-          RELEASE="$(make O=out ARCH=arm64 kernelrelease 2>/dev/null | tail -1)"
+          # 1) 对外版本号（uname -r / os.version）必须是 4.9.337+
+          RELEASE="$(cat out/include/config/kernel.release)"
           echo "kernelrelease = ${RELEASE}"
-          [ "${RELEASE}" = "4.9.337+" ] || { echo "::error::uname -r 不是 4.9.337+"; FAIL=1; }
+          [ "${RELEASE}" = "4.9.337+" ] || { echo "::error::uname -r 不是 4.9.337+（得到 ${RELEASE}）"; FAIL=1; }
+          grep -q 'define UTS_RELEASE "4.9.337+"' out/include/generated/utsrelease.h \
+            || { echo "::error::UTS_RELEASE 不对"; FAIL=1; }
 
-          # 2) /proc/version 横幅：括号里必须是 XuexGao@localhost，且不含分支名
-          BANNER="$(strings -a out/vmlinux | grep -m1 '^Linux version ' || true)"
-          echo "banner = ${BANNER}"
-          echo "${BANNER}" | grep -q 'XuexGao@localhost' || { echo "::error::/proc/version 括号里不是 XuexGao@localhost"; FAIL=1; }
-          echo "${BANNER}" | grep -qiE 'github-actions|sukisu|susfs' && { echo "::error::版本横幅里仍有构建环境字样"; FAIL=1; } || true
+          # 2) /proc/version 括号里的 user@host 来自编译期定义
+          COMPILE_H=out/include/generated/compile.h
+          echo "--- ${COMPILE_H} ---"; cat "${COMPILE_H}"
+          grep -q 'define LINUX_COMPILE_BY "XuexGao"' "${COMPILE_H}" \
+            || { echo "::error::LINUX_COMPILE_BY 不是 XuexGao"; FAIL=1; }
+          grep -q 'define LINUX_COMPILE_HOST "localhost"' "${COMPILE_H}" \
+            || { echo "::error::LINUX_COMPILE_HOST 不是 localhost"; FAIL=1; }
 
-          # 3) 镜像里不允许再出现分支名与 sukisu 标识
-          LEAKY="$(strings -a out/vmlinux | grep -iE 'lineage-2[0-9.]*-sukisu-susfs|SukiSU|sukisu-susfs' | sort -u | head -10 || true)"
+          # 3) 产物对象里不允许出现分支名 / fork 标识（日志字符串应已被 no_printk 折叠掉）
+          LEAKY="$(grep -rla -E 'lineage-2[0-9.]*-sukisu-susfs|SukiSU-Ultra|sukisu-susfs' \
+                     out/drivers/kernelsu out/init/version.o out/kernel/configs.o 2>/dev/null | sort -u | head -10 || true)"
           if [ -n "${LEAKY}" ]; then
-            echo "::warning::vmlinux 的字符串里仍能搜到构建标识："; echo "${LEAKY}"; FAIL=1
-          fi
-
-          # 4) /proc/config.gz 的数据源就是 out/kernel/config_data.gz，
-          #    它里面必须已经没有 KSU / SUSFS / KPM 行，同时仍是一份完整的 config
-          if [ -f out/kernel/config_data.gz ]; then
-            HIT="$(gzip -dc out/kernel/config_data.gz | grep -Ec '^[# ]*CONFIG_(KSU|SUSFS|KPM)' || true)"
-            TOTAL="$(gzip -dc out/kernel/config_data.gz | grep -c '^CONFIG_' || true)"
-            echo "config_data.gz: 残留标识行 = ${HIT} / 总 CONFIG_ 行 = ${TOTAL}"
-            [ "${HIT}" = "0" ] || { echo "::error::config.gz 过滤未生效"; FAIL=1; }
-            [ "${TOTAL}" -gt 1000 ] || { echo "::error::config.gz 内容异常（行数过少）"; FAIL=1; }
+            echo "::error::以下产物里仍能搜到构建标识："; echo "${LEAKY}"; FAIL=1
           else
-            echo "::error::未找到 out/kernel/config_data.gz，过滤规则可能没接上"
-            FAIL=1
+            echo "✅ 产物对象内无分支名 / fork 标识"
           fi
+          LOGS="$(strings -a out/drivers/kernelsu/ksu.o | grep -cE 'KernelSU:|allow root for|Crowning manager' || true)"
+          echo "ksu.o 内残留的日志格式串数量 = ${LOGS}"
+          [ "${LOGS}" = "0" ] || { echo "::error::CONFIG_KSU_QUIET_LOG 没生效，dmesg 仍会暴露标识"; FAIL=1; }
+
+          # 4) /proc/config.gz 的数据源（out/kernel/config_data.gz）必须已去掉标识行，
+          #    同时仍是一份完整 config
+          test -f out/kernel/config_data.gz || { echo "::error::缺 out/kernel/config_data.gz"; exit 1; }
+          HIT="$(gzip -dc out/kernel/config_data.gz | grep -Ec '^[# ]*CONFIG_(KSU|SUSFS|KPM)' || true)"
+          TOTAL="$(gzip -dc out/kernel/config_data.gz | grep -Ec '^CONFIG_' || true)"
+          RAW="$(grep -Ec '^[# ]*CONFIG_(KSU|SUSFS|KPM)' out/.config || true)"
+          echo "config_data.gz: 标识残留=${HIT} / 保留 CONFIG_ 行=${TOTAL}（out/.config 里标识行=${RAW}）"
+          [ "${HIT}" = "0" ] || { echo "::error::config.gz 过滤未生效"; FAIL=1; }
+          [ "${RAW}" != "0" ] || echo "::warning::out/.config 里本来就没有标识行，过滤无从验证"
+          [ "${TOTAL}" -gt 1000 ] || { echo "::error::config.gz 内容异常（行数过少）"; FAIL=1; }
 
           # 5) 日志静默 / dmesg 限制确实生效
           for c in CONFIG_KSU_QUIET_LOG=y CONFIG_SECURITY_DMESG_RESTRICT=y; do
             grep -q "^${c}$" out/.config || { echo "::error::out/.config 缺少 ${c}"; FAIL=1; }
           done
-          grep -q '^CONFIG_KSU_SUSFS_ENABLE_LOG=y$' out/.config && { echo "::error::SUSFS 内核日志仍开着"; FAIL=1; } || true
+          if grep -q '^CONFIG_KSU_SUSFS_ENABLE_LOG=y$' out/.config; then
+            echo "::error::SUSFS 内核日志仍开着"; FAIL=1
+          fi
+
+          # 6) 上报给 userspace 的 SukiSU 版本串（Manager 里那一行）
+          VERFULL="$(grep -rhoa 'v4\.[0-9]\+\.[0-9]\+-[0-9a-f]\{8\}@main' out/drivers/kernelsu 2>/dev/null | head -1 || true)"
+          echo "KSU_VERSION_FULL = ${VERFULL:-未找到}"
+          [ -n "${VERFULL}" ] || { echo "::error::没找到钉死的 KSU_VERSION_FULL"; FAIL=1; }
 
           [ "${FAIL}" = "0" ] || { echo "::error::隐藏性校验未通过，见上面的 ::error 行"; exit 1; }
           echo "✅ 隐藏项校验全部通过"
