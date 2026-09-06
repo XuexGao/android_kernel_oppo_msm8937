@@ -186,6 +186,14 @@ else
 	# LOCALVERSION= is not specified
 	if test "${LOCALVERSION+set}" != "set"; then
 		scm=$(scm_version --short)
+		# scm_version --short reports "+" for an untagged checkout, which is
+		# meant to be the only marker of a non-release build. When the
+		# Makefile's EXTRAVERSION already carries the "+" there is nothing
+		# left to add, and stacking it produced "4.9.337++".
+		if test "$scm" = "+" &&
+		   grep -q '^EXTRAVERSION *= *+$' "$srctree/Makefile"; then
+			scm=
+		fi
 		res="$res${scm:++}"
 	fi
 fi
