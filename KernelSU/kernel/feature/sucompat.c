@@ -47,6 +47,32 @@ static char __user *ksud_user_path(void)
     return userspace_stack_buffer(ksud_path, sizeof(ksud_path));
 }
 
+/*
+ * Is /data/adb/ksud actually there? ksud is dropped by the manager on its first
+ * run, so on a fresh install it is not: pointing stat()/faccessat() at it would
+ * then report a file that execve() cannot run afterwards. Upstream gates the
+ * su -> ksud redirection on this (e1fdd39a) and so do we.
+ *
+ * Resolved with our own credentials, because the caller is usually an untrusted
+ * app that may not even be allowed to look inside /data/adb.
+ */
+static bool is_ksud_exists(void)
+{
+    struct path path;
+    const struct cred *old;
+    bool exists;
+
+    if (unlikely(!ksu_cred))
+        return false;
+
+    old = override_creds(ksu_cred);
+    exists = kern_path(KSUD_PATH, 0, &path) == 0;
+    if (exists)
+        path_put(&path);
+    revert_creds(old);
+    return exists;
+}
+
 
 #ifdef CONFIG_KSU_SUSFS
 extern const char __user *get_user_arg_ptr(struct user_arg_ptr argv, int nr);
@@ -82,7 +108,8 @@ int ksu_handle_execveat_init(struct filename *filename, struct user_arg_ptr *arg
         return 0;
     }
 
-    if (likely(!strstr(filename->name, "/app_process") && !strstr(filename->name, "/adbd"))) {
+    if (likely(!strstr(filename->name, "/app_process") && !strstr(filename->name, "/adbd") &&
+               !strstr(filename->name, "/stub_zygote"))) {
         pr_info("susfs: mark no sucompat checks for pid: '%d', exec: '%s'\n", current->pid, filename->name);
         susfs_set_current_proc_umounted();
         return 0;
@@ -138,6 +165,13 @@ int ksu_handle_execveat_sucompat(int *fd, struct filename **filename_ptr,
 
     pr_info("ksu_handle_execveat_sucompat: su found\n");
 
+    /* Redirect only if ksud is really installed: otherwise we would hand the
+     * caller root credentials and then fail the exec on a missing target. */
+    if (!is_ksud_exists()) {
+        pr_info("ksu_handle_execveat_sucompat: ksud missing, leave su alone\n");
+        return 0;
+    }
+
     memcpy((void *)filename->name, ksud_path, sizeof(ksud_path));
 
     pending_sucompat = ksu_sulog_capture_sucompat(filename->name, (struct user_arg_ptr*)argv_user, GFP_KERNEL);
@@ -187,8 +221,12 @@ int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode,
             pr_err("ksu_handle_faccessat: su found but NOT allowed! Because current process is running in chrooted environment\n");
             return 0;
         }
-        pr_info("ksu_handle_faccessat: su->sh!\n");
-        *filename_user = sh_user_path();
+        if (!is_ksud_exists())
+            return 0;
+        /* Report the same file execve() will actually run, not /system/bin/sh:
+         * a detector that stats su and then execs it must see one identity. */
+        pr_info("ksu_handle_faccessat: su->ksud!\n");
+        *filename_user = ksud_user_path();
     }
 
     return 0;
@@ -207,8 +245,10 @@ int ksu_handle_stat(int *dfd, struct filename **filename, int *flags) {
         pr_err("ksu_handle_stat: su found but NOT allowed! Because current process is running in chrooted environment\n");
         return 0;
     }
-    pr_info("ksu_handle_stat: su->sh!\n");
-    memcpy((void *)((*filename)->name), sh_path, sizeof(sh_path));
+    if (!is_ksud_exists())
+        return 0;
+    pr_info("ksu_handle_stat: su->ksud!\n");
+    memcpy((void *)((*filename)->name), ksud_path, sizeof(ksud_path));
     return 0;
 }
 #else
@@ -227,8 +267,10 @@ int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags)
             pr_err("ksu_handle_stat: su found but NOT allowed! Because current process is running in chrooted environment\n");
             return 0;
         }
-        pr_info("ksu_handle_stat: su->sh!\n");
-        *filename_user = sh_user_path();
+        if (!is_ksud_exists())
+            return 0;
+        pr_info("ksu_handle_stat: su->ksud!\n");
+        *filename_user = ksud_user_path();
     }
 
     return 0;

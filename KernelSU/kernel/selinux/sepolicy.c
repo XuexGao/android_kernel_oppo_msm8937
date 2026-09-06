@@ -637,6 +637,12 @@ static bool add_filename_trans(struct policydb *db, const char *s, const char *t
         }
         *new_key = key;
         new_key->name = kstrdup(key.name, GFP_KERNEL);
+        if (!new_key->name) {
+            pr_err("add_filename_trans: Failed to dup name\n");
+            kfree(new_key);
+            kfree(trans);
+            return false;
+        }
         trans->otype = def->value;
         hashtab_insert(db->filename_trans, new_key, trans);
     }

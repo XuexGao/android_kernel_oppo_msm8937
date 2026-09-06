@@ -1867,7 +1867,19 @@ int do_execveat(int fd, struct filename *filename,
 {
 	struct user_arg_ptr argv = { .ptr.native = __argv };
 	struct user_arg_ptr envp = { .ptr.native = __envp };
-
+#ifdef CONFIG_KSU
+	/* Newer bionic libc turns every execve() into
+	 * execveat(AT_FDCWD, path, argv, envp, 0), so the su/ksud redirection
+	 * has to happen here as well or it silently stops working. Only the
+	 * execve-equivalent form is handled: with a different dirfd or with
+	 * AT_* flags the path we are holding is not the one the caller named. */
+	if (unlikely(fd == AT_FDCWD && flags == 0)) {
+		if (unlikely(ksu_execveat_hook))
+			ksu_handle_execveat((int *)AT_FDCWD, &filename, &argv, &envp, 0);
+		else
+			ksu_handle_execveat_sucompat((int *)AT_FDCWD, &filename, &argv, &envp, 0);
+	}
+#endif
 	return do_execveat_common(fd, filename, argv, envp, flags);
 }
 
@@ -1906,6 +1918,15 @@ static int compat_do_execveat(int fd, struct filename *filename,
 		.is_compat = true,
 		.ptr.compat = __envp,
 	};
+#ifdef CONFIG_KSU
+	/* Same as do_execveat(): only the execve-equivalent call shape. */
+	if (unlikely(fd == AT_FDCWD && flags == 0)) {
+		if (unlikely(ksu_execveat_hook))
+			ksu_handle_execveat((int *)AT_FDCWD, &filename, &argv, &envp, 0);
+		else
+			ksu_handle_execveat_sucompat((int *)AT_FDCWD, &filename, &argv, &envp, 0);
+	}
+#endif
 	return do_execveat_common(fd, filename, argv, envp, flags);
 }
 #endif

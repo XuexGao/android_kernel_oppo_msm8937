@@ -69,12 +69,14 @@ int ksu_handle_setresuid(uid_t ruid, uid_t euid, uid_t suid)
         return 0;
     }
 
-    // we should not umount for webview zygote
-    if (unlikely(ruid == WEBVIEW_ZYGOTE_UID))
-        return 0;
-
+    // Upstream bece36a7: the webview zygote is forked by zygote and then
+    // setresuids to 1053, so bailing out here used to hand it the module
+    // mounts of the zygote. It is not a normal app, but it can still read
+    // /proc/self/mountinfo, so let it fall through to the allow list, which
+    // umounts it via the default non-root profile and keeps its own entry from
+    // being pruned (see ksu_prune_allowlist()).
     // Check if spawned process is normal user app and needs to be umounted
-    if (likely(is_appuid(ruid) && ksu_uid_should_umount(ruid)))
+    if (likely((is_appuid(ruid) || ruid == WEBVIEW_ZYGOTE_UID) && ksu_uid_should_umount(ruid)))
         goto do_umount;
 
     // - Disable seccomp restriction for root allowed apps since running with "su" will disable seccomp anyway
