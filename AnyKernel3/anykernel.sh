@@ -4,7 +4,7 @@
 ### AnyKernel setup
 # global properties
 properties() { '
-kernel.string=SukiSU-Ultra v4.1.3 + SUSFS v2.2.0 for OPPO R9s (LineageOS 22.0, kernel 4.9.337) @XuexGao
+kernel.string=4.9.337+ (XuexGao@localhost)
 do.devicecheck=1
 do.modules=0
 do.systemless=1

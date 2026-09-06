@@ -120,9 +120,17 @@ $(obj)/configs.o: $(obj)/config_data.h
 
 # config_data.h contains the same information as ikconfig.h but gzipped.
 # Info from config_data can be extracted from /proc/config*
+#
+# This blob is published verbatim through /proc/config.gz, so the source config
+# is run through scripts/ikconfig-filter.sh first: the symbols this tree adds on
+# top of the base config are dropped from the published copy. The .config that
+# actually drives the build is not modified.
 targets += config_data.gz
+quiet_cmd_ikconfig = IKCFG   $@
+      cmd_ikconfig = set -e; $(CONFIG_SHELL) $(srctree)/scripts/ikconfig-filter.sh $(filter-out FORCE,$<) \
+	| gzip -n -f > $@.tmp; /bin/mv -f $@.tmp $@
 $(obj)/config_data.gz: $(KCONFIG_CONFIG) FORCE
-	$(call if_changed,gzip)
+	$(call if_changed,ikconfig)
 
       filechk_ikconfiggz = (echo "static const char kernel_config_data[] __used = MAGIC_START"; cat $< | scripts/basic/bin2c; echo "MAGIC_END;")
 targets += config_data.h
