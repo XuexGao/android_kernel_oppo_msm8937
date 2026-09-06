@@ -362,7 +362,19 @@ jobs:
             echo "::error::SUSFS 内核日志仍开着"; FAIL=1
           fi
 
-          # 6) 上报给 userspace 的 SukiSU 版本串（Manager 里那一行）
+          # 6) 版本码必须与正式版管理器一致。管理器自己的 versionCode =
+          #    4*10000 + 构建时提交数 - 2815（manager/build.gradle.kts），4.2.0
+          #    的管理器是在 tag 之后一个提交(3715)上构建的 -> 40900。内核若报
+          #    40899（tag 本身的 3714）就会和管理器对不上。
+          KSU_COMMITS="$(grep -E '^KSU_GIT_COMMITS[[:space:]]*\?=' KernelSU/kernel/Makefile | grep -oE '[0-9]+' | head -1)"
+          KSU_REL_PIN="$(grep -E '^KSU_RELEASE[[:space:]]*\?=' KernelSU/kernel/Makefile | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+          KSU_SHA_PIN="$(grep -E '^KSU_GIT_SHA[[:space:]]*\?=' KernelSU/kernel/Makefile | sed 's/.*=[[:space:]]*//')"
+          KSU_CODE="$(expr 40000 + "${KSU_COMMITS:-0}" - 2815)"
+          echo "钉死值: commits=${KSU_COMMITS} release=${KSU_REL_PIN} sha=${KSU_SHA_PIN} -> KSU_VERSION=${KSU_CODE}"
+          [ "${KSU_CODE}" = "40900" ] || { echo "::error::版本码 ${KSU_CODE} 与正式版管理器 40900 不一致"; FAIL=1; }
+          [ "${KSU_REL_PIN}" = "4.2.0" ] || { echo "::error::KSU_RELEASE=${KSU_REL_PIN} 不是 4.2.0"; FAIL=1; }
+
+          # 7) 上报给 userspace 的 SukiSU 版本串（Manager 里那一行）
           VERFULL="$(grep -rhoa 'v4\.[0-9]\+\.[0-9]\+-[0-9a-f]\{8\}@main' out/drivers/kernelsu 2>/dev/null | head -1 || true)"
           echo "KSU_VERSION_FULL = ${VERFULL:-未找到}"
           [ -n "${VERFULL}" ] || { echo "::error::没找到钉死的 KSU_VERSION_FULL"; FAIL=1; }

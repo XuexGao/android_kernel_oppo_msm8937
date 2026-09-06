@@ -37,10 +37,15 @@ VERSION_OFFSET  := 2815
 #   * the CI rate limit silently downgraded the reported version (4.1.2/13000)
 #   * `git_branch` leaked the build branch name into KSU_VERSION_FULL
 # Keep the three values below in sync with the vendored source when it is
-# refreshed: 3714 commits / tag commit 85eb4a95 are what v4.2.0 is on main.
+# refreshed. KSU_GIT_COMMITS is deliberately NOT the commit count of the v4.2.0
+# tag (that is 3714): the manager derives its own versionCode with the same
+# formula - 4*10000 + commit count - 2815 - evaluated at the commit its release
+# build ran from, and the shipped 4.2.0 manager was built one commit past the
+# tag, i.e. 3715 -> 40900. Pin the tag's own number here and the kernel reports
+# 40899 and disagrees with the manager.
 # No trailing comments on these lines - make keeps the whitespace, and a space
 # inside KSU_VERSION_FULL would split -D... into two clang arguments.
-KSU_GIT_COMMITS ?= 3714
+KSU_GIT_COMMITS ?= 3715
 KSU_RELEASE ?= 4.2.0
 KSU_GIT_SHA ?= 85eb4a95
 
