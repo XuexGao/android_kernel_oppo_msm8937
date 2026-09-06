@@ -522,6 +522,10 @@ jobs:
           python3 - <<'PY'
           import json, os
 
+          # 管理器下载指向 SukiSU-Ultra 官方 build-manager 工作流的产物页，
+          # 不再用频道里的单条消息链接（那条会随版本失效）。
+          MANAGER_URL = "https://github.com/SukiSU-Ultra/SukiSU-Ultra/actions/workflows/build-manager.yml"
+
           def env(k):
               return os.environ.get(k, "")
 
@@ -539,7 +543,7 @@ jobs:
           lines.append("")
           lines.append("| 内核 | 特性 | 适用场景 | 管理器下载 |")
           lines.append("|---|---|---|---|")
-          lines.append(f"| **SukiSU-Ultra + SUSFS** | SukiSU v{ksu} + SUSFS {susfs} | 需要 SUSFS 隐藏功能、sus mount、sus path 等 | [SukiSU-Ultra Manager](https://t.me/Sukiksu/7114/743182) |")
+          lines.append(f"| **SukiSU-Ultra + SUSFS** | SukiSU v{ksu} + SUSFS {susfs} | 需要 SUSFS 隐藏功能、sus mount、sus path 等 | [SukiSU-Ultra Manager]({MANAGER_URL}) |")
           lines.append("")
           lines.append("提供格式：")
           lines.append("")
@@ -564,7 +568,7 @@ jobs:
           lines.append("")
           lines.append(f"- SukiSU-Ultra v{ksu}")
           lines.append(f"- SUSFS {susfs}")
-          lines.append("- 管理器下载: [https://t.me/Sukiksu/7114/743182](https://t.me/Sukiksu/7114/743182)")
+          lines.append(f"- 管理器下载: [{MANAGER_URL}]({MANAGER_URL})")
           lines.append("")
           lines.append("### 刷入方法")
           lines.append("")
