@@ -271,7 +271,9 @@ void track_throne(bool prune_only)
             break;
         }
         data->uid = res;
-        strncpy(data->package, package, KSU_MAX_PACKAGE_NAME);
+        // d2afad2e: strscpy() instead of strncpy(), which silently left the
+        // buffer unterminated when the source filled it exactly.
+        strscpy(data->package, package, sizeof(data->package));
         list_add_tail(&data->list, &uid_list);
         // reset line start
         line_start = pos;

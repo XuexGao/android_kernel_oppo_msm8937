@@ -13,6 +13,14 @@ static struct apk_sign_key {
     { 0x375, "484fcba6e6c43b1fb09700633bf2fb4758f13cb0b2f4457b80d075084b26c588" }, // KowSU
     { 0x3e6, "79e590113c4c4c0c222978e413a5faa801666957b1212a328e46c00c69821bf7" }, // KSUN
     { 384, "7e0c6d7278a3bb8e364e0fcba95afaf3666cf5ff3c245a3b63c8833bd0445cc4" }, // MKSU
+#if defined(EXPECTED_SIZE) && defined(EXPECTED_HASH)
+    /* What the build was configured to trust (Makefile: KSU_EXPECTED_SIZE /
+     * KSU_EXPECTED_HASH). Upstream checks those two in is_manager_apk(); this
+     * port kept the table above and never read the defines, so the knobs had
+     * no effect. Adding the entry keeps every manager that used to be accepted
+     * working and honours the build-time setting on top. */
+    { EXPECTED_SIZE, EXPECTED_HASH },
+#endif
 };
 
 static struct sdesc *init_sdesc(struct crypto_shash *alg)
@@ -60,114 +68,112 @@ static int ksu_sha256(const unsigned char *data, unsigned int datalen, unsigned 
     return ret;
 }
 
-static bool check_block(struct file *fp, u32 *size4, loff_t *pos, u32 *offset)
+/*
+ * Every read below is bounded by the container it lives in. That is the point
+ * of upstream 7edae738 ("check kernel_read() results when verifying the APK
+ * signing block") and 4a47b5fc ("align signature block parsing with AOSP"):
+ * the parser this replaces ignored kernel_read()'s return value, so a truncated
+ * or deliberately crafted APK could walk the position past the end of the file,
+ * and a zero-length pair made the scan loop in place.
+ */
+static bool read_exact(struct file *fp, void *buffer, size_t size, loff_t *pos, loff_t end)
 {
-    int i;
-    struct apk_sign_key sign_key;
+    if (*pos < 0 || *pos > end || size > (size_t)(end - *pos))
+        return false;
 
-    kernel_read(fp, size4, 0x4, pos); // signer-sequence length
-    kernel_read(fp, size4, 0x4, pos); // signer length
-    kernel_read(fp, size4, 0x4, pos); // signed data length
-
-    *offset += 0x4 * 3;
-
-    kernel_read(fp, size4, 0x4, pos); // digests-sequence length
-
-    *pos += *size4;
-    *offset += 0x4 + *size4;
-
-    kernel_read(fp, size4, 0x4, pos); // certificates length
-    kernel_read(fp, size4, 0x4, pos); // certificate length
-    *offset += 0x4 * 2;
-
-    for (i = 0; i < ARRAY_SIZE(apk_sign_keys); i++) {
-        sign_key = apk_sign_keys[i];
-
-        if (*size4 != sign_key.size)
-            continue;
-        *offset += *size4;
-
-#define CERT_MAX_LENGTH 1024
-        char cert[CERT_MAX_LENGTH];
-        if (*size4 > CERT_MAX_LENGTH) {
-            pr_info("cert length overlimit\n");
-            return false;
-        }
-        kernel_read(fp, cert, *size4, pos);
-        unsigned char digest[SHA256_DIGEST_SIZE];
-        if (IS_ERR(ksu_sha256(cert, *size4, digest))) {
-            pr_info("sha256 error\n");
-            return false;
-        }
-
-        char hash_str[SHA256_DIGEST_SIZE * 2 + 1];
-        hash_str[SHA256_DIGEST_SIZE * 2] = '\0';
-
-        bin2hex(hash_str, digest, SHA256_DIGEST_SIZE);
-        pr_info("sha256: %s, expected: %s\n", hash_str, sign_key.sha256);
-        if (strcmp(sign_key.sha256, hash_str) == 0) {
-            return true;
-        }
-    }
-    return false;
+    return kernel_read(fp, buffer, size, pos) == (ssize_t)size;
 }
 
-struct zip_entry_header {
-    uint32_t signature;
-    uint16_t version;
-    uint16_t flags;
-    uint16_t compression;
-    uint16_t mod_time;
-    uint16_t mod_date;
-    uint32_t crc32;
-    uint32_t compressed_size;
-    uint32_t uncompressed_size;
-    uint16_t file_name_length;
-    uint16_t extra_field_length;
-} __attribute__((packed));
-
-// This is a necessary but not sufficient condition, but it is enough for us
-static bool has_v1_signature_file(struct file *fp)
+static bool read_length_prefixed_end(struct file *fp, loff_t *pos, loff_t container_end, loff_t *value_end)
 {
-    struct zip_entry_header header;
-    const char MANIFEST[] = "META-INF/MANIFEST.MF";
+    u32 length;
 
-    loff_t pos = 0;
+    if (!read_exact(fp, &length, sizeof(length), pos, container_end))
+        return false;
+    if (length > INT_MAX || length > (u64)(container_end - *pos))
+        return false;
 
-    while (kernel_read(fp, &header, sizeof(struct zip_entry_header), &pos) == sizeof(struct zip_entry_header)) {
-        if (header.signature != 0x04034b50) {
-            // ZIP magic: 'PK'
-            return false;
-        }
-        // Read the entry file name
-        if (header.file_name_length == sizeof(MANIFEST) - 1) {
-            char fileName[sizeof(MANIFEST)];
-            kernel_read(fp, fileName, header.file_name_length, &pos);
-            fileName[header.file_name_length] = '\0';
+    *value_end = *pos + length;
+    return true;
+}
 
-            // Check if the entry matches META-INF/MANIFEST.MF
-            if (strncmp(MANIFEST, fileName, sizeof(MANIFEST) - 1) == 0) {
-                return true;
-            }
-        } else {
-            // Skip the entry file name
-            pos += header.file_name_length;
-        }
+/*
+ * Walk one 0x7109871a (APK signature scheme v2) pair down to its leaf
+ * certificate and match it against apk_sign_keys[]. The certificate is read
+ * and hashed once, then compared against every accepted entry that carries its
+ * length - upstream verifies against a single expected pair, this port accepts
+ * the whole table, hence the two separate loops.
+ */
+static bool check_block(struct file *fp, loff_t *pos, loff_t block_end)
+{
+    loff_t signers_end, signer_end, signed_data_end, digests_end, certificates_end;
+    u32 certificate_size;
+    int i;
 
-        // Skip to the next entry
-        pos += header.extra_field_length + header.compressed_size;
+    // v2 block: signers sequence -> first signer -> signed data -> digests
+    if (!read_length_prefixed_end(fp, pos, block_end, &signers_end) ||
+        !read_length_prefixed_end(fp, pos, signers_end, &signer_end) ||
+        !read_length_prefixed_end(fp, pos, signer_end, &signed_data_end) ||
+        !read_length_prefixed_end(fp, pos, signed_data_end, &digests_end))
+        return false;
+
+    *pos = digests_end;
+    if (!read_length_prefixed_end(fp, pos, signed_data_end, &certificates_end) ||
+        !read_exact(fp, &certificate_size, sizeof(certificate_size), pos, certificates_end))
+        return false;
+
+    if (certificate_size > INT_MAX || certificate_size > (u64)(certificates_end - *pos))
+        return false;
+
+#define CERT_MAX_LENGTH 1024
+    if (certificate_size > CERT_MAX_LENGTH) {
+        pr_info("cert length overlimit\n");
+        return false;
     }
 
+    bool size_seen = false;
+    for (i = 0; i < ARRAY_SIZE(apk_sign_keys); i++) {
+        if (apk_sign_keys[i].size == certificate_size) {
+            size_seen = true;
+            break;
+        }
+    }
+    if (!size_seen)
+        return false;
+
+    char cert[CERT_MAX_LENGTH];
+    if (!read_exact(fp, cert, certificate_size, pos, certificates_end))
+        return false;
+
+    unsigned char digest[SHA256_DIGEST_SIZE];
+    if (ksu_sha256(cert, certificate_size, digest)) {
+        pr_info("sha256 error\n");
+        return false;
+    }
+
+    char hash_str[SHA256_DIGEST_SIZE * 2 + 1];
+    hash_str[SHA256_DIGEST_SIZE * 2] = '\0';
+
+    bin2hex(hash_str, digest, SHA256_DIGEST_SIZE);
+
+    for (i = 0; i < ARRAY_SIZE(apk_sign_keys); i++) {
+        if (apk_sign_keys[i].size != certificate_size)
+            continue;
+        pr_info("sha256: %s, expected: %s\n", hash_str, apk_sign_keys[i].sha256);
+        if (strcmp(apk_sign_keys[i].sha256, hash_str) == 0)
+            return true;
+    }
     return false;
 }
 
 static __always_inline bool check_v2_signature(char *path)
 {
-    unsigned char buffer[0x11] = { 0 };
-    u32 size4;
-    u64 size8, size_of_block;
+    unsigned char buffer[0x10] = { 0 };
+    u32 cd_offset, cd_size;
+    u32 zip64_locator_magic;
+    u64 size_of_block, size_of_block_at_head;
 
-    loff_t pos;
+    loff_t pos, pairs_end, file_size, eocd_offset;
 
     bool v2_signing_valid = false;
     int v2_signing_blocks = 0;
@@ -184,15 +190,23 @@ static __always_inline bool check_v2_signature(char *path)
     // disable inotify for this file
     fp->f_mode |= FMODE_NONOTIFY;
 
+    file_size = generic_file_llseek(fp, 0, SEEK_END);
+    if (file_size < 0)
+        goto clean;
+
     // https://en.wikipedia.org/wiki/Zip_(file_format)#End_of_central_directory_record_(EOCD)
     for (i = 0;; ++i) {
-        unsigned short n;
-        pos = generic_file_llseek(fp, -i - 2, SEEK_END);
-        kernel_read(fp, &n, 2, &pos);
-        if (n == i) {
+        unsigned short comment_size;
+        u32 magic;
+        pos = file_size - i - 2;
+        if (!read_exact(fp, &comment_size, sizeof(comment_size), &pos, file_size))
+            goto clean;
+        if (comment_size == i) {
             pos -= 22;
-            kernel_read(fp, &size4, 4, &pos);
-            if ((size4 ^ 0xcafebabeu) == 0xccfbf1eeu) {
+            if (!read_exact(fp, &magic, sizeof(magic), &pos, file_size))
+                goto clean;
+            if (magic == 0x06054b50) {
+                eocd_offset = pos - sizeof(magic);
                 break;
             }
         }
@@ -202,37 +216,66 @@ static __always_inline bool check_v2_signature(char *path)
         }
     }
 
-    pos += 12;
-    // offset
-    kernel_read(fp, &size4, 0x4, &pos);
-    pos = size4 - 0x18;
-
-    kernel_read(fp, &size8, 0x8, &pos);
-    kernel_read(fp, buffer, 0x10, &pos);
-    if (strcmp((char *)buffer, "APK Sig Block 42")) {
-        goto clean;
+    // reject ZIP64 before looking for a signing block
+    if (eocd_offset >= 20) {
+        pos = eocd_offset - 20;
+        if (!read_exact(fp, &zip64_locator_magic, sizeof(zip64_locator_magic), &pos, file_size))
+            goto clean;
+        if (zip64_locator_magic == 0x07064b50)
+            goto clean;
     }
 
-    pos = size4 - (size8 + 0x8);
-    kernel_read(fp, &size_of_block, 0x8, &pos);
-    if (size_of_block != size8) {
+    pos = eocd_offset + 12;
+    // size of central directory
+    if (!read_exact(fp, &cd_size, sizeof(cd_size), &pos, file_size))
         goto clean;
-    }
+    // offset of central directory
+    if (!read_exact(fp, &cd_offset, sizeof(cd_offset), &pos, file_size))
+        goto clean;
+    if ((u64)cd_offset > (u64)eocd_offset || (u64)cd_size != (u64)eocd_offset - cd_offset)
+        goto clean;
+    if (cd_offset < 0x20)
+        goto clean;
 
-    int loop_count = 0;
-    while (loop_count++ < 10) {
+    pairs_end = (loff_t)cd_offset - 0x18;
+    pos = pairs_end;
+
+    if (!read_exact(fp, &size_of_block, sizeof(size_of_block), &pos, cd_offset))
+        goto clean;
+    if (!read_exact(fp, buffer, sizeof(buffer), &pos, cd_offset))
+        goto clean;
+    if (memcmp((char *)buffer, "APK Sig Block 42", sizeof(buffer)))
+        goto clean;
+
+    if (size_of_block < 0x18 || size_of_block > INT_MAX - 0x8 || size_of_block > (u64)cd_offset - 0x8)
+        goto clean;
+
+    pos = (loff_t)cd_offset - (loff_t)size_of_block - 0x8;
+    if (!read_exact(fp, &size_of_block_at_head, sizeof(size_of_block_at_head), &pos, pairs_end))
+        goto clean;
+    if (size_of_block_at_head != size_of_block)
+        goto clean;
+
+    // Scan every length-prefixed pair, matching AOSP's signing block parser.
+    // Each valid pair consumes an 8-byte length plus at least a 4-byte ID, so
+    // malformed entries fail below instead of spinning in place.
+    while (pos < pairs_end) {
         uint32_t id;
-        uint32_t offset;
-        kernel_read(fp, &size8, 0x8,
-                    &pos); // sequence length
-        if (size8 == size_of_block) {
-            break;
-        }
-        kernel_read(fp, &id, 0x4, &pos); // id
-        offset = 4;
+        u64 size_of_pair;
+        loff_t pair_end;
+
+        if (!read_exact(fp, &size_of_pair, sizeof(size_of_pair), &pos, pairs_end))
+            goto invalid;
+        if (size_of_pair < sizeof(id) || size_of_pair > INT_MAX || size_of_pair > (u64)(pairs_end - pos))
+            goto invalid;
+
+        pair_end = pos + (loff_t)size_of_pair;
+        if (!read_exact(fp, &id, sizeof(id), &pos, pair_end))
+            goto invalid;
+
         if (id == 0x7109871au) {
             v2_signing_blocks++;
-            v2_signing_valid = check_block(fp, &size4, &pos, &offset);
+            v2_signing_valid = check_block(fp, &pos, pair_end);
         } else if (id == 0xf05368c0u) {
             // http://aospxref.com/android-14.0.0_r2/xref/frameworks/base/core/java/android/util/apk/ApkSignatureSchemeV3Verifier.java#73
             v3_signing_exist = true;
@@ -244,7 +287,7 @@ static __always_inline bool check_v2_signature(char *path)
             pr_info("Unknown id: 0x%08x\n", id);
 #endif
         }
-        pos += (size8 - offset);
+        pos = pair_end;
     }
 
     if (v2_signing_blocks != 1) {
@@ -254,21 +297,23 @@ static __always_inline bool check_v2_signature(char *path)
         v2_signing_valid = false;
     }
 
-    if (v2_signing_valid) {
-        int has_v1_signing = has_v1_signature_file(fp);
-        if (has_v1_signing) {
-            pr_err("Unexpected v1 signature scheme found!\n");
-            filp_close(fp, 0);
-            return false;
-        }
-    }
+    goto clean;
+
+invalid:
+    v2_signing_valid = false;
 clean:
     filp_close(fp, 0);
 
-    if (v3_signing_exist || v3_1_signing_exist) {
-#ifdef CONFIG_KSU_DEBUG
+    /*
+     * Upstream 685a208e ("drop v1 signature verification") also removed the
+     * META-INF/MANIFEST.MF probe that ran whenever a v2 block checked out: a
+     * v2-signed APK that still carries a v1 manifest is normal for
+     * compatibility, so finding one said nothing about the signature. Only the
+     * v2 plus v3 mix is still rejected, because the manager APKs accepted here
+     * are v2-only.
+     */
+    if (v2_signing_valid && (v3_signing_exist || v3_1_signing_exist)) {
         pr_err("Unexpected v3 signature scheme found!\n");
-#endif
         return false;
     }
 
@@ -331,7 +376,9 @@ int get_pkg_from_apk_path(char *pkg, const char *path)
         return -1;
 
     // Copying the package name
-    strncpy(pkg, second_last_slash + 1, pkg_len);
+    // Upstream d2afad2e removed strncpy() from the kernel side; pkg_len is
+    // bounds-checked above, so this is just a bounded copy.
+    memcpy(pkg, second_last_slash + 1, pkg_len);
     pkg[pkg_len] = '\0';
 
     return 0;
