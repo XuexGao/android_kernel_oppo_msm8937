@@ -11,17 +11,28 @@ extern int avc_ss_reset(u32 seqno);
 extern int avc_ss_reset(struct selinux_avc *avc, u32 seqno);
 #endif
 // reset avc cache table, otherwise the new rules will not take effect if already denied
+//
+// Only the in-kernel caches are invalidated here. The two userspace
+// advertisements upstream sends alongside them are deliberately not sent:
+// selinux_status_update_policyload() writes the mmap'd /sys/fs/selinux/status
+// page, and on this tree it does so with seqno == 0, i.e. it leaves
+// sequence > 0 together with policyload == 0. security/selinux/ss/status.c
+// documents the opposite invariant ("the next policyload event shall set a
+// positive value ... but never zero"), and a stock boot of this kernel reports
+// policyload == 1 from security_load_policy(). Publishing 0 therefore tells any
+// process that mapped the status page that the policy state was updated without
+// a policy ever being loaded - which is exactly what it is.
+//
+// Nothing needs those events: the rules we add are enforced by the kernel AVC
+// that avc_ss_reset() just flushed, and userspace caches keeping the decisions
+// of the original policy is the behaviour we want to preserve.
 static void reset_avc_cache(void)
 {
 #if ((!defined(KSU_COMPAT_USE_SELINUX_STATE)) || LINUX_VERSION_CODE >= KERNEL_VERSION(6, 4, 0))
     avc_ss_reset(0);
-    selnl_notify_policyload(0);
-    selinux_status_update_policyload(0);
 #else
     struct selinux_avc *avc = selinux_state.avc;
     avc_ss_reset(avc, 0);
-    selnl_notify_policyload(0);
-    selinux_status_update_policyload(&selinux_state, 0);
 #endif
     selinux_xfrm_notify_policyload();
 }
