@@ -253,7 +253,10 @@ jobs:
       - name: CCache 缓存
         uses: hendrikmuhs/ccache-action@v1.2
         with:
-          key: kernel-${{ matrix.device }}-${{ github.ref_name }}
+          # 不用 github.ref_name 作 key：GitHub 的缓存按分支隔离，一旦分支改名
+          # 或换默认分支，带分支名的 key 会让缓存全部失效（改名当天实测命中率从
+          # 99.86% 掉到 1.30%，重编 16 分钟）。key 只按机型区分即可。
+          key: kernel-${{ matrix.device }}
           # 加速：优先回退到本机型历史缓存，再回退到其它机型的缓存，
           # 让共享源码（绝大多数目标文件）跨机型复用
           restore-keys: |
