@@ -708,9 +708,9 @@ jobs:
           lines.append(f"- KSU_VERSION (内核版本码): {ksu}，与所选管理器 APK 的 versionCode 一致")
           lines.append("- hook 模式: SUSFS Inline Hook (`CONFIG_KSU_SUSFS=y`)")
           lines.append(f"- SUSFS {susfs} (内核侧，保留)")
-          lines.append(f"- 管理器下载: [BakaSU Build Manager（main 分支）]({MANAGER_URL})")
-          lines.append(f"  - 请选 Artifacts 里 **`Manager-release`**，解压后取 `BakaSU_*_{ksu}-universal-release.apk`")
-          lines.append(f"  - versionCode 必须与内核的 {ksu} 一致，否则 Manager 会提示版本不匹配")
+          lines.append(f"- 管理器: 本页资产里的 `BakaSU_{ksu}_{date}.apk`（与内核 versionCode 一致，已签名且与上游产物逐字节相同）")
+          lines.append(f"  - 若本页没有该 apk，可从 [BakaSU Build Manager（main 分支）]({MANAGER_URL}) 的 Artifacts 取 `Manager-release`，")
+          lines.append(f"    解压后选 versionCode 为 **{ksu}** 的 `*universal-release.apk`；对不上时 Manager 会提示版本不匹配")
           lines.append("")
           lines.append("### 刷入方法")
           lines.append("")
@@ -742,11 +742,12 @@ jobs:
       # 从 Build Manager 工作流（main 分支）的 Artifacts 取 —— 也就是 README 里
       # 对外给出的那个入口。
       #
-      # ⚠️ 已知限制：GitHub 不允许用本仓库的 GITHUB_TOKEN 读取**其它仓库**的
-      #    Artifacts（匿名访问返回 403，GITHUB_TOKEN 只对本仓库有效）。所以这一步
-      #    默认会失败并只发 notice；若你希望 Release 里直接附带匹配的 APK，请给
-      #    本仓库添加一个具备 public_repo 权限的 PAT secret（名为 BAKASU_TOKEN），
-      #    届时会自动改用该 token 下载并作为资产附上。内核产物与发布不受影响。
+      # 实测（2026-10-05 运行 37348270589）：本仓库的 GITHUB_TOKEN 可以读取公开
+      # 仓库 Baka-SU/BakaSU 的 Artifacts，已成功取到
+      # BakaSU_v4.2.0-rc3_35212-universal-release.apk 并作为资产附上。
+      # 注意：完全不带认证的匿名请求是 403，所以这里必须有 token；GITHUB_TOKEN
+      # 足够。若哪天上游改为私有、或读取被限流，可另配 BAKASU_TOKEN（public_repo
+      # PAT）覆盖；两者都取不到时只发 notice，绝不影响内核产物与发布。
       - name: 下载 BakaSU 管理器 APK（尽力而为）
         env:
           GH_TOKEN: ${{ secrets.BAKASU_TOKEN || secrets.GITHUB_TOKEN }}
