@@ -689,6 +689,15 @@ jobs:
         with:
           tag: ${{ env.TAG_NAME }}
           name: ${{ env.RELEASE_TITLE }}
+          # 必须显式指定 commit：本 job 的 actions/checkout 用了 path: kernel，
+          # 仓库根目录是空的；不传 commit 时 action 无法定位目标提交，会退回用
+          # 仓库默认分支建 tag，导致 tag 打在错误的提交上（且 GitHub 按该提交的
+          # 提交日期排序 latest，会让新 Release 反而不是 latest）。
+          commit: ${{ github.sha }}
+          # 显式声明为 latest：该输入必须是小写字符串 "true"（action 内部用
+          # latest === "true" 比较；写成不带引号的 true 会被 YAML 解析成布尔值，
+          # 传给 action 变成 "True" 而匹配失败，静默退化为不指定）
+          makeLatest: 'true'
           bodyFile: release-body.md
           artifacts: dist/*/*.zip
           allowUpdates: true        # 同日重复构建时更新已有 Release
