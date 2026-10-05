@@ -693,3 +693,27 @@ CONFIG_EXFAT_FS=y
 CONFIG_OPPO_DEVICE_INFO=y
 CONFIG_KTD2026_SLED=y
 CONFIG_INPUT_FPC1020=y
+
+# BakaSU (ReSukiSU) + SUSFS.  These must be explicit: the hook method is a
+# Kconfig `choice` whose default is KSU_TRACEPOINT_HOOK, and Kbuild hard-errors
+# with "TP hooks are incompatible with Non-GKI/GKI 1.0 kernels" on this 4.9
+# non-GKI tree.  Relying on `config KSU`'s `default y` alone would therefore
+# turn this device into a build failure (not a root-less kernel).
+CONFIG_KSU=y
+# CONFIG_KSU_DEBUG is not set
+# CONFIG_KSU_TOOLKIT_SUPPORT is not set
+# CONFIG_KSU_DISABLE_MANAGER is not set
+# CONFIG_KSU_DISABLE_POLICY is not set
+CONFIG_KSU_MULTI_MANAGER_SUPPORT=y
+# CONFIG_KSU_TRACEPOINT_HOOK is not set
+# CONFIG_KSU_MANUAL_HOOK is not set
+CONFIG_KSU_SUSFS=y
+CONFIG_KSU_SUSFS_SUS_PATH=y
+CONFIG_KSU_SUSFS_SUS_MOUNT=y
+CONFIG_KSU_SUSFS_SUS_KSTAT=y
+CONFIG_KSU_SUSFS_SPOOF_UNAME=y
+# CONFIG_KSU_SUSFS_ENABLE_LOG is not set
+CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
+CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
+CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
+CONFIG_KSU_SUSFS_SUS_MAP=y
