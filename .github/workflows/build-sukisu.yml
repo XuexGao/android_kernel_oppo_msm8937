@@ -684,6 +684,32 @@ jobs:
           echo "---- release-body.md ----"
           cat "${GITHUB_WORKSPACE}/release-body.md"
 
+      # ncipollo/release-action 只会「创建」tag，不会移动已存在的 tag：
+      # 同日重复构建时 tag 已存在，会被留在旧提交上（曾导致 SukiSU_20261005
+      # 指向 lineage-21 的旧树，该提交甚至没有 include/linux/susfs.h 的版本定义，
+      # 与 Release 正文宣称的 SUSFS 2.3.0 不符）。这里先把已存在的同名 tag
+      # 强制对齐到本次构建的提交，保证 tag 内容与产物一致。
+      - name: 对齐 tag 指向本次构建提交
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${TAG_NAME}"
+          SHA="${GITHUB_SHA}"
+          api="${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}"
+          if gh api "$api" --silent 2>/dev/null; then
+            CUR="$(gh api "$api" --jq '.object.sha')"
+            if [ "$CUR" = "$SHA" ]; then
+              echo "✅ tag ${TAG} 已指向本次提交 ${SHA:0:10}"
+            else
+              echo "⚠️ tag ${TAG} 原指向 ${CUR:0:10}，强制对齐到 ${SHA:0:10}"
+              gh api -X PATCH "$api" -f sha="$SHA" -F force=true --silent
+              echo "✅ tag ${TAG} 已对齐"
+            fi
+          else
+            echo "tag ${TAG} 尚不存在，交由 release-action 创建（commit=${SHA:0:10}）"
+          fi
+
       - name: 发布到 GitHub Releases（合并全部机型 zip）
         uses: ncipollo/release-action@v1
         with:
