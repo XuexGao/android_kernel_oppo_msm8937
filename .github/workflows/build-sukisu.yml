@@ -1,19 +1,25 @@
 # ==============================================================================
-# SukiSU Kernel CI — OPPO MSM8937 系列（R9s / A57 / R9s Plus / R9 Plus）
+# BakaSU Kernel CI — OPPO MSM8937 系列（R9s / A57 / R9s Plus / R9 Plus）
 # ------------------------------------------------------------------------------
+# root 方案：BakaSU（上游现名 ReSukiSU）v4.2.0-rc3，源码 vendored 在 KernelSU/，
+#           保留内核侧 SUSFS v2.3.0（hook 模式走 CONFIG_KSU_SUSFS，即 SUSFS
+#           Inline Hook；不选 KSU_MANUAL_HOOK —— 两者在 Kconfig 里是互斥 choice，
+#           而只有 SUSFS inline 模式才保留 SUSFS 的隐藏能力）。
 # 通用内核：同一个包同时适用于 LineageOS 21 / 22.0 / 22.1（Android 14 / 15）。
 #   · 不再按系统版本切分支：一份产物刷三个系统版本，编译一次即可
 #     （依据：三分支源码树一致、四个机型 defconfig 一致，实测产物仅 1185 字节差
 #      异且全部来自构建时间戳与随机签名密钥，无功能差异）
 #   · 仅支持手动触发（Actions 页 Run workflow），可点选机型 / 是否发布
-#   · 并行编译 4 个机型带 SukiSU 的内核 → AnyKernel3 打包
+#   · 并行编译 4 个机型带 BakaSU 的内核 → AnyKernel3 打包
 #   · 一次构建合并为 1 个 Release，包含全部机型 zip 资产
-#   · 命名：SukiSU_机型_8位日期.zip（例：SukiSU_R9s_20260817.zip）
-#   · Release 标题不含系统版本号，形如「OPPO Kernel SukiSU + SUSFS 2.3.0」
+#   · 命名：BakaSU_机型_8位日期.zip（例：BakaSU_R9s_20260817.zip）
+#   · TAG 同样用 BakaSU_ 前缀：旧的 SukiSU_<date> Release 必须保持原样，绝不能
+#     被本分支的 allowUpdates/removeArtifacts 覆盖掉（TAG_NAME 见 release 任务）
+#   · Release 标题不含系统版本号，形如「OPPO Kernel BakaSU + SUSFS 2.3.0」
 #     （SUSFS 版本号从 include/linux/susfs.h 动态读取，升级后不会写死过时）
 #   · Release 正文：底部自动追加 Changes（最近提交，提交标题 (短哈希)）
 #
-# 分支：唯一开发分支 sukisu-susfs-bpf（默认分支），一份产物通刷 LOS21/22.0/22.1
+# 分支：开发分支 bakasu-susfs-bpf，一份产物通刷 LOS21/22.0/22.1
 #
 # 编译加速（相对旧版）：
 #   1. Clang 工具链改用 actions/cache 缓存，省去每次 4 个矩阵任务的重复下载解压
@@ -22,7 +28,7 @@
 #   4. 只编译 Image.gz-dtb 目标（含 dtbs），不再跑全量 make
 # ==============================================================================
 
-name: Build SukiSU Kernel & Release
+name: Build BakaSU Kernel & Release
 
 on:
   workflow_dispatch:
@@ -71,22 +77,25 @@ jobs:
         run: |
           set -euo pipefail
 
-          # ---- 0. 分支说明：通用内核，唯一开发分支为 sukisu-susfs-bpf ----
+          # ---- 0. 分支说明：通用内核，开发分支为 bakasu-susfs-bpf ----
           BRANCH="${GITHUB_REF_NAME}"
           echo "branch=${BRANCH}"
-          if [[ "${BRANCH}" != "sukisu-susfs-bpf" ]]; then
-            echo "::warning::当前分支 '${BRANCH}' 不是 sukisu-susfs-bpf。"
-            echo "::warning::通用内核以 sukisu-susfs-bpf 为唯一开发分支，一份产物通刷 LOS21/22.0/22.1。"
+          if [[ "${BRANCH}" != "bakasu-susfs-bpf" ]]; then
+            echo "::warning::当前分支 '${BRANCH}' 不是 bakasu-susfs-bpf。"
+            echo "::warning::通用内核以 bakasu-susfs-bpf 为开发分支，一份产物通刷 LOS21/22.0/22.1。"
           fi
 
           # ---- 1. 编译日期（8 位）----
           BUILD_DATE="$(date +'%Y%m%d')"
 
-          # ---- 2. SukiSU / SUSFS 版本：统一以仓库内的定义为准，不在这里联网查
+          # ---- 2. BakaSU / SUSFS 版本：统一以仓库内的定义为准，不在这里联网查
           #      （api.github.com 限流时旧逻辑会静默退成 4.1.3，导致 Release 写错版本）。
           #      setup 没有 checkout，这里只给兜底值，真实值由 build 任务从源码解析后
           #      写进 meta.env 供 release 任务使用。
-          KSU_VERSION="4.2.0"
+          #      BakaSU 的 KSU_VERSION 已在 KernelSU/kernel/Kbuild 里钉死为 35171
+          #      （= 30000 + v4.2.0-rc3 的 4471 个提交 + 700，与 manager APK 的
+          #      versionCode 一致）。
+          KSU_VERSION="35171"
 
           # ---- 3. 机型矩阵（device / label / defconfig / 设备名 / 平台 / SoC 商用名）----
           python3 - "${{ inputs.devices }}" <<'PYEOF' > matrix.json
@@ -145,10 +154,10 @@ jobs:
       SNAPDRAGON: ${{ matrix.snapdragon }}
       BUILD_DATE: ${{ needs.setup.outputs.build_date }}
       KSU_VERSION: ${{ needs.setup.outputs.ksu_version }}
-      # 说明：KernelSU 的 manager/ 目录必须随仓库一起提交（apk_sign.h / pkg_observer.h 等为编译所必需），
-      # 不再从 sukisu-ultra 远程拉取补齐——远程 tag 的布局/版本与仓库内定制源码不一致，会导致编译失败。
+      # 说明：BakaSU 的 manager/ 目录必须随仓库一起提交（apk_sign.c/h、manager_sign.h、
+      # throne_tracker.* 等为编译所必需），本仓库采用 vendored 方式，不从上游拉取。
       # 包名不含系统版本：同一个包通刷 LOS21 / 22.0 / 22.1。
-      ZIP_NAME: SukiSU_${{ matrix.device }}_${{ needs.setup.outputs.build_date }}.zip
+      ZIP_NAME: BakaSU_${{ matrix.device }}_${{ needs.setup.outputs.build_date }}.zip
       # ccache 调优：压缩存储；忽略 __DATE__/__TIME__ 展开（KBUILD_BUILD_TIMESTAMP
       # 每次构建都不同，不设这个会让几乎所有目标文件缓存未命中——这是最大的提速点）。
       # 注意不要用 compilercheck=content：那会在每次调用时哈希整个 clang 二进制，
@@ -169,8 +178,8 @@ jobs:
           path: kernel
 
       # drivers/kernelsu 是指向根目录 KernelSU/kernel 的符号链接；
-      # manager/ 目录（apk_sign.h / pkg_observer.h 等）必须随仓库提交，这里仅做完整性校验。
-      # 更新 KernelSU 源码时请把配套的 manager/ 文件一并提交，否则编译会在此处直接报错。
+      # manager/ 目录（apk_sign.c/h、manager_sign.h、throne_tracker.* 等）必须随仓库提交，
+      # 这里仅做完整性校验。更新 KernelSU 源码时请把配套的 manager/ 文件一并提交。
       - name: 校验 KernelSU manager 目录（已随仓库提交）
         working-directory: kernel
         run: |
@@ -178,11 +187,11 @@ jobs:
           REQUIRED=(
             KernelSU/kernel/manager/apk_sign.c
             KernelSU/kernel/manager/apk_sign.h
+            KernelSU/kernel/manager/manager.c
             KernelSU/kernel/manager/manager_identity.h
             KernelSU/kernel/manager/manager_observer.h
+            KernelSU/kernel/manager/manager_sign.h
             KernelSU/kernel/manager/pkg_observer.c
-            KernelSU/kernel/manager/pkg_observer.h
-            KernelSU/kernel/manager/pkg_observer_compat.h
             KernelSU/kernel/manager/throne_tracker.c
             KernelSU/kernel/manager/throne_tracker.h
           )
@@ -192,7 +201,7 @@ jobs:
           done
           if [ -n "$MISSING" ]; then
             echo "::error::KernelSU manager 目录不完整，缺失:$MISSING"
-            echo "::error::请将 KernelSU/kernel/manager/ 与 KernelSU 源码一同提交进仓库（勿从 sukisu-ultra 拉取，版本不匹配会编译失败）"
+            echo "::error::请将 KernelSU/kernel/manager/ 与 KernelSU 源码一同提交进仓库（本仓库为 vendored，勿从上游拉取，版本不匹配会编译失败）"
             exit 1
           fi
           echo "✅ KernelSU manager 目录完整（9 个必需文件）"
@@ -306,16 +315,27 @@ jobs:
           test -f out/arch/arm64/boot/Image.gz-dtb || { echo "::error::未找到 Image.gz-dtb"; exit 1; }
           ls -lh out/arch/arm64/boot/
 
-      - name: 校验 SukiSU 已编入（CONFIG_KSU=y）
+      - name: 校验 BakaSU 已编入（CONFIG_KSU=y 且 hook 模式为 SUSFS inline）
         working-directory: kernel
         run: |
           set -euo pipefail
           if [ -f out/.config ] && grep -q '^CONFIG_KSU=y' out/.config; then
-            echo "✅ CONFIG_KSU=y 已确认，SukiSU 内核"
+            echo "✅ CONFIG_KSU=y 已确认，BakaSU 内核"
           else
-            echo "::error::CONFIG_KSU=y 未设置，未编译进 SukiSU"
+            echo "::error::CONFIG_KSU=y 未设置，未编译进 BakaSU"
             exit 1
           fi
+          # hook 模式必须落在 SUSFS inline；若退回 TRACEPOINT 会在 Kbuild 直接 $(error)，
+          # 但真到了产物阶段还发现 TP hook 就说明选择逻辑被改坏了。
+          grep -q '^CONFIG_KSU_SUSFS=y' out/.config \
+            || { echo "::error::CONFIG_KSU_SUSFS=y 未生效（SUSFS inline 模式是本次集成的既定选择）"; exit 1; }
+          if grep -q '^CONFIG_KSU_TRACEPOINT_HOOK=y' out/.config; then
+            echo "::error::CONFIG_KSU_TRACEPOINT_HOOK=y 在 non-GKI 4.9 上不可用"; exit 1
+          fi
+          if grep -q '^CONFIG_KSU_MANUAL_HOOK=y' out/.config; then
+            echo "::error::CONFIG_KSU_MANUAL_HOOK=y 会与 KSU_SUSFS 互斥（同为 choice 项）"; exit 1
+          fi
+          echo "✅ hook 模式确认：SUSFS inline（非 TP / 非 manual）"
 
       - name: 收集内核模块（若有 .ko）
         working-directory: kernel
@@ -327,7 +347,7 @@ jobs:
             echo "无内核模块，跳过（do.modules=0）"
           fi
 
-      - name: 记录构建元信息（内核版本 / SUSFS / SukiSU 版本）
+      - name: 记录构建元信息（内核版本 / SUSFS / BakaSU 版本）
         working-directory: kernel
         run: |
           set -euo pipefail
@@ -336,13 +356,14 @@ jobs:
           KV_FULL="${KV}$(grep -E '^EXTRAVERSION' Makefile | awk '{print $3}')"
           SUSFS_VERSION="$(sed -n 's/^#define SUSFS_VERSION "\{0,1\}\(v[0-9.]*\)"\{0,1\}/\1/p' include/linux/susfs.h | head -1)"
           [ -n "${SUSFS_VERSION}" ] || SUSFS_VERSION="unknown"
-          KSU_REL="$(sed -n 's/^KSU_RELEASE *=\? *\([0-9.]*\).*/\1/p' KernelSU/kernel/Makefile | head -1)"
+          # BakaSU 的版本钉在 Kbuild 里（上游的 KSU_RELEASE 变量已不存在）。
+          KSU_REL="$(grep -E '^KSU_VERSION[[:space:]]*:=' KernelSU/kernel/Kbuild | grep -oE '[0-9]+' | head -1)"
           [ -n "${KSU_REL}" ] || KSU_REL="${KSU_VERSION}"
-          echo "内核版本: ${KV_FULL} | SUSFS: ${SUSFS_VERSION} | SukiSU: ${KSU_REL}"
+          echo "内核版本: ${KV_FULL} | SUSFS: ${SUSFS_VERSION} | BakaSU: ${KSU_REL}"
           {
             echo "KV_FULL=${KV_FULL}"
             echo "SUSFS_VERSION=${SUSFS_VERSION}"
-            echo "KSU_RELEASE=${KSU_REL}"
+            echo "KSU_VERSION=${KSU_REL}"
           } > "${GITHUB_WORKSPACE}/${DEVICE}-meta.env"
 
       - name: 校验 SUSFS 版本（必须为 v2.3.0）
@@ -400,53 +421,67 @@ jobs:
           grep -q 'define LINUX_COMPILE_HOST "localhost"' "${COMPILE_H}" \
             || { echo "::error::LINUX_COMPILE_HOST 不是 localhost"; FAIL=1; }
 
-          # 3) 产物对象里不允许出现分支名 / fork 标识（日志字符串应已被 no_printk 折叠掉）
-          LEAKY="$(grep -rla -E 'lineage-2[0-9.]*-sukisu-susfs|SukiSU-Ultra|sukisu-susfs' \
+          # 3) 产物对象里不允许出现分支名 / fork 标识
+          #    BakaSU 没有 SukiSU 的 CONFIG_KSU_QUIET_LOG 全局静默开关，
+          #    所以原来「日志格式串必须为 0」的断言在新方案下必然失败，已移除。
+          #    注意：不要在这里匹配 'ReSukiSU' —— 它是 Kbuild 里 REPO_NAME 的
+          #    合法取值，会被编进 KSU_VERSION_FULL（v4.2.0-rc3-...@ReSukiSU），
+          #    加进去会误报。
+          LEAKY="$(grep -rla -E 'lineage-2[0-9.]*-(sukisu|bakasu)-susfs|SukiSU-Ultra|sukisu-susfs|bakasu-susfs' \
                      out/drivers/kernelsu out/init/version.o out/kernel/configs.o 2>/dev/null | sort -u | head -10 || true)"
           if [ -n "${LEAKY}" ]; then
             echo "::error::以下产物里仍能搜到构建标识："; echo "${LEAKY}"; FAIL=1
           else
             echo "✅ 产物对象内无分支名 / fork 标识"
           fi
-          LOGS="$(strings -a out/drivers/kernelsu/ksu.o | grep -cE 'KernelSU:|allow root for|Crowning manager' || true)"
-          echo "ksu.o 内残留的日志格式串数量 = ${LOGS}"
-          [ "${LOGS}" = "0" ] || { echo "::error::CONFIG_KSU_QUIET_LOG 没生效，dmesg 仍会暴露标识"; FAIL=1; }
+          # BakaSU 的 KSU 驱动产物对象名是 kernelsu.o（旧 SukiSU 是 ksu.o）
+          test -f out/drivers/kernelsu/kernelsu.o \
+            || { echo "::error::未找到 out/drivers/kernelsu/kernelsu.o（BakaSU 的产物名应为 kernelsu.o）"; FAIL=1; }
+          # BakaSU 下 dmesg 无法像 SukiSU 那样靠一个总开关完全静默：
+          # 只能保证 debug 日志与 SUSFS 日志两个已知开关都关闭。
+          if grep -q '^CONFIG_KSU_DEBUG=y$' out/.config; then
+            echo "::error::CONFIG_KSU_DEBUG=y 会让 dmesg 出现大量内核日志"; FAIL=1
+          fi
 
           # 4) /proc/config.gz 的数据源（out/kernel/config_data.gz）必须已去掉标识行，
           #    同时仍是一份完整 config
           test -f out/kernel/config_data.gz || { echo "::error::缺 out/kernel/config_data.gz"; exit 1; }
-          HIT="$(gzip -dc out/kernel/config_data.gz | grep -Ec '^[# ]*CONFIG_(KSU|SUSFS|KPM)' || true)"
+          HIT="$(gzip -dc out/kernel/config_data.gz | grep -Ec '^[# ]*CONFIG_(KSU|SUSFS)' || true)"
           TOTAL="$(gzip -dc out/kernel/config_data.gz | grep -Ec '^CONFIG_' || true)"
-          RAW="$(grep -Ec '^[# ]*CONFIG_(KSU|SUSFS|KPM)' out/.config || true)"
+          RAW="$(grep -Ec '^[# ]*CONFIG_(KSU|SUSFS)' out/.config || true)"
           echo "config_data.gz: 标识残留=${HIT} / 保留 CONFIG_ 行=${TOTAL}（out/.config 里标识行=${RAW}）"
           [ "${HIT}" = "0" ] || { echo "::error::config.gz 过滤未生效"; FAIL=1; }
           [ "${RAW}" != "0" ] || echo "::warning::out/.config 里本来就没有标识行，过滤无从验证"
           [ "${TOTAL}" -gt 1000 ] || { echo "::error::config.gz 内容异常（行数过少）"; FAIL=1; }
 
-          # 5) 日志静默 / dmesg 限制确实生效
-          for c in CONFIG_KSU_QUIET_LOG=y CONFIG_SECURITY_DMESG_RESTRICT=y; do
-            grep -q "^${c}$" out/.config || { echo "::error::out/.config 缺少 ${c}"; FAIL=1; }
-          done
+          # 5) dmesg 限制 + SUSFS 日志必须关闭。
+          #    CONFIG_KSU_QUIET_LOG 是旧 SukiSU 的选项，BakaSU 已不存在，故不再断言。
+          grep -q '^CONFIG_SECURITY_DMESG_RESTRICT=y$' out/.config \
+            || { echo "::error::out/.config 缺少 CONFIG_SECURITY_DMESG_RESTRICT=y"; FAIL=1; }
           if grep -q '^CONFIG_KSU_SUSFS_ENABLE_LOG=y$' out/.config; then
-            echo "::error::SUSFS 内核日志仍开着"; FAIL=1
+            echo "::error::SUSFS 内核日志仍开着（会往 dmesg 写 susfs: 标记，易被检测）"; FAIL=1
           fi
 
-          # 6) 版本码必须与正式版管理器一致。管理器自己的 versionCode =
-          #    4*10000 + 构建时提交数 - 2815（manager/build.gradle.kts），4.2.0
-          #    的管理器是在 tag 之后一个提交(3715)上构建的 -> 40900。内核若报
-          #    40899（tag 本身的 3714）就会和管理器对不上。
-          KSU_COMMITS="$(grep -E '^KSU_GIT_COMMITS[[:space:]]*\?=' KernelSU/kernel/Makefile | grep -oE '[0-9]+' | head -1)"
-          KSU_REL_PIN="$(grep -E '^KSU_RELEASE[[:space:]]*\?=' KernelSU/kernel/Makefile | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
-          KSU_SHA_PIN="$(grep -E '^KSU_GIT_SHA[[:space:]]*\?=' KernelSU/kernel/Makefile | sed 's/.*=[[:space:]]*//')"
-          KSU_CODE="$(expr 40000 + "${KSU_COMMITS:-0}" - 2815)"
-          echo "钉死值: commits=${KSU_COMMITS} release=${KSU_REL_PIN} sha=${KSU_SHA_PIN} -> KSU_VERSION=${KSU_CODE}"
-          [ "${KSU_CODE}" = "40900" ] || { echo "::error::版本码 ${KSU_CODE} 与正式版管理器 40900 不一致"; FAIL=1; }
-          [ "${KSU_REL_PIN}" = "4.2.0" ] || { echo "::error::KSU_RELEASE=${KSU_REL_PIN} 不是 4.2.0"; FAIL=1; }
+          # 6) 版本码必须与对外发布的 manager APK 一致。
+          #    BakaSU 的公式（Kbuild 与 manager/build.gradle.kts 一致）：
+          #      KSU_VERSION = 30000 + git commit count + 700
+          #    v4.2.0-rc3 的提交数为 4471 -> 35171，且该 tag 的 release 资产
+          #    文件名本身就是 ReSukiSU_v4.2.0-rc3_35171-*-release.apk，
+          #    证明 manager 的实际 versionCode 也是 35171。
+          #    Kbuild 里必须已经钉死、不得再依赖 git。
+          KSU_PIN="$(grep -E '^KSU_VERSION[[:space:]]*:=' KernelSU/kernel/Kbuild | grep -oE '[0-9]+' | head -1)"
+          echo "钉死值: KSU_VERSION=${KSU_PIN}"
+          [ "${KSU_PIN}" = "35171" ] || { echo "::error::KernelSU/kernel/Kbuild 里 KSU_VERSION 应为 35171，实际 '${KSU_PIN}'"; FAIL=1; }
+          if grep -Eq 'rev-list|--unshallow|GIT_BIN|LOCAL_GIT_EXISTS' KernelSU/kernel/Kbuild; then
+            echo "::error::Kbuild 仍依赖 git（vendored 源码下必须全部去除）"; FAIL=1
+          fi
 
-          # 7) 上报给 userspace 的 SukiSU 版本串（Manager 里那一行）
-          VERFULL="$(grep -rhoa 'v4\.[0-9]\+\.[0-9]\+-[0-9a-f]\{8\}@main' out/drivers/kernelsu 2>/dev/null | head -1 || true)"
+          # 7) 上报给 userspace 的 BakaSU 版本串（Manager 里那一行）
+          #    由 CONFIG_KSU_FULL_NAME_FORMAT 决定，格式可能随上游变动，
+          #    这里只要求「非空且含钉死的 tag」，避免过严导致误报。
+          VERFULL="$(grep -rhoa 'v4\.2\.0-rc3[^"]*' out/drivers/kernelsu 2>/dev/null | head -1 || true)"
           echo "KSU_VERSION_FULL = ${VERFULL:-未找到}"
-          [ -n "${VERFULL}" ] || { echo "::error::没找到钉死的 KSU_VERSION_FULL"; FAIL=1; }
+          [ -n "${VERFULL}" ] || { echo "::error::没找到含 v4.2.0-rc3 的 KSU_VERSION_FULL"; FAIL=1; }
 
           [ "${FAIL}" = "0" ] || { echo "::error::隐藏性校验未通过，见上面的 ::error 行"; exit 1; }
           echo "✅ 隐藏项校验全部通过"
@@ -543,7 +578,7 @@ jobs:
       #   run: |
       #     curl -fsS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
       #       -d chat_id="${TELEGRAM_CHAT_ID}" \
-      #       -d text="❌ SukiSU 内核编译失败：${DEVICE} (${GITHUB_REF_NAME})%0A详见 https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+      #       -d text="❌ BakaSU 内核编译失败：${DEVICE} (${GITHUB_REF_NAME})%0A详见 https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
 
   # ---------------------------------------------------------------------------
   # Job 3: release —— 汇总全部机型 zip，合并为 1 个 Release（通用内核）
@@ -561,8 +596,12 @@ jobs:
       DEVICE_LIST: ${{ needs.setup.outputs.device_list }}
       # 通用内核：标题/标签都不带系统版本号
       # RELEASE_TITLE 由「生成 Release 说明」步骤按源码里的 SUSFS 版本动态拼出
-      # （形如 "OPPO Kernel SukiSU + SUSFS 2.3.0"），避免升级 SUSFS 后标题写死过时。
-      TAG_NAME: SukiSU_${{ needs.setup.outputs.build_date }}
+      # （形如 "OPPO Kernel BakaSU + SUSFS 2.3.0"），避免升级 SUSFS 后标题写死过时。
+      # ⚠️ TAG_NAME 必须使用 BakaSU_ 前缀：下面 release-action 开了
+      #    allowUpdates: true + removeArtifacts: true，若沿用 SukiSU_<date>，
+      #    同日构建会直接覆盖并清空已有的 SukiSU Release（例如 SukiSU_20261005）
+      #    及其全部产物。不同前缀可保证两套 Release 完全隔离。
+      TAG_NAME: BakaSU_${{ needs.setup.outputs.build_date }}
     steps:
       - name: 检出源码（用于生成 Changes）
         uses: actions/checkout@v4
@@ -587,16 +626,16 @@ jobs:
           fi
           KV_FULL="$(grep '^KV_FULL=' "${META}" | cut -d= -f2-)"
           SUSFS_VERSION="$(grep '^SUSFS_VERSION=' "${META}" | cut -d= -f2-)"
-          # SukiSU 版本以构建时从源码解析出来的为准
-          if KSU_FROM_META="$(grep '^KSU_RELEASE=' "${META}" | cut -d= -f2-)"; then
+          # BakaSU 版本以构建时从源码解析出来的为准（Kbuild 里钉死的 KSU_VERSION）
+          if KSU_FROM_META="$(grep '^KSU_VERSION=' "${META}" | cut -d= -f2-)"; then
             [ -n "${KSU_FROM_META}" ] && export KSU_VERSION="${KSU_FROM_META}"
           fi
           echo "KV_FULL=${KV_FULL} | SUSFS_VERSION=${SUSFS_VERSION} | KSU_VERSION=${KSU_VERSION}"
 
           # ---- Release 标题：SUSFS 版本取自源码，标题不写死 ----
-          # 形如 "OPPO Kernel SukiSU + SUSFS 2.3.0"（去掉 v 前缀，不加括号）
+          # 形如 "OPPO Kernel BakaSU + SUSFS 2.3.0"（去掉 v 前缀，不加括号）
           SUSFS_NUM="${SUSFS_VERSION#v}"
-          RELEASE_TITLE="OPPO Kernel SukiSU + SUSFS ${SUSFS_NUM}"
+          RELEASE_TITLE="OPPO Kernel BakaSU + SUSFS ${SUSFS_NUM}"
           echo "RELEASE_TITLE=${RELEASE_TITLE}"
           echo "RELEASE_TITLE=${RELEASE_TITLE}" >> "$GITHUB_ENV"
 
@@ -609,9 +648,11 @@ jobs:
           python3 - <<'PY'
           import json, os
 
-          # 管理器下载指向 SukiSU-Ultra 官方 build-manager 工作流的产物页，
-          # 不再用频道里的单条消息链接（那条会随版本失效）。
-          MANAGER_URL = "https://github.com/SukiSU-Ultra/SukiSU-Ultra/actions/workflows/build-manager.yml"
+          # 管理器下载指向 BakaSU（上游现名 ReSukiSU）的 releases 页面。
+          # 注意：v4.2.0-rc3 的资产文件名仍是 "ReSukiSU_v4.2.0-rc3_35171-*-release.apk"
+          # （项目刚改名，上游产物尚未改名），本 Release 会把 universal 包
+          # 重新命名为 BakaSU_35171_<date>.apk 一并附上，二者内容相同。
+          MANAGER_URL = "https://github.com/Baka-SU/BakaSU/releases"
 
           def env(k):
               return os.environ.get(k, "")
@@ -633,18 +674,19 @@ jobs:
           lines.append("")
           lines.append("| 内核 | 特性 | 适用场景 | 管理器下载 |")
           lines.append("|---|---|---|---|")
-          lines.append(f"| **SukiSU-Ultra + SUSFS** | SukiSU v{ksu} + SUSFS {susfs} | 需要 SUSFS 隐藏功能、sus mount、sus path 等 | [SukiSU-Ultra Manager]({MANAGER_URL}) |")
+          lines.append(f"| **BakaSU + SUSFS** | BakaSU(ReSukiSU) v4.2.0-rc3 / KSU_VERSION {ksu} + SUSFS {susfs} | 需要 SUSFS 隐藏功能、sus mount、sus path 等 | [BakaSU Manager]({MANAGER_URL}) |")
           lines.append("")
           lines.append("提供格式：")
           lines.append("")
           lines.append("- **.zip** — AnyKernel3 刷入包，通过 recovery (TWRP) 刷入")
+          lines.append("- **.apk** — BakaSU 管理器（内核版本码与之一致），可选安装")
           lines.append("")
           lines.append("### 本次构建")
           lines.append("")
           lines.append("| 机型 | 下载 | 平台 | 内核版本 |")
           lines.append("|---|---|---|---|")
           for d in devices:
-              lines.append(f"| OPPO {d['label']} | `SukiSU_{d['device']}_{date}.zip` | {d['soc']} / {d['snapdragon']} | {kv} |")
+              lines.append(f"| OPPO {d['label']} | `BakaSU_{d['device']}_{date}.zip` | {d['soc']} / {d['snapdragon']} | {kv} |")
           lines.append("")
           lines.append("### 共同信息")
           lines.append("")
@@ -654,18 +696,20 @@ jobs:
           lines.append("- **编译器**: ZyCromerZ Clang 13.0.1 + GCC (aarch64/arm)")
           lines.append(f"- **分支**: {br}")
           lines.append("")
-          lines.append(f"### SukiSU-Ultra (含 SUSFS {susfs})")
+          lines.append(f"### BakaSU / ReSukiSU (含 SUSFS {susfs})")
           lines.append("")
-          lines.append(f"- SukiSU-Ultra v{ksu}")
-          lines.append(f"- SUSFS {susfs}")
-          lines.append(f"- 管理器下载: [{MANAGER_URL}]({MANAGER_URL})")
+          lines.append("- root 方案: BakaSU (上游现名 ReSukiSU) v4.2.0-rc3")
+          lines.append(f"- KSU_VERSION (内核版本码): {ksu}，与所选管理器 APK 的 versionCode 一致")
+          lines.append("- hook 模式: SUSFS Inline Hook (`CONFIG_KSU_SUSFS=y`)")
+          lines.append(f"- SUSFS {susfs} (内核侧，保留)")
+          lines.append(f"- 管理器下载: [BakaSU Releases]({MANAGER_URL})")
           lines.append("")
           lines.append("### 刷入方法")
           lines.append("")
           lines.append("#### 通过 Recovery (TWRP)")
           lines.append("")
-          lines.append("1. 下载对应机型的 `SukiSU_*.zip`")
-          lines.append("2. 下载并安装 SukiSU-Ultra Manager APK")
+          lines.append("1. 下载对应机型的 `BakaSU_*.zip`")
+          lines.append("2. 下载并安装 BakaSU Manager APK（见本页资产或上面的 Releases 链接）")
           lines.append("3. 重启到 recovery (TWRP)")
           lines.append("4. 刷入对应机型的 zip")
           lines.append("5. 重启")
@@ -683,6 +727,35 @@ jobs:
 
           echo "---- release-body.md ----"
           cat "${GITHUB_WORKSPACE}/release-body.md"
+
+      # 下载与内核 KSU_VERSION 对齐的 BakaSU 管理器 APK。
+      # 上游 v4.2.0-rc3 的资产名仍沿用旧项目名（ReSukiSU_v4.2.0-rc3_35171-*），
+      # 所以用通配匹配，再重命名成 BakaSU_<versionCode>_<date>.apk 对外发布。
+      # 这一步是「尽力而为」：网络/限流失败只告警，绝不能让内核产物发布失败。
+      - name: 下载 BakaSU 管理器 APK（尽力而为）
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          APK_VER="35171"
+          OUT="${GITHUB_WORKSPACE}/BakaSU_${APK_VER}_${BUILD_DATE}.apk"
+          rm -rf /tmp/apk && mkdir -p /tmp/apk
+          if gh release download v4.2.0-rc3 --repo Baka-SU/BakaSU \
+               --pattern '*universal-release.apk' --dir /tmp/apk --clobber 2>/dev/null; then
+            SRC="$(ls /tmp/apk/*universal-release.apk 2>/dev/null | head -1)"
+            if [ -n "${SRC}" ]; then
+              cp -v "${SRC}" "${OUT}"
+              echo "✅ 管理器 APK 已就绪: $(basename "${OUT}") ($(stat -c%s "${OUT}") bytes)"
+            fi
+          fi
+          ARTIFACTS="dist/*/*.zip"
+          if [ -f "${OUT}" ]; then
+            ARTIFACTS="${ARTIFACTS},$(basename "${OUT}")"
+          else
+            echo "::warning::未能下载 BakaSU 管理器 APK，本次 Release 将只含内核 zip（内核功能不受影响）"
+          fi
+          echo "ARTIFACTS=${ARTIFACTS}" >> "$GITHUB_ENV"
+          echo "发布资产: ${ARTIFACTS}"
 
       # ncipollo/release-action 只会「创建」tag，不会移动已存在的 tag：
       # 同日重复构建时 tag 已存在，会被留在旧提交上（曾导致 SukiSU_20261005
@@ -725,7 +798,8 @@ jobs:
           # 传给 action 变成 "True" 而匹配失败，静默退化为不指定）
           makeLatest: 'true'
           bodyFile: release-body.md
-          artifacts: dist/*/*.zip
+          # ARTIFACTS 由上一步动态注入（内核 zip + 可选的管理器 APK）。
+          artifacts: ${{ env.ARTIFACTS }}
           allowUpdates: true        # 同日重复构建时更新已有 Release
           removeArtifacts: true     # 替换同名资产
           token: ${{ secrets.GITHUB_TOKEN }}

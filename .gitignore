@@ -125,7 +125,7 @@ kernel/configs/android-*.cfg
 Android.bp
 
 #
-# SukiSU / KernelSU 构建产物（禁止提交，仅通过 GitHub Release / Artifact 分发）
+# BakaSU (ReSukiSU) / KernelSU 构建产物（禁止提交，仅通过 GitHub Release / Artifact 分发）
 #
 /out/
 *.zip
