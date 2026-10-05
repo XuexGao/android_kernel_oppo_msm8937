@@ -1,49 +1,41 @@
+#include <linux/dcache.h>
+#include <linux/errno.h>
+#include <linux/fdtable.h>
+#include <linux/file.h>
+#include <linux/fs.h>
+#include <linux/fs_struct.h>
+#include <linux/limits.h>
+#include <linux/namei.h>
+#include <linux/version.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 14, 0) || defined(KSU_HAS_MODERN_PROC_NS)
+#include <linux/proc_ns.h>
+#else
+#include <linux/proc_fs.h>
+#endif
+#include <linux/pid.h>
+#include <linux/slab.h>
+#include <linux/syscalls.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+#include <linux/sched/task.h>
+#else
+#include <linux/sched.h>
+#endif
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 0, 0)
+#include <uapi/linux/mount.h>
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(3, 7, 0)
+// https://github.com/torvalds/linux/commit/607ca46e97a1b6594b29647d98a32d545c24bdff
+// for kernel before this commit, include linux/fs.h is enough
+#include <uapi/linux/fs.h>
+#endif
+
+#include "klog.h" // IWYU pragma: keep
+#include "ksu.h"
+#include "compat/kernel_compat.h"
+#include "infra/su_mount_ns.h"
+
 extern int path_mount(const char *dev_name, struct path *path, const char *type_page, unsigned long flags,
                       void *data_page);
-
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 17, 0)
-
-#ifndef __PT_REGS_CAST
-#define __PT_REGS_CAST(x) (x)
-#endif
-
-#if defined(__aarch64__)
-#define PT_PARM1(x) (__PT_REGS_CAST(x)->regs[0])
-#define PT_PARM2(x) (__PT_REGS_CAST(x)->regs[1])
-extern long __arm64_sys_setns(const struct pt_regs *regs);
-#define do_sys_setns(regs) (__arm64_sys_setns(regs))
-#elif defined(__x86_64__)
-#define PT_PARM1(x) (__PT_REGS_CAST(x)->di)
-#define PT_PARM2(x) (__PT_REGS_CAST(x)->si)
-extern long __x64_sys_setns(const struct pt_regs *regs);
-#define do_sys_setns(regs) (__x64_sys_setns(regs))
-#elif defined(__arm__) // https://syscalls.mebeim.net/?table=arm/32/eabi/latest
-// taken from:
-// https://github.com/backslashxx/KernelSU/blob/8b71e8bce199e8ac44538648e298092a9b3ef42b/kernel/arch.h#L29
-#define PT_PARM1(x) (__PT_REGS_CAST(x)->uregs[0])
-#define PT_PARM2(x) (__PT_REGS_CAST(x)->uregs[1])
-extern long sys_setns(const struct pt_regs *regs);
-#define do_sys_setns(regs) (sys_setns(regs))
-#endif
-
-static long ksu_sys_setns(int fd, int flags)
-{
-#ifdef PT_PARM1
-    struct pt_regs regs;
-    memset(&regs, 0, sizeof(regs));
-
-    PT_PARM1(&regs) = fd;
-    PT_PARM2(&regs) = flags;
-
-    return do_sys_setns(&regs);
-#else
-    return -ENOSYS;
-#endif
-}
-#else
-#define ksu_sys_setns sys_setns
-#define ksys_unshare sys_unshare
-#endif
 
 // global mode , need CAP_SYS_ADMIN and CAP_SYS_CHROOT to perform setns
 static void ksu_mnt_ns_global(void)
@@ -71,10 +63,10 @@ static void ksu_mnt_ns_global(void)
     }
 
 try_setns:
-
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 19, 0) || defined(KSU_COMPAT_HAS_NS_GET_PATH)
     rcu_read_lock();
     // &init_task is not init, but swapper/idle, which forks the init process
-    // so we need find init process
+    // so we need to find the init process
     struct pid *pid_struct = find_pid_ns(1, &init_pid_ns);
     if (unlikely(!pid_struct)) {
         rcu_read_unlock();
@@ -95,8 +87,31 @@ try_setns:
         pr_warn("failed get path for init mount namespace: %ld\n", ret);
         goto out;
     }
+#else
+    barrier(); // to shutup declaration after label
 
+    // on UL kernels we can try to just feed it with struct path of /proc/1/ns/mnt
+    // we do NOT have ns_get_path. if it works, GOOD. if it doesn't I don't care.
+
+    struct path ns_path;
+    const struct cred *saved = override_creds(ksu_cred);
+
+    // make sure to LOOKUP_FOLLOW
+    // /proc/1/ns/mnt -> 'mnt:[4026531840]'
+    long ret = kern_path("/proc/1/ns/mnt", LOOKUP_FOLLOW, &ns_path);
+    if (ret) {
+        revert_creds(saved);
+        pr_warn("kern_path /proc/1/ns/mnt fail! ret: %ld\n", ret);
+        goto out;
+    }
+    revert_creds(saved);
+#endif
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 6, 0) || defined(KSU_COMPAT_HAS_MODERN_DENTRY_OPEN)
     struct file *ns_file = dentry_open(&ns_path, O_RDONLY, ksu_cred);
+#else
+    struct file *ns_file = dentry_open(ns_path.dentry, ns_path.mnt, O_RDONLY, ksu_cred);
+#endif
+
     path_put(&ns_path);
     if (IS_ERR(ns_file)) {
         pr_warn("failed open file for init mount namespace: %ld\n", PTR_ERR(ns_file));
@@ -113,7 +128,7 @@ try_setns:
     fd_install(fd, ns_file);
     ret = ksu_sys_setns(fd, CLONE_NEWNS);
 
-    close_fd(fd);
+    ksu_close_fd(fd);
 
     if (ret) {
         pr_warn("call setns failed: %ld\n", ret);

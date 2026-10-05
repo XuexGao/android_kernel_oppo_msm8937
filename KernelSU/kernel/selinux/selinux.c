@@ -1,21 +1,11 @@
-#if LINUX_VERSION_CODE <= KERNEL_VERSION(4, 19, 0)
-bool __maybe_unused is_ksu_transition(const struct task_security_struct *old_tsec,
-                                      const struct task_security_struct *new_tsec)
-{
-    return new_tsec->sid == old_tsec->sid;
-}
-#endif
-
-// current_sid() compat for kernels < 4.10
-// In newer kernels, current_sid() is an inline in security/selinux/include/objsec.h
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 10, 0) && !defined(current_sid)
-static inline u32 ksu_current_sid(void)
-{
-    struct task_security_struct *tsec = selinux_cred(current_cred());
-    return tsec ? tsec->sid : 0;
-}
-#define current_sid ksu_current_sid
-#endif
+#include "linux/cred.h"
+#include "linux/sched.h"
+#include "linux/security.h"
+#include "linux/version.h"
+#include "selinux_defs.h"
+#include "klog.h" // IWYU pragma: keep
+#include "ksu.h"
+#include "compat/kernel_compat.h"
 
 /*
  * Cached SID values for frequently checked contexts.
@@ -33,6 +23,11 @@ static u32 cached_su_sid __read_mostly = 0;
 static u32 cached_zygote_sid __read_mostly = 0;
 static u32 cached_init_sid __read_mostly = 0;
 u32 ksu_file_sid __read_mostly = 0;
+
+#ifdef CONFIG_KSU_SUSFS
+// only susfs need that
+static u32 cached_zygote_next_sid __read_mostly = 0;
+#endif
 
 static int transive_to_domain(const char *domain, struct cred *cred, bool clear_exec_sid)
 {
@@ -72,48 +67,38 @@ void setup_selinux(const char *domain, struct cred *cred)
     }
 }
 
-void setup_ksu_cred(void)
+void setup_ksu_cred_selinux(void)
 {
-    if (transive_to_domain(KERNEL_SU_CONTEXT, ksu_cred, false)) {
-        pr_err("setup ksu cred failed.\n");
+    if (ksu_cred && transive_to_domain(KERNEL_SU_CONTEXT, ksu_cred, false)) {
+        pr_err("setup ksu cred selinux domain failed.\n");
     }
 }
 
 void setenforce(bool enforce)
 {
-#ifdef CONFIG_SECURITY_SELINUX_DEVELOP
-#ifdef KSU_COMPAT_USE_SELINUX_STATE
-    selinux_state.enforcing = enforce;
-#else
-    selinux_enforcing = enforce;
-#endif
-#endif
+    __setenforce(enforce);
 }
 
 bool getenforce(void)
 {
-#ifdef CONFIG_SECURITY_SELINUX_DISABLE
-#ifdef KSU_COMPAT_USE_SELINUX_STATE
-    if (selinux_state.disabled) {
+    if (is_selinux_disabled()) {
         return false;
     }
-#else
-    if (selinux_disabled) {
-        return false;
-    }
-#endif // KSU_COMPAT_USE_SELINUX_STATE
-#endif // CONFIG_SECURITY_SELINUX_DISABLE
 
-#ifdef CONFIG_SECURITY_SELINUX_DEVELOP
-#ifdef KSU_COMPAT_USE_SELINUX_STATE
-    return selinux_state.enforcing;
-#else
-    return selinux_enforcing;
-#endif
-#else
-    return true;
-#endif
+    return __is_selinux_enforcing();
 }
+
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)) && !defined(KSU_COMPAT_HAS_CURRENT_SID)
+/*
+ * get the subjective security ID of the current task
+ */
+static inline u32 current_sid(void)
+{
+    const struct task_security_struct *tsec = current_security();
+
+    return tsec->sid;
+}
+#endif
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 14, 0)
 struct lsm_context {
@@ -132,6 +117,12 @@ static void __security_release_secctx(struct lsm_context *cp)
 #else
 #define __security_secid_to_secctx security_secid_to_secctx
 #define __security_release_secctx security_release_secctx
+#endif
+
+#ifdef CONFIG_KSU_SUSFS
+#define KERNEL_PRIV_APP_DOMAIN "u:r:priv_app:s0:c512,c768"
+u32 susfs_priv_app_sid = 0; // compatible with simonpunk, why he don't use sid cache???
+u32 susfs_ksu_sid = 0;
 #endif
 
 /*
@@ -159,6 +150,16 @@ void cache_sid(void)
         pr_info("Cached zygote SID: %u\n", cached_zygote_sid);
     }
 
+#ifdef CONFIG_KSU_SUSFS
+    err = security_secctx_to_secid(ZYGOTE_NEXT_DOMAIN, strlen(ZYGOTE_NEXT_DOMAIN), &cached_zygote_next_sid);
+    if (err) {
+        pr_warn("Failed to cache zygote next SID: %d, Safe ignore that when you are Android 17-\n", err);
+        cached_zygote_next_sid = 0;
+    } else {
+        pr_info("Cached zygote next SID: %u\n", cached_zygote_next_sid);
+    }
+#endif
+
     err = security_secctx_to_secid(INIT_CONTEXT, strlen(INIT_CONTEXT), &cached_init_sid);
     if (err) {
         pr_warn("Failed to cache init SID: %d\n", err);
@@ -174,26 +175,29 @@ void cache_sid(void)
     } else {
         pr_info("Cached ksu_file SID: %u\n", ksu_file_sid);
     }
+
+#ifdef CONFIG_KSU_SUSFS
+    // compatible with current susfs
+    err = security_secctx_to_secid(KERNEL_PRIV_APP_DOMAIN, strlen(KERNEL_PRIV_APP_DOMAIN), &susfs_priv_app_sid);
+    if (err) {
+        pr_warn("Failed to cache susfs_priv_app SID: %d\n", err);
+        susfs_priv_app_sid = 0;
+    } else {
+        pr_info("Cached susfs_priv_app SID: %u\n", susfs_priv_app_sid);
+    }
+
+    susfs_ksu_sid = cached_su_sid;
+#endif
 }
 
-/*
- * Fast path: compare task's SID directly against cached value.
- * Falls back to string comparison if cache is not initialized.
- */
-static bool is_sid_match(const struct cred *cred, u32 cached_sid, const char *fallback_context)
-{
-    if (!cred) {
-        return false;
-    }
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 18, 0)
-    const struct task_security_struct *tsec = selinux_cred(cred);
+static inline bool is_sid_match_tsec(const struct task_security_struct *tsec, u32 cached_sid,
+                                     const char *fallback_context)
 #else
-    const struct cred_security_struct *tsec = selinux_cred(cred);
+static inline bool is_sid_match_tsec(const struct cred_security_struct *tsec, u32 cached_sid,
+                                     const char *fallback_context)
 #endif
-    if (!tsec) {
-        return false;
-    }
-
+{
     // Fast path: use cached SID if available
     if (likely(cached_sid != 0)) {
         return tsec->sid == cached_sid;
@@ -207,7 +211,30 @@ static bool is_sid_match(const struct cred *cred, u32 cached_sid, const char *fa
     }
     result = strncmp(fallback_context, ctx.context, ctx.len) == 0;
     __security_release_secctx(&ctx);
+
     return result;
+}
+
+/*
+ * Fast path: compare task's SID directly against cached value.
+ * Falls back to string comparison if cache is not initialized.
+ */
+static inline bool is_sid_match(const struct cred *cred, u32 cached_sid, const char *fallback_context)
+{
+    if (!cred) {
+        return false;
+    }
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 18, 0)
+    const struct task_security_struct *tsec;
+#else
+    const struct cred_security_struct *tsec;
+#endif
+    tsec = selinux_cred(cred);
+    if (!tsec) {
+        return false;
+    }
+
+    return is_sid_match_tsec(tsec, cached_sid, fallback_context);
 }
 
 bool is_task_ksu_domain(const struct cred *cred)
@@ -225,10 +252,58 @@ bool is_zygote(const struct cred *cred)
     return is_sid_match(cred, cached_zygote_sid, ZYGOTE_CONTEXT);
 }
 
+#ifdef CONFIG_KSU_SUSFS
+bool is_zygote_next(const struct cred *cred)
+{
+    return is_sid_match(cred, cached_zygote_next_sid, ZYGOTE_NEXT_DOMAIN);
+}
+#endif
+
 bool is_init(const struct cred *cred)
 {
     return is_sid_match(cred, cached_init_sid, INIT_CONTEXT);
 }
+
+#ifdef CONFIG_KSU_SUSFS
+#define KERNEL_PRIV_APP_DOMAIN "u:r:priv_app:s0:c512,c768"
+
+u32 susfs_get_sid_from_name(const char *secctx_name)
+{
+    u32 out_sid = 0;
+    int err;
+
+    if (!secctx_name) {
+        pr_err("secctx_name is NULL\n");
+        return 0;
+    }
+    err = security_secctx_to_secid(secctx_name, strlen(secctx_name), &out_sid);
+    if (err) {
+        pr_err("failed getting sid from secctx_name: %s, err: %d\n", secctx_name, err);
+        return 0;
+    }
+    return out_sid;
+}
+
+u32 susfs_get_current_sid(void)
+{
+    return current_sid();
+}
+
+bool susfs_is_current_zygote_domain(void)
+{
+    return is_zygote(current_cred());
+}
+
+bool susfs_is_current_ksu_domain(void)
+{
+    return is_ksu_domain();
+}
+
+bool susfs_is_current_init_domain(void)
+{
+    return is_init(current_cred());
+}
+#endif // #ifdef CONFIG_KSU_SUSFS
 
 void escape_to_root_for_adb_root(void)
 {
@@ -245,87 +320,3 @@ void escape_to_root_for_adb_root(void)
     }
     commit_creds(cred);
 }
-
-#ifdef CONFIG_KSU_SUSFS
-#define KERNEL_INIT_DOMAIN "u:r:init:s0"
-#define KERNEL_ZYGOTE_DOMAIN "u:r:zygote:s0"
-#define KERNEL_PRIV_APP_DOMAIN "u:r:priv_app:s0:c512,c768"
-
-u32 susfs_ksu_sid __read_mostly = 0;
-u32 susfs_init_sid __read_mostly = 0;
-u32 susfs_zygote_sid __read_mostly = 0;
-u32 susfs_priv_app_sid __read_mostly = 0;
-
-static inline void susfs_set_sid(const char *secctx_name, u32 *out_sid)
-{
-    int err;
-    
-    if (!secctx_name || !out_sid) {
-        pr_err("secctx_name || out_sid is NULL\n");
-        return;
-    }
-
-    err = security_secctx_to_secid(secctx_name, strlen(secctx_name),
-                       out_sid);
-    if (err) {
-        pr_err("failed setting sid for '%s', err: %d\n", secctx_name, err);
-        return;
-    }
-    pr_info("sid '%u' is set for secctx_name '%s'\n", *out_sid, secctx_name);
-}
-
-bool susfs_is_sid_equal(const struct cred *cred, u32 sid2) {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 18, 0)
-    const struct task_security_struct *tsec = selinux_cred(cred);
-#else
-    const struct cred_security_struct *tsec = selinux_cred(cred);
-#endif
-
-    if (!tsec) {
-        return false;
-    }
-    return tsec->sid == sid2;
-}
-
-u32 susfs_get_sid_from_name(const char *secctx_name)
-{
-    u32 out_sid = 0;
-    int err;
-    
-    if (!secctx_name) {
-        pr_err("secctx_name is NULL\n");
-        return 0;
-    }
-    err = security_secctx_to_secid(secctx_name, strlen(secctx_name),
-                       &out_sid);
-    if (err) {
-        pr_err("failed getting sid from secctx_name: %s, err: %d\n", secctx_name, err);
-        return 0;
-    }
-    return out_sid;
-}
-
-u32 susfs_get_current_sid(void) {
-    return current_sid();
-}
-
-bool susfs_is_current_zygote_domain(void) {
-    return unlikely(current_sid() == susfs_zygote_sid);
-}
-
-bool susfs_is_current_ksu_domain(void) {
-    return unlikely(current_sid() == susfs_ksu_sid);
-}
-
-bool susfs_is_current_init_domain(void) {
-    return unlikely(current_sid() == susfs_init_sid);
-}
-
-void susfs_set_batch_sid(void)
-{
-    susfs_set_sid(KERNEL_ZYGOTE_DOMAIN, &susfs_zygote_sid);
-    susfs_set_sid(KERNEL_SU_CONTEXT, &susfs_ksu_sid);
-    susfs_set_sid(KERNEL_INIT_DOMAIN, &susfs_init_sid);
-    susfs_set_sid(KERNEL_PRIV_APP_DOMAIN, &susfs_priv_app_sid);
-}
-#endif
