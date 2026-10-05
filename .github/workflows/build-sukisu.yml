@@ -1,14 +1,22 @@
 # ==============================================================================
 # SukiSU Kernel CI — OPPO MSM8937 系列（R9s / A57 / R9s Plus / R9 Plus）
 # ------------------------------------------------------------------------------
-# 目标分支：必须以 `-sukisu-susfs` 结尾（如 lineage-22.1-sukisu-susfs），否则报错退出。
+# 通用内核：同一个包同时适用于 LineageOS 21 / 22.0 / 22.1（Android 14 / 15）。
+#   · 不再按系统版本切分支：一份产物刷三个系统版本，编译一次即可
+#     （依据：三分支源码树一致、四个机型 defconfig 一致，实测产物仅 1185 字节差
+#      异且全部来自构建时间戳与随机签名密钥，无功能差异）
 #   · 仅支持手动触发（Actions 页 Run workflow），可点选机型 / 是否发布
-#   · 系统版本（LOS21 / LOS22.0 / LOS22.1）自动从所选分支名解析
 #   · 并行编译 4 个机型带 SukiSU 的内核 → AnyKernel3 打包
 #   · 一次构建合并为 1 个 Release，包含全部机型 zip 资产
-#   · 命名：SukiSU_机型_LOS版本_8位日期.zip（例：SukiSU_R9s_LOS22.1_20260817.zip）
-#   · Release 标题：OPPO Kernel for LineageOS 22.1（系统版本自动识别）
-#   · Release 正文：参考历史版本格式，底部自动追加 Changes（最近提交，提交标题 (短哈希)）
+#   · 命名：SukiSU_机型_8位日期.zip（例：SukiSU_R9s_20260817.zip）
+#   · Release 标题不含系统版本号，因为一个包通刷 LOS21 / 22.0 / 22.1
+#   · Release 正文：底部自动追加 Changes（最近提交，提交标题 (短哈希)）
+#
+# 编译加速（相对旧版）：
+#   1. Clang 工具链改用 actions/cache 缓存，省去每次 4 个矩阵任务的重复下载解压
+#   2. apt 安装改为「先装、失败再 update」，命中镜像预置索引时省掉一次 apt-get update
+#   3. ccache 加 restore-keys，允许跨机型复用共享目标文件；开启 time_macros 容忍度
+#   4. 只编译 Image.gz-dtb 目标（含 dtbs），不再跑全量 make
 # ==============================================================================
 
 name: Build SukiSU Kernel & Release
@@ -36,10 +44,13 @@ permissions:
 
 env:
   CLANG_URL: https://github.com/ZyCromerZ/Clang/releases/download/13.0.1-20230207-release/Clang-13.0.1-20230207.tar.gz
+  # 通用内核支持的系统版本（不参与分支解析，仅用于 Release 说明）
+  OS_SUPPORT: 'LineageOS 21 / 22.0 / 22.1'
+  ANDROID_SUPPORT: '14 / 15'
 
 jobs:
   # ---------------------------------------------------------------------------
-  # Job 1: setup —— 校验分支、计算日期/系统版本/SukiSU 版本，并生成机型构建矩阵
+  # Job 1: setup —— 生成机型构建矩阵与构建元信息
   # ---------------------------------------------------------------------------
   setup:
     name: Prepare build matrix
@@ -49,9 +60,6 @@ jobs:
       devices_json: ${{ steps.gen.outputs.devices_json }}
       device_list: ${{ steps.gen.outputs.device_list }}
       build_date: ${{ steps.gen.outputs.build_date }}
-      os_version: ${{ steps.gen.outputs.os_version }}
-      android: ${{ steps.gen.outputs.android }}
-      lineage_label: ${{ steps.gen.outputs.lineage_label }}
       ksu_version: ${{ steps.gen.outputs.ksu_version }}
       publish: ${{ steps.gen.outputs.publish }}
     steps:
@@ -60,34 +68,24 @@ jobs:
         run: |
           set -euo pipefail
 
-          # ---- 0. 分支校验：本工作流只运行在 sukisu-susfs 分支 ----
+          # ---- 0. 分支说明：通用内核不再要求分支名带系统版本 ----
           BRANCH="${GITHUB_REF_NAME}"
-          if [[ "${BRANCH}" =~ ^lineage-([0-9.]+)-sukisu-susfs$ ]]; then
-            OS_VERSION="LOS${BASH_REMATCH[1]}"
-          else
-            echo "::error::请选择以 -sukisu-susfs 结尾的分支（如 lineage-22.1-sukisu-susfs），当前分支: ${BRANCH}"
-            exit 1
-          fi
           echo "branch=${BRANCH}"
+          if [[ "${BRANCH}" =~ ^lineage-.*-sukisu-susfs$ ]]; then
+            echo "::warning::当前分支 '${BRANCH}' 是按系统版本切分的旧分支。"
+            echo "::warning::内核已通用，建议改用统一的 sukisu-susfs 分支，一份产物通刷 LOS21/22.0/22.1。"
+          fi
 
           # ---- 1. 编译日期（8 位）----
           BUILD_DATE="$(date +'%Y%m%d')"
 
-          # ---- 2. 系统版本 / Android / LineageOS 标题标签 ----
-          case "${OS_VERSION}" in
-            LOS21*) ANDROID="14" ;;
-            LOS22*) ANDROID="15" ;;
-            *)      ANDROID="?" ;;
-          esac
-          LINEAGE_LABEL="LineageOS ${OS_VERSION#LOS}"
-
-          # ---- 3. SukiSU / SUSFS 版本：统一以仓库内的定义为准，不在这里联网查
+          # ---- 2. SukiSU / SUSFS 版本：统一以仓库内的定义为准，不在这里联网查
           #      （api.github.com 限流时旧逻辑会静默退成 4.1.3，导致 Release 写错版本）。
           #      setup 没有 checkout，这里只给兜底值，真实值由 build 任务从源码解析后
           #      写进 meta.env 供 release 任务使用。
           KSU_VERSION="4.2.0"
 
-          # ---- 4. 机型矩阵（device / label / defconfig / 设备名 / 平台 / SoC 商用名）----
+          # ---- 3. 机型矩阵（device / label / defconfig / 设备名 / 平台 / SoC 商用名）----
           python3 - "${{ inputs.devices }}" <<'PYEOF' > matrix.json
           import json, os, sys
           devices = [
@@ -121,19 +119,16 @@ jobs:
           echo "devices_json=${INCLUDED}"            >> "$GITHUB_OUTPUT"
           echo "device_list=${DEVICE_LIST}"          >> "$GITHUB_OUTPUT"
           echo "BUILD_DATE=${BUILD_DATE}"            >> "$GITHUB_OUTPUT"
-          echo "OS_VERSION=${OS_VERSION}"            >> "$GITHUB_OUTPUT"
-          echo "ANDROID=${ANDROID}"                  >> "$GITHUB_OUTPUT"
-          echo "LINEAGE_LABEL=${LINEAGE_LABEL}"      >> "$GITHUB_OUTPUT"
           echo "KSU_VERSION=${KSU_VERSION}"          >> "$GITHUB_OUTPUT"
           echo "publish=${{ inputs.publish_release && 'true' || 'false' }}" >> "$GITHUB_OUTPUT"
 
-          echo "BRANCH=${BRANCH} | OS_VERSION=${OS_VERSION} | ANDROID=${ANDROID} | BUILD_DATE=${BUILD_DATE} | KSU_VERSION=${KSU_VERSION} | devices=${DEVICE_LIST}"
+          echo "BRANCH=${BRANCH} | BUILD_DATE=${BUILD_DATE} | KSU_VERSION=${KSU_VERSION} | devices=${DEVICE_LIST}"
 
   # ---------------------------------------------------------------------------
   # Job 2: build —— 按矩阵并行编译内核 + AK3 打包 + 上传产物
   # ---------------------------------------------------------------------------
   build-kernel:
-    name: "${{ matrix.device }} (${{ needs.setup.outputs.os_version }})"
+    name: "${{ matrix.device }}"
     needs: setup
     runs-on: ubuntu-22.04
     strategy:
@@ -145,12 +140,19 @@ jobs:
       DEVICE_NAMES: ${{ matrix.device_names }}
       SOC: ${{ matrix.soc }}
       SNAPDRAGON: ${{ matrix.snapdragon }}
-      OS_VERSION: ${{ needs.setup.outputs.os_version }}
       BUILD_DATE: ${{ needs.setup.outputs.build_date }}
       KSU_VERSION: ${{ needs.setup.outputs.ksu_version }}
       # 说明：KernelSU 的 manager/ 目录必须随仓库一起提交（apk_sign.h / pkg_observer.h 等为编译所必需），
       # 不再从 sukisu-ultra 远程拉取补齐——远程 tag 的布局/版本与仓库内定制源码不一致，会导致编译失败。
-      ZIP_NAME: SukiSU_${{ matrix.device }}_${{ needs.setup.outputs.os_version }}_${{ needs.setup.outputs.build_date }}.zip
+      # 包名不含系统版本：同一个包通刷 LOS21 / 22.0 / 22.1。
+      ZIP_NAME: SukiSU_${{ matrix.device }}_${{ needs.setup.outputs.build_date }}.zip
+      # ccache 调优：压缩存储；忽略 __DATE__/__TIME__ 展开（KBUILD_BUILD_TIMESTAMP
+      # 每次构建都不同，不设这个会让几乎所有目标文件缓存未命中——这是最大的提速点）。
+      # 注意不要用 compilercheck=content：那会在每次调用时哈希整个 clang 二进制，
+      # 反而拖慢编译；工具链已用 actions/cache 缓存，mtime 跨构建稳定，默认 mtime 即可。
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_COMPRESS: '1'
+      CCACHE_SLOPPINESS: time_macros
     steps:
       - name: 设置 10G swap（内核编译内存保障）
         uses: pierotofy/set-swap-space@master
@@ -200,35 +202,60 @@ jobs:
           sudo rm -f /etc/apt/sources.list.d/*.list
           # apt 加固：HTTP/HTTPS/FTP 超时 + 自动重试，防止镜像挂起把 job 拖到 6 小时超时被取消
           APT_OPTS="-o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Acquire::ftp::Timeout=30"
-          UPDATED=0
-          for i in 1 2 3; do
-            if sudo apt-get update ${APT_OPTS}; then
-              UPDATED=1
-              break
-            fi
-            echo "⚠️ apt-get update 第 ${i} 次失败，5 秒后重试"
-            sleep 5
-          done
-          [ "${UPDATED}" = "1" ] || { echo "::error::apt-get update 连续 3 次失败，请检查网络"; exit 1; }
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ${APT_OPTS} \
-            build-essential bc bison flex \
+          PKGS="build-essential bc bison flex \
             libssl-dev libncurses-dev libfl-dev libelf-dev \
             gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
             cpio lz4 lzop zstd zip unzip \
             device-tree-compiler ccache python3 \
-            pngcrush schedtool liblz4-tool libxml2-utils xsltproc squashfs-tools
+            pngcrush schedtool liblz4-tool libxml2-utils xsltproc squashfs-tools"
+          # 加速：GitHub 镜像已预置 apt 索引，先直接安装；只有失败时才更新索引重试。
+          if sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ${APT_OPTS} ${PKGS}; then
+            echo "✅ 依赖已安装（跳过 apt-get update）"
+          else
+            echo "⚠️ 直接安装失败，更新索引后重试"
+            UPDATED=0
+            for i in 1 2 3; do
+              if sudo apt-get update ${APT_OPTS}; then
+                UPDATED=1
+                break
+              fi
+              echo "⚠️ apt-get update 第 ${i} 次失败，5 秒后重试"
+              sleep 5
+            done
+            [ "${UPDATED}" = "1" ] || { echo "::error::apt-get update 连续 3 次失败，请检查网络"; exit 1; }
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ${APT_OPTS} ${PKGS}
+          fi
+
+      # 加速：工具链体积不大但解压慢，缓存后 4 个矩阵任务只有首个真正下载
+      - name: 缓存 Clang 13 工具链
+        id: clang-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/toolchain
+          key: clang-13.0.1-20230207-${{ runner.os }}-${{ runner.arch }}
 
       - name: 下载 Clang 13 工具链
+        if: steps.clang-cache.outputs.cache-hit != 'true'
         run: |
+          set -euo pipefail
           wget -q --show-progress "${CLANG_URL}" -O clang.tar.gz
           mkdir -p "${GITHUB_WORKSPACE}/toolchain"
           tar xzf clang.tar.gz -C "${GITHUB_WORKSPACE}/toolchain"
+
+      - name: 校验 Clang 工具链
+        run: |
+          set -euo pipefail
           "${GITHUB_WORKSPACE}/toolchain/bin/clang" --version | head -n 1
 
       - name: CCache 缓存
         uses: hendrikmuhs/ccache-action@v1.2
         with:
           key: kernel-${{ matrix.device }}-${{ github.ref_name }}
+          # 加速：优先回退到本机型历史缓存，再回退到其它机型的缓存，
+          # 让共享源码（绝大多数目标文件）跨机型复用
+          restore-keys: |
+            kernel-${{ matrix.device }}-
+            kernel-
           max-size: 2G
 
       - name: 编译内核（${{ matrix.defconfig }}）
@@ -236,7 +263,6 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="${GITHUB_WORKSPACE}/toolchain/bin:/usr/lib/ccache:${PATH}"
-          export CCACHE_DIR="${GITHUB_WORKSPACE}/.ccache"
           # /proc/version（系统里的“详细内核版本”）括号里就是 user@host；
           # host 写成 localhost，让它看起来像手动编译，而不是 CI runner。
           export KBUILD_BUILD_USER="XuexGao"
@@ -261,8 +287,14 @@ jobs:
           make "${MAKEFLAGS[@]}" "${DEFCONFIG}"
           echo "::endgroup::"
 
-          echo "::group::Make kernel"
-          make "${MAKEFLAGS[@]}" -j"$(nproc --all)" 2>&1 | tee "${GITHUB_WORKSPACE}/build.log"
+          # 加速：只构建最终需要的 Image.gz-dtb（其依赖已含 vmlinux 与 dtbs），
+          # 不跑默认全量目标（本内核无 =m 模块）。
+          echo "::group::Make Image.gz-dtb"
+          make "${MAKEFLAGS[@]}" -j"$(nproc --all)" Image.gz-dtb 2>&1 | tee "${GITHUB_WORKSPACE}/build.log"
+          echo "::endgroup::"
+
+          echo "::group::CCache 命中统计"
+          ccache -s || true
           echo "::endgroup::"
 
           test -f out/arch/arm64/boot/Image.gz-dtb || { echo "::error::未找到 Image.gz-dtb"; exit 1; }
@@ -306,6 +338,37 @@ jobs:
             echo "SUSFS_VERSION=${SUSFS_VERSION}"
             echo "KSU_RELEASE=${KSU_REL}"
           } > "${GITHUB_WORKSPACE}/${DEVICE}-meta.env"
+
+      - name: 校验 SUSFS 版本（必须为 v2.3.0）
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+          DECL="$(sed -n 's/^#define SUSFS_VERSION "\(v[0-9.]*\)"/\1/p' include/linux/susfs.h | head -1)"
+          echo "include/linux/susfs.h: SUSFS_VERSION=${DECL}"
+          [ "${DECL}" = "v2.3.0" ] || { echo "::error::SUSFS 版本应为 v2.3.0，实际 '${DECL}'"; exit 1; }
+          # 2.3.0 起 AS_FLAGS_* 一律存放在 inode->i_mapping->flags；
+          # 若仍有 i_state 存取，说明标志约定不一致（读写错位会让隐藏功能静默失效）
+          BAD="$(grep -rn 'AS_FLAGS_.*i_state\|i_state.*AS_FLAGS_' fs/ include/linux/susfs*.h 2>/dev/null || true)"
+          if [ -n "${BAD}" ]; then
+            echo "::error::仍有 AS_FLAGS_* 存在 inode->i_state 上（应为 i_mapping->flags）："
+            echo "${BAD}"
+            exit 1
+          fi
+          # 2.3.0 新增的 TIF 标志与辅助函数必须齐全
+          for sym in TIF_PROC_NO_SU TIF_PROC_UMOUNTED_FOR_ZYGOTE_NEXT susfs_set_current_proc_no_su susfs_clear_current_proc_umounted; do
+            grep -q "${sym}" include/linux/susfs_def.h || { echo "::error::susfs_def.h 缺少 ${sym}"; exit 1; }
+          done
+          # open_redirect 的读侧用 SRCU；拆除侧必须用 synchronize_srcu 等待 SRCU 读者，
+          # 否则 synchronize_rcu() 不覆盖 SRCU 读者，会留下 UAF 窗口（上游 2.3.0 修复）。
+          grep -qE 'DEFINE_(STATIC_)?SRCU\(susfs_srcu_open_redirect\)' fs/susfs.c \
+            || { echo "::error::open_redirect 缺少 SRCU 定义"; exit 1; }
+          grep -q 'synchronize_srcu(&susfs_srcu_open_redirect)' fs/susfs.c \
+            || { echo "::error::open_redirect 拆除侧缺少 synchronize_srcu"; exit 1; }
+          # 该函数自身持有 SRCU 读锁，返回的字符串必须是拷贝（不能指向链表内节点，
+          # 否则解锁后指针可能失效）
+          grep -q 'strscpy(\*spoofed_name, entry->info.redirected_pathname' fs/susfs.c \
+            || { echo "::error::open_redirect 返回的路径应为拷贝"; exit 1; }
+          echo "✅ SUSFS v2.3.0 结构与标志约定校验通过"
 
       - name: 校验隐藏项（uname / 版本横幅 / config.gz / 日志）
         working-directory: kernel
@@ -474,10 +537,10 @@ jobs:
       #   run: |
       #     curl -fsS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
       #       -d chat_id="${TELEGRAM_CHAT_ID}" \
-      #       -d text="❌ SukiSU 内核编译失败：${DEVICE} ${OS_VERSION} (${GITHUB_REF_NAME})%0A详见 https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+      #       -d text="❌ SukiSU 内核编译失败：${DEVICE} (${GITHUB_REF_NAME})%0A详见 https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
 
   # ---------------------------------------------------------------------------
-  # Job 3: release —— 汇总全部机型 zip，合并为 1 个 Release
+  # Job 3: release —— 汇总全部机型 zip，合并为 1 个 Release（通用内核）
   # ---------------------------------------------------------------------------
   release:
     name: Create GitHub Release
@@ -485,16 +548,14 @@ jobs:
     if: needs.setup.outputs.publish == 'true'
     runs-on: ubuntu-latest
     env:
-      OS_VERSION: ${{ needs.setup.outputs.os_version }}
-      ANDROID: ${{ needs.setup.outputs.android }}
-      LINEAGE_LABEL: ${{ needs.setup.outputs.lineage_label }}
       BUILD_DATE: ${{ needs.setup.outputs.build_date }}
       KSU_VERSION: ${{ needs.setup.outputs.ksu_version }}
       BRANCH: ${{ github.ref_name }}
       DEVICES_JSON: ${{ needs.setup.outputs.devices_json }}
       DEVICE_LIST: ${{ needs.setup.outputs.device_list }}
-      RELEASE_TITLE: OPPO Kernel for ${{ needs.setup.outputs.lineage_label }}
-      TAG_NAME: SukiSU_${{ needs.setup.outputs.os_version }}_${{ needs.setup.outputs.build_date }}
+      # 通用内核：标题/标签都不带系统版本号
+      RELEASE_TITLE: OPPO Kernel (SukiSU + SUSFS 通用版)
+      TAG_NAME: SukiSU_${{ needs.setup.outputs.build_date }}
     steps:
       - name: 检出源码（用于生成 Changes）
         uses: actions/checkout@v4
@@ -530,7 +591,7 @@ jobs:
 
           # ---- 汇总生成正文 ----
           export KV_FULL SUSFS_VERSION
-          export OS_VERSION ANDROID LINEAGE_LABEL BUILD_DATE KSU_VERSION BRANCH DEVICES_JSON DEVICE_LIST
+          export BUILD_DATE KSU_VERSION BRANCH DEVICES_JSON DEVICE_LIST OS_SUPPORT ANDROID_SUPPORT
           python3 - <<'PY'
           import json, os
 
@@ -542,15 +603,18 @@ jobs:
               return os.environ.get(k, "")
 
           devices = json.loads(env("DEVICES_JSON"))
-          osv = env("OS_VERSION"); android = env("ANDROID")
-          lab = env("LINEAGE_LABEL"); date = env("BUILD_DATE")
+          date = env("BUILD_DATE")
           ksu = env("KSU_VERSION"); susfs = env("SUSFS_VERSION")
           br = env("BRANCH"); kv = env("KV_FULL")
+          os_support = env("OS_SUPPORT"); android = env("ANDROID_SUPPORT")
           changes = open(os.path.join(env("GITHUB_WORKSPACE"), "changes.txt")).read()
 
           device_names = " / ".join(d["label"] for d in devices)
 
           lines = []
+          lines.append("> **通用内核**：同一个包通刷 **LineageOS 21 / 22.0 / 22.1**（Android 14 / 15），")
+          lines.append("> 只需按机型下载，不必按系统版本区分。")
+          lines.append("")
           lines.append("### 下载选择")
           lines.append("")
           lines.append("| 内核 | 特性 | 适用场景 | 管理器下载 |")
@@ -566,12 +630,12 @@ jobs:
           lines.append("| 机型 | 下载 | 平台 | 内核版本 |")
           lines.append("|---|---|---|---|")
           for d in devices:
-              lines.append(f"| OPPO {d['label']} | `SukiSU_{d['device']}_{osv}_{date}.zip` | {d['soc']} / {d['snapdragon']} | {kv} |")
+              lines.append(f"| OPPO {d['label']} | `SukiSU_{d['device']}_{date}.zip` | {d['soc']} / {d['snapdragon']} | {kv} |")
           lines.append("")
           lines.append("### 共同信息")
           lines.append("")
           lines.append(f"- **设备**: OPPO {device_names}")
-          lines.append(f"- **系统**: {lab} (Android {android}), {date} 版本")
+          lines.append(f"- **系统**: {os_support} (Android {android})，无需按版本区分")
           lines.append(f"- **内核版本**: {kv} (Non-GKI)")
           lines.append("- **编译器**: ZyCromerZ Clang 13.0.1 + GCC (aarch64/arm)")
           lines.append(f"- **分支**: {br}")
