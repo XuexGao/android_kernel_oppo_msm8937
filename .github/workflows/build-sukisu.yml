@@ -9,8 +9,11 @@
 #   · 并行编译 4 个机型带 SukiSU 的内核 → AnyKernel3 打包
 #   · 一次构建合并为 1 个 Release，包含全部机型 zip 资产
 #   · 命名：SukiSU_机型_8位日期.zip（例：SukiSU_R9s_20260817.zip）
-#   · Release 标题不含系统版本号，因为一个包通刷 LOS21 / 22.0 / 22.1
+#   · Release 标题不含系统版本号，形如「OPPO Kernel SukiSU + SUSFS 2.3.0」
+#     （SUSFS 版本号从 include/linux/susfs.h 动态读取，升级后不会写死过时）
 #   · Release 正文：底部自动追加 Changes（最近提交，提交标题 (短哈希)）
+#
+# 分支：唯一开发分支 sukisu-susfs-bpf（默认分支），一份产物通刷 LOS21/22.0/22.1
 #
 # 编译加速（相对旧版）：
 #   1. Clang 工具链改用 actions/cache 缓存，省去每次 4 个矩阵任务的重复下载解压
@@ -68,12 +71,12 @@ jobs:
         run: |
           set -euo pipefail
 
-          # ---- 0. 分支说明：通用内核不再要求分支名带系统版本 ----
+          # ---- 0. 分支说明：通用内核，唯一开发分支为 sukisu-susfs-bpf ----
           BRANCH="${GITHUB_REF_NAME}"
           echo "branch=${BRANCH}"
-          if [[ "${BRANCH}" =~ ^lineage-.*-sukisu-susfs$ ]]; then
-            echo "::warning::当前分支 '${BRANCH}' 是按系统版本切分的旧分支。"
-            echo "::warning::内核已通用，建议改用统一的 sukisu-susfs 分支，一份产物通刷 LOS21/22.0/22.1。"
+          if [[ "${BRANCH}" != "sukisu-susfs-bpf" ]]; then
+            echo "::warning::当前分支 '${BRANCH}' 不是 sukisu-susfs-bpf。"
+            echo "::warning::通用内核以 sukisu-susfs-bpf 为唯一开发分支，一份产物通刷 LOS21/22.0/22.1。"
           fi
 
           # ---- 1. 编译日期（8 位）----
@@ -554,7 +557,8 @@ jobs:
       DEVICES_JSON: ${{ needs.setup.outputs.devices_json }}
       DEVICE_LIST: ${{ needs.setup.outputs.device_list }}
       # 通用内核：标题/标签都不带系统版本号
-      RELEASE_TITLE: OPPO Kernel (SukiSU + SUSFS 通用版)
+      # RELEASE_TITLE 由「生成 Release 说明」步骤按源码里的 SUSFS 版本动态拼出
+      # （形如 "OPPO Kernel SukiSU + SUSFS 2.3.0"），避免升级 SUSFS 后标题写死过时。
       TAG_NAME: SukiSU_${{ needs.setup.outputs.build_date }}
     steps:
       - name: 检出源码（用于生成 Changes）
@@ -585,6 +589,13 @@ jobs:
             [ -n "${KSU_FROM_META}" ] && export KSU_VERSION="${KSU_FROM_META}"
           fi
           echo "KV_FULL=${KV_FULL} | SUSFS_VERSION=${SUSFS_VERSION} | KSU_VERSION=${KSU_VERSION}"
+
+          # ---- Release 标题：SUSFS 版本取自源码，标题不写死 ----
+          # 形如 "OPPO Kernel SukiSU + SUSFS 2.3.0"（去掉 v 前缀，不加括号）
+          SUSFS_NUM="${SUSFS_VERSION#v}"
+          RELEASE_TITLE="OPPO Kernel SukiSU + SUSFS ${SUSFS_NUM}"
+          echo "RELEASE_TITLE=${RELEASE_TITLE}"
+          echo "RELEASE_TITLE=${RELEASE_TITLE}" >> "$GITHUB_ENV"
 
           # ---- Changes（最近提交，提交标题 (短哈希)）----
           git log -10 --pretty=format:'%s (%h)' > "${GITHUB_WORKSPACE}/changes.txt"
