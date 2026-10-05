@@ -63,11 +63,12 @@
 #include <asm/tlb.h>
 
 #ifdef CONFIG_KSU
-extern bool ksu_execveat_hook __read_mostly;
+/* The old execveat_hook bool runtime toggle between the two hook flavours is
+ * gone in BakaSU; that name is listed as "incompatible" by
+ * KernelSU/kernel/tools/inline_hook_check.mk, so it must not appear in this
+ * file.  The dispatch now happens inside ksu_handle_execveat() itself. */
 extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr,
 			       void *argv, void *envp, int *flags);
-extern int ksu_handle_execveat_sucompat(int *fd, struct filename **filename_ptr,
-				       void *argv, void *envp, int *flags);
 #endif
 
 #include <trace/events/task.h>
@@ -1852,10 +1853,12 @@ int do_execve(struct filename *filename,
 	struct user_arg_ptr argv = { .ptr.native = __argv };
 	struct user_arg_ptr envp = { .ptr.native = __envp };
 #ifdef CONFIG_KSU
-	if (unlikely(ksu_execveat_hook))
-		ksu_handle_execveat((int *)AT_FDCWD, &filename, &argv, &envp, 0);
-	else
-		ksu_handle_execveat_sucompat((int *)AT_FDCWD, &filename, &argv, &envp, 0);
+	/* Single call, per the official integration document: BakaSU's
+	 * ksu_handle_execveat() already runs the su-compat dispatch internally
+	 * (ksu_handle_execveat_sucompat() is a pure pass-through that just
+	 * forwards to ksu_handle_execveat() in SUSFS mode), so calling both
+	 * would process the same exec twice. */
+	ksu_handle_execveat((int *)AT_FDCWD, &filename, &argv, &envp, 0);
 #endif
 	return do_execveat_common(AT_FDCWD, filename, argv, envp, 0);
 }
@@ -1872,13 +1875,11 @@ int do_execveat(int fd, struct filename *filename,
 	 * execveat(AT_FDCWD, path, argv, envp, 0), so the su/ksud redirection
 	 * has to happen here as well or it silently stops working. Only the
 	 * execve-equivalent form is handled: with a different dirfd or with
-	 * AT_* flags the path we are holding is not the one the caller named. */
-	if (unlikely(fd == AT_FDCWD && flags == 0)) {
-		if (unlikely(ksu_execveat_hook))
-			ksu_handle_execveat((int *)AT_FDCWD, &filename, &argv, &envp, 0);
-		else
-			ksu_handle_execveat_sucompat((int *)AT_FDCWD, &filename, &argv, &envp, 0);
-	}
+	 * AT_* flags the path we are holding is not the one the caller named.
+	 * BakaSU has no execveat syscall hook outside tracepoint mode, so this
+	 * call site still carries the coverage. */
+	if (unlikely(fd == AT_FDCWD && flags == 0))
+		ksu_handle_execveat((int *)AT_FDCWD, &filename, &argv, &envp, 0);
 #endif
 	return do_execveat_common(fd, filename, argv, envp, flags);
 }
@@ -1897,10 +1898,7 @@ static int compat_do_execve(struct filename *filename,
 		.ptr.compat = __envp,
 	};
 #ifdef CONFIG_KSU
-	if (unlikely(ksu_execveat_hook))
-		ksu_handle_execveat((int *)AT_FDCWD, &filename, &argv, &envp, 0);
-	else
-		ksu_handle_execveat_sucompat((int *)AT_FDCWD, &filename, &argv, &envp, 0);
+	ksu_handle_execveat((int *)AT_FDCWD, &filename, &argv, &envp, 0);
 #endif
 	return do_execveat_common(AT_FDCWD, filename, argv, envp, 0);
 }
@@ -1920,12 +1918,8 @@ static int compat_do_execveat(int fd, struct filename *filename,
 	};
 #ifdef CONFIG_KSU
 	/* Same as do_execveat(): only the execve-equivalent call shape. */
-	if (unlikely(fd == AT_FDCWD && flags == 0)) {
-		if (unlikely(ksu_execveat_hook))
-			ksu_handle_execveat((int *)AT_FDCWD, &filename, &argv, &envp, 0);
-		else
-			ksu_handle_execveat_sucompat((int *)AT_FDCWD, &filename, &argv, &envp, 0);
-	}
+	if (unlikely(fd == AT_FDCWD && flags == 0))
+		ksu_handle_execveat((int *)AT_FDCWD, &filename, &argv, &envp, 0);
 #endif
 	return do_execveat_common(fd, filename, argv, envp, flags);
 }
