@@ -7,13 +7,18 @@
 #      异且全部来自构建时间戳与随机签名密钥，无功能差异）
 #   · 仅支持手动触发（Actions 页 Run workflow），可点选机型 / 是否发布
 #   · 并行编译 4 个机型带 SukiSU 的内核 → AnyKernel3 打包
-#   · 一次构建合并为 1 个 Release，包含全部机型 zip 资产
+#   · 一次构建合并为 1 个 Release，包含全部机型 zip 资产，
+#     并附带与内核 versionCode 对齐的 SukiSU-Ultra 管理器 APK（尽力而为）
 #   · 命名：SukiSU_机型_8位日期.zip（例：SukiSU_R9s_20260817.zip）
 #   · Release 标题不含系统版本号，形如「OPPO Kernel SukiSU + SUSFS 2.3.0」
 #     （SUSFS 版本号从 include/linux/susfs.h 动态读取，升级后不会写死过时）
 #   · Release 正文：底部自动追加 Changes（最近提交，提交标题 (短哈希)）
 #
 # 分支：唯一开发分支 sukisu-susfs-bpf（默认分支），一份产物通刷 LOS21/22.0/22.1
+#
+# 版本策略：SukiSU 只跟随「正式版」（tag，当前 v4.2.0 / versionCode 40900），
+#   不追 main。内核 KSU_GIT_COMMITS/RELEASE/SHA 与之钉死对齐，管理器 APK 也取
+#   官方 v4.2.0 release 的资产（release 长期有效，Actions artifact 会 90 天过期）。
 #
 # 编译加速（相对旧版）：
 #   1. Clang 工具链改用 actions/cache 缓存，省去每次 4 个矩阵任务的重复下载解压
@@ -609,9 +614,9 @@ jobs:
           python3 - <<'PY'
           import json, os
 
-          # 管理器下载指向 SukiSU-Ultra 官方 build-manager 工作流的产物页，
-          # 不再用频道里的单条消息链接（那条会随版本失效）。
-          MANAGER_URL = "https://github.com/SukiSU-Ultra/SukiSU-Ultra/actions/workflows/build-manager.yml"
+          # 管理器获取入口。SukiSU 固定跟随正式版（tag），内核版本码与之对齐；
+          # 这里给 Actions 页方便取最新构建，正式版 APK 也可从 Releases 页拿。
+          MANAGER_URL = "https://github.com/SukiSU-Ultra/SukiSU-Ultra/actions?query=branch%3Amain"
 
           def env(k):
               return os.environ.get(k, "")
@@ -638,6 +643,7 @@ jobs:
           lines.append("提供格式：")
           lines.append("")
           lines.append("- **.zip** — AnyKernel3 刷入包，通过 recovery (TWRP) 刷入")
+          lines.append("- **.apk** — SukiSU-Ultra 管理器（内核版本码 40900，与内核一致；随本页一并提供）")
           lines.append("")
           lines.append("### 本次构建")
           lines.append("")
@@ -656,9 +662,9 @@ jobs:
           lines.append("")
           lines.append(f"### SukiSU-Ultra (含 SUSFS {susfs})")
           lines.append("")
-          lines.append(f"- SukiSU-Ultra v{ksu}")
-          lines.append(f"- SUSFS {susfs}")
-          lines.append(f"- 管理器下载: [{MANAGER_URL}]({MANAGER_URL})")
+          lines.append(f"- SukiSU-Ultra v{ksu} + SUSFS {susfs}")
+          lines.append(f"- 管理器: 本页资产里的 `SukiSU_{ksu}_40900.apk`（与内核 versionCode 一致，签名与上游正式版逐字节相同）")
+          lines.append(f"  - 也可从 [SukiSU-Ultra 构建产物]({MANAGER_URL}) 自行获取 versionCode=40900 的 APK")
           lines.append("")
           lines.append("### 刷入方法")
           lines.append("")
@@ -683,6 +689,46 @@ jobs:
 
           echo "---- release-body.md ----"
           cat "${GITHUB_WORKSPACE}/release-body.md"
+
+      # 下载与内核版本码对齐的 SukiSU-Ultra 管理器 APK（尽力而为）。
+      # SukiSU 只跟随正式版：内核钉死 KSU_RELEASE=4.2.0 / KSU_VERSION=40900，
+      # 与官方 v4.2.0 release 的 SukiSU_v4.2.0_40900-release.apk 完全对应
+      # （已核对签名：cert size 0x35c、sha256 947ae944…，与内核
+      # KernelSU/kernel/Makefile 里的 KSU_EXPECTED_SIZE/HASH 逐字节一致）。
+      # 这里刻意取 release 资产而不是 Actions artifact：release 长期有效，
+      # 而 artifact 90 天就会过期。
+      # 这一步是「尽力而为」：取不到只发 notice，绝不影响内核产物与发布。
+      - name: 下载 SukiSU-Ultra 管理器 APK（尽力而为）
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # 版本号取自构建元信息（meta.env 的 KSU_RELEASE），与内核源码一致
+          META="$(ls dist/*/*-meta.env 2>/dev/null | head -1)"
+          KSU_REL="$(grep '^KSU_RELEASE=' "${META}" 2>/dev/null | cut -d= -f2- || true)"
+          [ -n "${KSU_REL}" ] || KSU_REL="${KSU_VERSION:-4.2.0}"
+          # versionCode：4*10000 + 提交数 - 2815 = 40900（见 Makefile 注释）
+          APK_VER="40900"
+          OUT="${GITHUB_WORKSPACE}/SukiSU_${KSU_REL}_${APK_VER}.apk"
+          rm -rf /tmp/apk && mkdir -p /tmp/apk
+
+          gh release download "v${KSU_REL}" --repo SukiSU-Ultra/SukiSU-Ultra \
+            --pattern "*_${APK_VER}-release.apk" --dir /tmp/apk --clobber 2>/dev/null || true
+
+          SRC="$(ls /tmp/apk/*_${APK_VER}-release.apk 2>/dev/null | head -1)"
+          if [ -n "${SRC}" ]; then
+            cp -v "${SRC}" "${OUT}"
+            echo "✅ 管理器 APK 已就绪: $(basename "${OUT}") ($(stat -c%s "${OUT}") bytes)"
+          else
+            echo "::notice::未附带管理器 APK（下载失败或上游资产改名）。请从 https://github.com/SukiSU-Ultra/SukiSU-Ultra/actions?query=branch%3Amain 自行获取 versionCode=${APK_VER} 的 APK。"
+          fi
+
+          ARTIFACTS="dist/*/*.zip"
+          if [ -f "${OUT}" ]; then
+            ARTIFACTS="${ARTIFACTS},$(basename "${OUT}")"
+          fi
+          echo "ARTIFACTS=${ARTIFACTS}" >> "$GITHUB_ENV"
+          echo "发布资产: ${ARTIFACTS}"
 
       # ncipollo/release-action 只会「创建」tag，不会移动已存在的 tag：
       # 同日重复构建时 tag 已存在，会被留在旧提交上（曾导致 SukiSU_20261005
@@ -725,7 +771,9 @@ jobs:
           # 传给 action 变成 "True" 而匹配失败，静默退化为不指定）
           makeLatest: 'true'
           bodyFile: release-body.md
-          artifacts: dist/*/*.zip
+          # ARTIFACTS 由「下载 SukiSU-Ultra 管理器 APK」步骤动态注入
+          # （内核 zip + 取到时附带的管理器 APK）
+          artifacts: ${{ env.ARTIFACTS }}
           allowUpdates: true        # 同日重复构建时更新已有 Release
           removeArtifacts: true     # 替换同名资产
           token: ${{ secrets.GITHUB_TOKEN }}
