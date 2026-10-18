@@ -21,6 +21,10 @@
 #include <linux/uaccess.h>
 #include <asm/unistd.h>
 
+#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+extern void susfs_sus_kstat_spoof_generic_fillattr(struct inode *inode, struct kstat *stat);
+#endif
+
 /**
  * generic_fillattr - Fill in the basic attributes from the inode struct
  * @inode: Inode to use as the source
@@ -45,6 +49,10 @@ void generic_fillattr(struct inode *inode, struct kstat *stat)
 	stat->ctime = inode->i_ctime;
 	stat->blksize = i_blocksize(inode);
 	stat->blocks = inode->i_blocks;
+#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+	/* SUSFS：按 sus_kstat 表伪造 stat 结果（隐藏被屏蔽文件的真实大小/时间等） */
+	susfs_sus_kstat_spoof_generic_fillattr(inode, stat);
+#endif
 
 	if (IS_NOATIME(inode))
 		stat->result_mask &= ~STATX_ATIME;
@@ -75,9 +83,16 @@ int vfs_getattr_nosec(const struct path *path, struct kstat *stat,
 	stat->result_mask |= STATX_BASIC_STATS;
 	request_mask &= STATX_ALL;
 	query_flags &= KSTAT_QUERY_FLAGS;
-	if (inode->i_op->getattr)
-		return inode->i_op->getattr(path, stat, request_mask,
-					    query_flags);
+	if (inode->i_op->getattr) {
+		int err = inode->i_op->getattr(path, stat, request_mask,
+					       query_flags);
+#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+		/* 文件系统自带 getattr 时，返回前同样要做 sus_kstat 伪造 */
+		if (!err)
+			susfs_sus_kstat_spoof_generic_fillattr(inode, stat);
+#endif
+		return err;
+	}
 
 	generic_fillattr(inode, stat);
 	return 0;

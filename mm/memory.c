@@ -80,6 +80,10 @@
 #include <asm/tlbflush.h>
 #include <linux/pgtable.h>
 
+#ifdef CONFIG_KSU_SUSFS_SUS_MAP
+#include <linux/susfs_def.h>
+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MAP
+
 #include "internal.h"
 
 #if defined(LAST_CPUPID_NOT_IN_PAGE_FLAGS) && !defined(CONFIG_COMPILE_TEST)
@@ -4483,6 +4487,16 @@ int __access_remote_vm(struct task_struct *tsk, struct mm_struct *mm,
 	struct vm_area_struct *vma;
 	void *old_buf = buf;
 	int write = gup_flags & FOLL_WRITE;
+#ifdef CONFIG_KSU_SUSFS_SUS_MAP
+	/*
+	 * SUSFS sus_map：进程内存扫描（/proc/pid/mem 之类）如果落在被隐藏的
+	 * mapping 上，直接返回 0 字节，不让内容泄露出去。
+	 * 注意 4.19 这里用的是 mmap_read_lock_killable()，不是 4.9 的
+	 * down_read(&mm->mmap_sem)；get_user_pages_remote() 也多了最后的
+	 * locked 参数。hook 的位置与语义保持与 4.9 一致。
+	 */
+	vma = find_vma(mm, addr);
+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MAP
 
 	if (mmap_read_lock_killable(mm))
 		return 0;
@@ -4492,6 +4506,11 @@ int __access_remote_vm(struct task_struct *tsk, struct mm_struct *mm,
 		int bytes, ret, offset;
 		void *maddr;
 		struct page *page = NULL;
+
+#ifdef CONFIG_KSU_SUSFS_SUS_MAP
+		if (vma && vma->vm_file && SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file)))
+			break;
+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MAP
 
 		ret = get_user_pages_remote(tsk, mm, addr, 1,
 				gup_flags, &page, &vma, NULL);

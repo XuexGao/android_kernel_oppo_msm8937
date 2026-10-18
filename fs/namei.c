@@ -41,6 +41,17 @@
 #include <linux/uaccess.h>
 #include <linux/build_bug.h>
 
+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+#include <linux/susfs_def.h>
+extern bool susfs_is_inode_sus_path(struct inode *inode);
+extern const struct qstr susfs_fake_qstr_name;
+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_PATH
+
+#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+#include <linux/susfs_def.h>
+extern int susfs_open_redirect_spoof_vfs_readlink(struct inode *inode, char __user *buffer, int buflen);
+#endif // #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+
 #include "internal.h"
 #include "mount.h"
 
@@ -1653,6 +1664,9 @@ static int lookup_fast(struct nameidata *nd,
 	struct vfsmount *mnt = nd->path.mnt;
 	struct dentry *dentry, *parent = nd->path.dentry;
 	int status = 1;
+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+	bool is_nd_state_lookup_last_and_open_last = (nd->flags & ND_FLAGS_LOOKUP_LAST);
+#endif
 	int err;
 
 	/*
@@ -1664,6 +1678,19 @@ static int lookup_fast(struct nameidata *nd,
 		unsigned seq;
 		bool negative;
 		dentry = __d_lookup_rcu(parent, &nd->last, &seq);
+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+		/*
+		 * sus_path：RCU 快查命中被隐藏的路径时，直接当作没查到。
+		 * 注意这里**不能** dput() —— __d_lookup_rcu() 不增加引用计数。
+		 */
+		if (is_nd_state_lookup_last_and_open_last && dentry && !IS_ERR(dentry) &&
+		    dentry->d_inode && susfs_is_inode_sus_path(dentry->d_inode))
+		{
+			if (d_in_lookup(dentry))
+				d_lookup_done(dentry);
+			dentry = NULL;
+		}
+#endif
 		if (unlikely(!dentry)) {
 			if (unlazy_walk(nd))
 				return -ECHILD;
@@ -1741,12 +1768,24 @@ static struct dentry *__lookup_slow(const struct qstr *name,
 	struct dentry *dentry, *old;
 	struct inode *inode = dir->d_inode;
 	DECLARE_WAIT_QUEUE_HEAD_ONSTACK(wq);
+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+	bool found_sus_path = false;
+	bool is_nd_flags_lookup_last = (flags & ND_FLAGS_LOOKUP_LAST);
+	/*
+	 * 4.19 的 struct nameidata 没有 state 字段，SUSFS 用 flags 的
+	 * ND_FLAGS_LOOKUP_LAST 位（bit25，4.19 未占用）传递
+	 * "这是路径最后一段" 的语义，见 include/linux/susfs_def.h。
+	 */
+#endif
 
 	/* Don't go there if it's already dead */
 	if (unlikely(IS_DEADDIR(inode)))
 		return ERR_PTR(-ENOENT);
 again:
 	dentry = d_alloc_parallel(dir, name, &wq);
+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+retry:
+#endif
 	if (IS_ERR(dentry))
 		return dentry;
 	if (unlikely(!d_in_lookup(dentry))) {
@@ -1756,6 +1795,18 @@ again:
 				if (!error) {
 					d_invalidate(dentry);
 					dput(dentry);
+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+					/*
+					 * 如果刚才那一轮已经命中 sus_path 并换成了
+					 * 假名字，这里要重新用假名字分配，避免
+					 * 又回落去查真实文件。
+					 */
+					if (found_sus_path) {
+						dentry = d_alloc_parallel(dir,
+							&susfs_fake_qstr_name, &wq);
+						goto retry;
+					}
+#endif
 					goto again;
 				}
 				dput(dentry);
@@ -1770,6 +1821,24 @@ again:
 			dentry = old;
 		}
 	}
+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+	/*
+	 * 路径最后一段命中 sus_path：把真实 dentry 丢掉，换成
+	 * susfs_fake_qstr_name 去查，这样调用者看到的是一个不存在的
+	 * 假文件，真实目标不暴露。
+	 */
+	if (is_nd_flags_lookup_last && !found_sus_path && dentry && !IS_ERR(dentry) &&
+	    dentry->d_inode && susfs_is_inode_sus_path(dentry->d_inode))
+	{
+		if (d_in_lookup(dentry))
+			d_lookup_done(dentry);
+		if (!(flags & LOOKUP_RCU))
+			dput(dentry);
+		dentry = d_alloc_parallel(dir, &susfs_fake_qstr_name, &wq);
+		found_sus_path = true;
+		goto retry;
+	}
+#endif
 	return dentry;
 }
 
@@ -1902,6 +1971,11 @@ static int walk_component(struct nameidata *nd, int flags)
 	if (unlikely(err <= 0)) {
 		if (err < 0)
 			return err;
+		/*
+		 * ND_FLAGS_LOOKUP_LAST 已经直接放在 nd->flags 里由 lookup_last()
+		 * 设置，这里 lookup_slow() 会把它一并传给 __lookup_slow()，
+		 * 无需再像 4.9（用 nd->state）那样额外转写一次。
+		 */
 		path.dentry = lookup_slow(&nd->last, nd->path.dentry,
 					  nd->flags);
 		if (IS_ERR(path.dentry))
@@ -2363,6 +2437,13 @@ static inline int lookup_last(struct nameidata *nd)
 {
 	if (nd->last_type == LAST_NORM && nd->last.name[nd->last.len])
 		nd->flags |= LOOKUP_FOLLOW | LOOKUP_DIRECTORY;
+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+	/*
+	 * 标记"这是路径最后一段"。4.19 没有 nd->state，直接复用 flags 的
+	 * ND_FLAGS_LOOKUP_LAST 位；walk_component -> __lookup_slow 会看到它。
+	 */
+	nd->flags |= ND_FLAGS_LOOKUP_LAST;
+#endif
 
 	nd->flags &= ~LOOKUP_PARENT;
 	return walk_component(nd, 0);
@@ -4925,6 +5006,19 @@ int vfs_readlink(struct dentry *dentry, char __user *buffer, int buflen)
 		if (IS_ERR(link))
 			return PTR_ERR(link);
 	}
+#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+	/*
+	 * open_redirect：该 inode 被标记需要重定向时，readlink 也返回伪造的
+	 * 目标路径，否则攻击方只要读一下软链就能看到真实位置。
+	 */
+	if (SUSFS_IS_INODE_OPEN_REDIRECT(inode)) {
+		res = susfs_open_redirect_spoof_vfs_readlink(inode, buffer, buflen);
+		if (!res) {
+			do_delayed_call(&done);
+			return res;
+		}
+	}
+#endif
 	res = readlink_copy(buffer, buflen, link);
 	do_delayed_call(&done);
 	return res;
