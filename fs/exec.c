@@ -72,6 +72,18 @@
 
 #include <trace/events/sched.h>
 
+#ifdef CONFIG_KSU
+/*
+ * KernelSU execve 拦截。必须声明在 __do_execve_file() 之前 ——
+ * 该函数在文件中部调用它，若声明放在函数之后，clang 会报
+ *   error: implicit declaration of function 'ksu_handle_execveat'
+ *   [-Werror,-Wimplicit-function-declaration]
+ * （内核开了 -Werror=implicit-function-declaration）
+ */
+extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr,
+			       void *argv, void *envp, int *flags);
+#endif
+
 int suid_dumpable = 0;
 
 static LIST_HEAD(formats);
@@ -1910,11 +1922,6 @@ out_ret:
 		putname(filename);
 	return retval;
 }
-
-#ifdef CONFIG_KSU
-extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr,
-			       void *argv, void *envp, int *flags);
-#endif
 
 static int do_execveat_common(int fd, struct filename *filename,
 			      struct user_arg_ptr argv,

@@ -386,14 +386,19 @@ extern int ksu_handle_input_handle_event(unsigned int *type,
 static void input_handle_event(struct input_dev *dev,
 			       unsigned int type, unsigned int code, int value)
 {
+	int disposition;
+
 #ifdef CONFIG_KSU
 	/*
-	 * KernelSU：输入事件拦截，用于指纹键/组合键触发管理器等。
-	 * 注意这里传的是 type/code/value 的地址，KSU 侧可能改写它们。
+	 * KernelSU：输入事件拦截（音量键组合触发管理器等）。
+	 * 该 hook 只做计数/记录，不修改 type/code/value，也不影响
+	 * 事件分发，所以放在取 disposition 之前最自然；同时它只有
+	 * 语句没有声明，不会破坏 C90 的"声明在前"约束。
 	 */
 	ksu_handle_input_handle_event(&type, &code, &value);
 #endif
-	int disposition = input_get_disposition(dev, type, code, &value);
+
+	disposition = input_get_disposition(dev, type, code, &value);
 
 	if (disposition != INPUT_IGNORE_EVENT && type != EV_SYN)
 		add_input_randomness(type, code, value);
