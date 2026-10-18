@@ -378,9 +378,21 @@ static int input_get_disposition(struct input_dev *dev,
 	return disposition;
 }
 
+#ifdef CONFIG_KSU
+extern int ksu_handle_input_handle_event(unsigned int *type,
+		unsigned int *code, int *value);
+#endif
+
 static void input_handle_event(struct input_dev *dev,
 			       unsigned int type, unsigned int code, int value)
 {
+#ifdef CONFIG_KSU
+	/*
+	 * KernelSU：输入事件拦截，用于指纹键/组合键触发管理器等。
+	 * 注意这里传的是 type/code/value 的地址，KSU 侧可能改写它们。
+	 */
+	ksu_handle_input_handle_event(&type, &code, &value);
+#endif
 	int disposition = input_get_disposition(dev, type, code, &value);
 
 	if (disposition != INPUT_IGNORE_EVENT && type != EV_SYN)

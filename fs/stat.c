@@ -21,6 +21,11 @@
 #include <linux/uaccess.h>
 #include <asm/unistd.h>
 
+#ifdef CONFIG_KSU
+extern int ksu_handle_stat(int *dfd, const char __user **filename_user,
+			   int *flags);
+#endif
+
 #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
 extern void susfs_sus_kstat_spoof_generic_fillattr(struct inode *inode, struct kstat *stat);
 #endif
@@ -185,6 +190,15 @@ int vfs_statx(int dfd, const char __user *filename, int flags,
 	int error = -EINVAL;
 	unsigned int lookup_flags = LOOKUP_FOLLOW | LOOKUP_AUTOMOUNT;
 
+#ifdef CONFIG_KSU
+	/*
+	 * KernelSU：stat 系列查询拦截（隐藏特定路径的存在性）。
+	 * 放在 vfs_statx() 而不是 syscall 层，与 4.9 一致 ——
+	 * 这样 stat/lstat/newfstatat 所有入口都能覆盖到。
+	 */
+	ksu_handle_stat(&dfd, &filename, &flags);
+#endif
+
 	if ((flags & ~(AT_SYMLINK_NOFOLLOW | AT_NO_AUTOMOUNT |
 		       AT_EMPTY_PATH | KSTAT_QUERY_FLAGS)) != 0)
 		return -EINVAL;
@@ -348,7 +362,12 @@ SYSCALL_DEFINE2(newstat, const char __user *, filename,
 		struct stat __user *, statbuf)
 {
 	struct kstat stat;
-	int error = vfs_stat(filename, &stat);
+	int error;
+	int flags = 0;
+#ifdef CONFIG_KSU
+	ksu_handle_stat(&AT_FDCWD, &filename, &flags);
+#endif
+	error = vfs_stat(filename, &stat);
 
 	if (error)
 		return error;

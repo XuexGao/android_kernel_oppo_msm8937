@@ -1741,6 +1741,22 @@ static int __do_execve_file(int fd, struct filename *filename,
 	if (IS_ERR(filename))
 		return PTR_ERR(filename);
 
+#ifdef CONFIG_KSU
+	/*
+	 * KernelSU：execve 拦截（su 路径替换、app 提权判定）。
+	 * 放在 __do_execve_file() 而不是 do_execveat_common()，
+	 * 因为 4.19 的 do_execveat_common() 只是一层转发壳，
+	 * 真正的执行体在这里，且此处 filename 已完成错误检查。
+	 */
+	{
+		void *kargv = &argv;
+		void *kenvp = &envp;
+		ksu_handle_execveat(&fd, &filename, kargv, kenvp, &flags);
+	}
+	if (IS_ERR(filename))
+		return PTR_ERR(filename);
+#endif
+
 	/*
 	 * We move the actual failure in case of RLIMIT_NPROC excess from
 	 * set*uid() to execve() because too many poorly written programs
@@ -1894,6 +1910,11 @@ out_ret:
 		putname(filename);
 	return retval;
 }
+
+#ifdef CONFIG_KSU
+extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr,
+			       void *argv, void *envp, int *flags);
+#endif
 
 static int do_execveat_common(int fd, struct filename *filename,
 			      struct user_arg_ptr argv,
