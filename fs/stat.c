@@ -363,10 +363,7 @@ SYSCALL_DEFINE2(newstat, const char __user *, filename,
 {
 	struct kstat stat;
 	int error;
-	int flags = 0;
-#ifdef CONFIG_KSU
-	ksu_handle_stat(&AT_FDCWD, &filename, &flags);
-#endif
+
 	error = vfs_stat(filename, &stat);
 
 	if (error)
