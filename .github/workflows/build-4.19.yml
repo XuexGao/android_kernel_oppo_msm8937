@@ -38,6 +38,7 @@ on:
   push:
     branches:
       - lineage-22.1-k4.19
+      - bakasu-k4.19
     paths:
       - 'ci/**'
 
@@ -116,6 +117,8 @@ jobs:
           # BPF + 容器（droidspaces）支持：完整 namespace 全集、
           # cgroup 控制器、BPF 显式重申。详见该 fragment 头部注释。
           BPFC = "vendor/oppo-bpf-containers.config"
+          # BakaSU + SUSFS 配置（仅 bakasu-k4.19 分支的 R9s-k su 目标使用）
+          BAKASU = "vendor/oppo-bakasu-susfs.config"
           targets = [
             {
               "target": "base", "label": "4.19 base smoke",
@@ -135,9 +138,10 @@ jobs:
             },
             {
               # 保留一份带 KernelSU 的产物，便于对照/将来合入
-              "target": "R9s-ksu", "label": "R9s (with KernelSU)",
+              # BakaSU + SUSFS：用新 KSU 源码 + SUSFS hook + 专用配置
+              "target": "R9s-ksu", "label": "R9s (BakaSU + SUSFS)",
               "defconfig": "vendor/msm8953-perf_defconfig",
-              "fragments": BASE_FRAGMENTS + " " + OPPO,
+              "fragments": BASE_FRAGMENTS + " " + OPPO + " " + BPFC + " " + BAKASU,
               "device_names": "r9s|R9s|16017|16027|msm8953",
               "soc": "MSM8953", "snapdragon": "Snapdragon 625",
               "allow_fail": True,
