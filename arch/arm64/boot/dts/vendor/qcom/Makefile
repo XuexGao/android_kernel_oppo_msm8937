@@ -629,6 +629,13 @@ endif
 dtb-$(CONFIG_MACH_16017) += msm8953-mtp_16017.dtb
 dtb-$(CONFIG_MACH_16027) += msm8953-mtp_16027.dtb
 
+# OPPO A57 (MSM8940 / PMI8950) —— 板级 DTB
+# MSM8940 与 MSM8937 同芯片不同 SKU，板级 DTS 在 oppo-msm8937/ 下：
+#   msm8940.dtsi                 #include ../msm8937.dtsi + 覆盖 msm-id/USB/GPU
+#   msm8940-pmi8950-mtp.dtsi     再叠加 pmi8950 与 mtp 板级配置
+# board-id = <8 0 16061>，与 R9s 的 <8 0 16017/16027> 互不冲突。
+dtb-$(CONFIG_MACH_16061) += msm8940-pmi8950-mtp_16061.dtb
+
 always		:= $(dtb-y)
 subdir-y	:= $(dts-dirs)
 clean-files    := *.dtb *.dtbo

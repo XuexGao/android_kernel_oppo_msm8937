@@ -4,10 +4,15 @@
 #   4.9 树里 MACH_OPPO 依赖 ARCH_MSM，而 4.19 基线（LineageOS sdm660 +
 #   CIP 统一 MSM8953）没有 ARCH_MSM 这个笼统符号，只有具体的
 #   ARCH_MSM8953 / ARCH_MSM8937 / ARCH_SDM450 等。
-#   同理 ARCH_MSM8940（A57）与 ARCH_MSM8976（R9s Plus / R9 Plus）在 4.19
-#   基线里并不存在，所以这里只保留 4.19 能真实支持的板子。
-#   要再做 MSM8976 / MSM8940 机型，需要先把对应 SoC 支持从 4.9 移植过来
-#   （工作量大，且不属于本次 R9s 升级的目标）。
+#   关于 MSM8940（A57 / 16061）：
+#   4.19 基线里没有单独的 ARCH_MSM8940，但 MSM8940 与 MSM8937 是同一颗
+#   芯片的不同 SKU，硬件（CPU/GPU/ISP/时钟）完全一致。4.9 的
+#   oppo-msm8937/msm8940.dtsi 也只是 #include msm8937.dtsi 后再覆盖
+#   msm-id(313) 与少量 USB/GPU 配置，不涉及任何新的 SoC 代码。
+#   因此这里让 16061 直接 depend on ARCH_MSM8937，不引入 ARCH_MSM8940。
+#
+#   ARCH_MSM8976（R9s Plus / R9 Plus）在 4.19 基线里确实没有对应 SoC 支持，
+#   要继续做那两个机型需要先移植整套 MSM8976 平台，本次不涉及。
 
 config MACH_OPPO
 	bool "OPPO device"
@@ -21,6 +26,13 @@ config MACH_OPPO_MSM8953
 	select MACH_OPPO
 	help
 	  Support for MSM8953 OPPO variants
+
+config MACH_OPPO_MSM8937
+	bool "OPPO MSM8937/MSM8940"
+	depends on ARCH_MSM8937
+	select MACH_OPPO
+	help
+	  Support for MSM8937 / MSM8940 (A57, 16061) OPPO variants
 
 menu "OPPO board selection"
 
@@ -37,5 +49,13 @@ config MACH_16027
 	select MACH_OPPO_MSM8953
 	help
 	  Support for R9sk variants
+
+config MACH_16061
+	bool "A57 board"
+	depends on ARCH_MSM8937
+	select MACH_OPPO_MSM8937
+	help
+	  Support for A57 (MSM8940 / PMI8950) variants.
+	  板级 DTS 见 arch/arm64/boot/dts/vendor/qcom/oppo-msm8937/。
 
 endmenu

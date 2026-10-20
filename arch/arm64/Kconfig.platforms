@@ -216,11 +216,30 @@ config ARCH_MSM8937
 	bool "Enable Support for Qualcomm Technologies Inc. MSM8937"
 	depends on ARCH_QCOM
 	select CPU_FREQ_QCOM
-	select COMMON_CLK
-	select COMMON_CLK_QCOM
+	select COMMON_CLK_MSM
 	help
 	  This enables support for the MSM8937 chipset. If you do not
 	  wish to build a kernel that runs on this chipset, say 'N' here.
+	  ---
+	  4.19 基线这里原本 select COMMON_CLK + COMMON_CLK_QCOM（新时钟框架，
+	  给 SDM429W/SDM439 那条产品线用）。但本仓库的 MSM8937 是给 OPPO A57
+	  (MSM8940) 用的，板级 DTS 走的是**老框架**（clock_gcc / clock_gcc_mdss
+	  / clock_debug 这套节点，见 oppo-msm8937/msm8937.dtsi），必须配
+	  COMMON_CLK_MSM。
+
+	  两者同时 select 会撞车：ARCH_MSM8953(R9s) 本来就要 COMMON_CLK_MSM，
+	  一旦 ARCH_MSM8937 也开，CONFIG_COMMON_CLK 就被选上，于是
+	  drivers/cpuidle/lpm-levels.c 里
+	      #if defined(CONFIG_COMMON_CLK)
+	          #include "../clk/clk.h"        <- clock_debug_print_enabled(void)
+	      #elif defined(CONFIG_COMMON_CLK_MSM)
+	          #include "../../drivers/clk/msm/clock.h"
+	  会命中第一条分支，拿到无参声明，而调用点是
+	      clock_debug_print_enabled(true);
+	  直接报 "too many arguments to function call, expected 0, have 1"。
+
+	  改法与 Mi8937/msm-4.19 一致：MSM8937 也只 select COMMON_CLK_MSM。
+	  本仓库没有启用 SDM429/SDM439/QM215，不存在需要新框架的板子。
 
 
 config ARCH_SDM630

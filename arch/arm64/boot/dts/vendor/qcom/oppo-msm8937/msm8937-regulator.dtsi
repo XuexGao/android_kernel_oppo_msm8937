@@ -1,0 +1,44 @@
+/*
+ * Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+&rpm_bus {
+	rpm-regulator-ldoa22 {
+		pm8937_l22: regulator-l22 {
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1900000>;
+			qcom,init-voltage = <1800000>;
+		};
+	};
+};
+
+/* SPM controlled regulators */
+&spmi_bus {
+	qcom,pm8937@1 {
+		/* PM8937 S5 + S6 = VDD_APC supply */
+		pm8937_s5: spm-regulator@2000 {
+			qcom,mode = "pwm";
+		};
+	};
+};
+
+&soc {
+	touchpanel_vdd: touchpanel_vdd {
+		compatible = "regulator-fixed";
+		regulator-name = "touchpanel_vdd";
+		startup-delay-us = <0>;
+		enable-active-high;
+		gpio = <&tlmm 93 0>;
+	};
+
+	/delete-node/ adv_vreg;
+};

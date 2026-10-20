@@ -1,0 +1,260 @@
+/*
+ * Copyright (c) 2016, 2018-2019, The Linux Foundation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+#include "msm8937-pinctrl.dtsi"
+#include "msm8937-camera-sensor-mtp.dtsi"
+
+&blsp1_uart2 {
+	status = "ok";
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart_console_active>;
+};
+
+&sdhc_1 {
+	/* device core power supply */
+	vdd-supply = <&pm8937_l8>;
+	qcom,vdd-voltage-level = <2900000 2900000>;
+	qcom,vdd-current-level = <200 570000>;
+
+	/* device communication power supply */
+	vdd-io-supply = <&pm8937_l5>;
+	qcom,vdd-io-always-on;
+	qcom,vdd-io-lpm-sup;
+	qcom,vdd-io-voltage-level = <1800000 1800000>;
+	qcom,vdd-io-current-level = <200 325000>;
+
+	pinctrl-names = "active", "sleep";
+	pinctrl-0 = <&sdc1_clk_on &sdc1_cmd_on &sdc1_data_on &sdc1_rclk_on>;
+	pinctrl-1 = <&sdc1_clk_off &sdc1_cmd_off &sdc1_data_off &sdc1_rclk_off>;
+
+	qcom,clk-rates = <400000 20000000 25000000 50000000 100000000 192000000
+								384000000>;
+	qcom,nonremovable;
+	qcom,bus-speed-mode = "HS400_1p8v", "HS200_1p8v", "DDR_1p8v";
+
+	status = "ok";
+};
+
+&sdhc_2 {
+	/* device core power supply */
+	vdd-supply = <&pm8937_l11>;
+	qcom,vdd-voltage-level = <2950000 2950000>;
+	qcom,vdd-current-level = <15000 800000>;
+	vdd-gpio-en = <&tlmm 96 0x1>;
+
+	/* device communication power supply */
+	vdd-io-supply = <&pm8937_l12>;
+	qcom,vdd-io-voltage-level = <1800000 2950000>;
+	qcom,vdd-io-current-level = <200 22000>;
+
+	pinctrl-names = "default", "active", "sleep";
+	pinctrl-0 = <&sdc2_cd_on &sim1_cd_on &sim2_cd_on>;
+	pinctrl-1 = <&sdc2_clk_on &sdc2_cmd_on &sdc2_data_on &sdc2_cd_on>;
+	pinctrl-2 = <&sdc2_clk_off &sdc2_cmd_off &sdc2_data_off &sdc2_cd_off>;
+
+	cd-gpios = <&tlmm 67 0x0>;
+
+	qcom,clk-rates = <400000 20000000 25000000 50000000 100000000
+								200000000>;
+	qcom,bus-speed-mode = "SDR12", "SDR25", "SDR50", "DDR50", "SDR104";
+
+	status = "ok";
+};
+
+#include "msm8937-mdss-panels.dtsi"
+
+&mdss_mdp {
+	qcom,mdss-pref-prim-intf = "dsi";
+};
+
+&mdss_dsi {
+	hw-config = "single_dsi";
+};
+
+&mdss_dsi0 {
+	qcom,dsi-pref-prim-pan = <&dsi_tianma_oppo16061_hx8394f_720p_video>;
+	pinctrl-names = "mdss_default", "mdss_sleep";
+	pinctrl-0 = <&mdss_dsi_active &mdss_te_active>;
+	pinctrl-1 = <&mdss_dsi_suspend &mdss_te_suspend>;
+
+	qcom,platform-te-gpio = <&tlmm 24 0>;
+	qcom,platform-reset-gpio = <&tlmm 60 0>;
+	qcom,platform-enable-gpio = <&tlmm 48 0>; /* 5V ENP */
+	qcom,platform-bklight-en-gpio = <&tlmm 63 0>; /* -5V ENN */
+	qcom,platform-ldo-1p8-gpio = <&tlmm 62 0>; /* ldo 1.8V */
+};
+
+&mdss_dsi1 {
+	status = "disabled";
+};
+
+&dsi_boe_oppo16061_hx8394f_720p_video {
+      qcom,cont-splash-enabled;
+      qcom,esd-check-enabled;
+};
+
+&dsi_truly_oppo16061_hx8394f_720p_video {
+      qcom,cont-splash-enabled;
+      qcom,esd-check-enabled;
+};
+
+&dsi_boe_oppo16061_nt35521s_720p_video {
+      qcom,cont-splash-enabled;
+};
+
+&dsi_boe_oppo16061_nt35521s_b8_720p_video {
+      qcom,cont-splash-enabled;
+};
+
+&dsi_truly_oppo16061_nt35521s_720p_video {
+      qcom,cont-splash-enabled;
+};
+
+&dsi_truly_oppo16061_hx8394f_new_720p_video {
+      qcom,cont-splash-enabled;
+};
+
+&flash_led {
+	compatible = "qcom,qpnp-flash-led";
+	reg = <0xd300 0x100>;
+	pinctrl-names = "flash_led_enable","flash_led_disable";
+	pinctrl-0 = <&rear_flash_led_enable>;
+	pinctrl-1 = <&rear_flash_led_disable>;
+	qcom,follow-otst2-rb-disabled;
+};
+
+&soc {
+	fpc_fpc1020 {
+		compatible = "fpc,fpc1020";
+		fpc,irq-gpio = <&tlmm 38 0x00>;
+		vdd_io-supply = <&pm8937_l6>;
+	};
+
+	gpio_keys {
+		compatible = "gpio-keys";
+		label = "gpio-keys";
+		pinctrl-names = "tlmm_gpio_key_active","tlmm_gpio_key_suspend";
+		pinctrl-0 = <&gpio_key_active>;
+		pinctrl-1 = <&gpio_key_suspend>;
+
+		vol_up {
+			label = "volume_up";
+			gpios = <&tlmm 127 0x1>;
+			linux,input-type = <1>;
+			linux,code = <115>;
+			debounce-interval = <15>;
+		};
+
+		vol_down {
+			label = "volume_down";
+			gpios = <&tlmm 128 0x1>;
+			linux,input-type = <1>;
+			linux,code = <114>;
+			gpio-key,wakeup;
+			debounce-interval = <15>;
+		};
+	};
+
+	devinfo {
+		compatible = "oppo-devinfo";
+		Hw,operator-gpio1 = <&tlmm 20 0x00>;
+		Hw,operator-gpio2 = <&tlmm 21 0x00>;
+		Hw,operator-gpio3 = <&tlmm 22 0x00>;
+
+		Hw,sub_hwid_1 = <&tlmm 19 0x00>;
+		Hw,audio_hwid_1 = <&tlmm 90 0x00>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&hw_operator_gpio1_active &hw_operator_gpio2_active &hw_operator_gpio3_active &hw_sub_gpio1_active &hw_audio_gpio1_active>;
+	};
+};
+
+&i2c_3 { /* BLSP1 QUP3 */
+	ktd2026@30 {
+		status = "okay";
+		compatible = "ktd,ktd2026";
+		reg = <0x30>;
+		ktd2026,max_brightness = <0x18>;
+	};
+
+	lm3697@36 {
+		compatible = "ti,lm3697";
+		reg = <0x36>;
+		ti,enable-gpio = <&tlmm 68 0x00>;
+
+		lcd_bl {
+			backlight-name = "lm3697";
+			led-sources = <2>;
+			max-current-milliamp = <18>;
+			initial-brightness = <1024>;
+		};
+	};
+
+	goodix_ts@5d {
+		compatible = "goodix,gt1x";
+		reg = <0x5d>;
+
+		/* Interrupt && Irq-gpio */
+		interrupt-parent = <&tlmm>;
+		interrupts = <65 0x2001>;
+
+		/* Power Config */
+		vdd_2v8-supply = <&touchpanel_vdd>;
+		vcc_1v8-supply = <&pm8937_l6>;
+
+		/* Other HW Resource */
+		irq-gpio = <&tlmm 65 0x2001>;
+		reset-gpio = <&tlmm 64 0x1>;
+		id1-gpio = <&tlmm 61 0x1>;
+		id2-gpio = <&tlmm 99 0x1>;
+		id3-gpio = <&tlmm 59 0x1>;
+		pinctrl-names = "default","pin_set_high","pin_set_low","pin_set_nopull";
+		pinctrl-0 = <&ts_int_active &ts_reset_active &ts_id1_active &ts_id2_active &ts_id3_active>;
+		pinctrl-1 = <&pin_set_high>;
+		pinctrl-2 = <&pin_set_low>;
+		pinctrl-3 = <&pin_set_nopull>;
+
+		/* Configuration Setting */
+		touchpanel,max-num-support = <10>;
+		touchpanel,tx-rx-num = <13 24>;
+		touchpanel,panel-coords = <720 1280>;
+		touchpanel,display-coords = <720 1280>;
+
+		/* SW Support Feature Control */
+		register-is-16bit;
+		black_gesture_support;
+		edge_limit_support;
+		esd_handle_support;
+		spurious_fingerprint_support;
+
+		/*
+		 *Virtual Key Config:
+		 *1:touchpanel,button-type: <virtualkey_type  supportted_button-map>
+		 *virtualkey_type:
+		 *Type 1: using board_properties
+		 *Type 2: using same IC (button zone&& touch zone are seprate)
+		 *Type 3: using diffrent IC (button zone&& touch zone are seprate)
+		 *Type 4: No need of virtual key process
+		 *supportted_button-map:select|menu|home|back
+		 *
+		 *2:touchpanel,button-map
+		 *type (X1,Y1)(X2,Y2)(X3,Y3)(Width_X,Hight_Y)--Only when button-type is 0
+		 */
+		touchpanel,button-type = <2 0x05>;
+	};
+};
+
+&thermal_zones {
+	quiet-therm-step {
+		status = "disabled";
+	};
+};

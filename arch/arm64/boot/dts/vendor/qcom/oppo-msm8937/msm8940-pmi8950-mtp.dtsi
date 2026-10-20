@@ -1,0 +1,33 @@
+/*
+ * Copyright (c) 2016, 2018, The Linux Foundation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+/*
+ * 注意：这里**不要**再 #include "../msm8940.dtsi"。
+ *
+ * 顶层 msm8940-pmi8950-mtp_16061.dts 已经 include 过 msm8940.dtsi
+ * （它内部再 include msm8937.dtsi）。DTS 没有 include guard，
+ * 重复引入会让 msm8937.dtsi 里的节点被定义两次，dtc 直接报：
+ *     ERROR (duplicate_label): /soc/qseecom@84a00000:
+ *       Duplicate label 'qcom_seecom' on ...@84a00000 and ...@85b00000
+ * 4.9 分支之所以没这个问题，是因为那里的 msm8940.dtsi 只有 775 行、
+ * 且不重复带入整棵 msm8937 平台树；4.19 的 msm8940.dtsi + msm8937.dtsi
+ * 加起来 3000+ 行，重复一次就会撞标签。
+ */
+/*
+ * msm8937-pmi8950-mtp.dtsi 内部已经 #include "msm8937-mtp.dtsi"，
+ * 这里不要再重复引入（DTS 无 include guard，重复会撞标签）。
+ */
+#include "msm8937-pmi8950-mtp.dtsi"
+
+&soc {
+};

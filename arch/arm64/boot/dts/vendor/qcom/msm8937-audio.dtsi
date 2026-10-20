@@ -357,8 +357,19 @@
 		qcom,wcd-rst-gpio-node = <&wcd_rst_gpio>;
 
 		clock-names = "wcd_clk", "wcd_native_clk";
-		clocks = < &clock_audio 0>,
-			<&clock_audio_native 0>;
+		/*
+		 * 这里引用的两个时钟必须都指向 clock_audio 节点使用的那套
+		 * 音频参考时钟宏。4.9 分支用的是：
+		 *     <&clock_audio clk_audio_pmi_clk>, <&clock_audio clk_audio_ap_clk2>
+		 * 而 4.19 基线这段写成了 <&clock_audio 0>, <&clock_audio_native 0>，
+		 * 其中 clock_audio_native 这个标签在 msm8937 平台上**根本不存在**
+		 * （它只在 msm-audio.dtsi / sdm439-audio.dtsi 里定义，属于别的平台），
+		 * 于是 dtc 报：
+		 *     Reference to non-existent node or label "clock_audio_native"
+		 * 按 4.9 的写法改回。
+		 */
+		clocks = <&clock_audio clk_audio_pmi_clk>,
+			<&clock_audio clk_audio_ap_clk2>;
 
 		qcom,cdc-static-supplies =
 				"cdc-vdd-buck",

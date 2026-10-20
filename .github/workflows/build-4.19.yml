@@ -110,14 +110,17 @@ jobs:
           # 本仓库面向 OPPO，不启用任何 Xiaomi 机型，但该符号仍必须为 y，
           # 让 qpnp-fg 走 xiaomi_msm8953_mach_get() 返回 UNKNOWN 的分支。
           BASE_FRAGMENTS = "vendor/mi8953.config"
-          OPPO = "vendor/oppo-16017.config"
+          COMMON = "vendor/oppo-common.config"
+          R9S = "vendor/oppo-r9s.config"
           # 纯净版：显式关掉 KernelSU（config KSU 是 default y，
           # 不关的话编出来一定自带 BakaSU）。
           NOKSU = "vendor/oppo-no-ksu.config"
           # BPF + 容器（droidspaces）支持：完整 namespace 全集、
           # cgroup 控制器、BPF 显式重申。详见该 fragment 头部注释。
           BPFC = "vendor/oppo-bpf-containers.config"
-          # BakaSU + SUSFS 配置（仅 bakasu-k4.19 分支的 R9s-k su 目标使用）
+          # OPPO A57 (16061 / MSM8940) 机型片段
+          A57 = "vendor/oppo-a57.config"
+          # BakaSU + SUSFS 配置（仅 bakasu-k4.19 分支的 *-ksu 目标使用）
           BAKASU = "vendor/oppo-bakasu-susfs.config"
           targets = [
             {
@@ -131,19 +134,43 @@ jobs:
               # 默认目标：纯净内核（无 root），用于验证功能修复
               "target": "R9s", "label": "R9s (clean, no root)",
               "defconfig": "vendor/msm8953-perf_defconfig",
-              "fragments": BASE_FRAGMENTS + " " + OPPO + " " + NOKSU + " " + BPFC,
+              "fragments": BASE_FRAGMENTS + " " + COMMON + " " + R9S + " " + NOKSU + " " + BPFC,
               "device_names": "r9s|R9s|16017|16027|msm8953",
               "soc": "MSM8953", "snapdragon": "Snapdragon 625",
               "allow_fail": True,
             },
             {
-              # 保留一份带 KernelSU 的产物，便于对照/将来合入
-              # BakaSU + SUSFS：用新 KSU 源码 + SUSFS hook + 专用配置
+              # BakaSU + SUSFS（bakasu-k4.19 分支的主目标）
               "target": "R9s-ksu", "label": "R9s (BakaSU + SUSFS)",
               "defconfig": "vendor/msm8953-perf_defconfig",
-              "fragments": BASE_FRAGMENTS + " " + OPPO + " " + BPFC + " " + BAKASU,
+              "fragments": BASE_FRAGMENTS + " " + COMMON + " " + R9S + " " + BPFC + " " + BAKASU,
               "device_names": "r9s|R9s|16017|16027|msm8953",
               "soc": "MSM8953", "snapdragon": "Snapdragon 625",
+              "allow_fail": True,
+            },
+            {
+              # A57 的 BakaSU + SUSFS 版本。
+              # 与 R9s-ksu 分开构建的原因同 clean 版：Goodix 与 Synaptics
+              # 两套触摸屏驱动有同名全局符号，不能进同一个内核。
+              "target": "A57-ksu", "label": "A57 (BakaSU + SUSFS)",
+              "defconfig": "vendor/msm8953-perf_defconfig",
+              "fragments": BASE_FRAGMENTS + " " + COMMON + " " + A57 + " " + BPFC + " " + BAKASU,
+              "device_names": "a57|A57|16061|msm8940|msm8937",
+              "soc": "MSM8940", "snapdragon": "Snapdragon 435",
+              "allow_fail": True,
+            },
+            {
+              # A57 (MSM8940 / 16061) 独立构建。
+              # 为什么不能和 R9s 合进同一个内核：两者触摸屏驱动
+              # （Goodix GT5688 vs Synaptics S3320）各自导出同名全局符号
+              # （is_gesture_enable_for_lcd / lcd_wakeup_finger_protect /
+              #   touchkey_enabled），同时在编会 multiple definition。
+              # 4.9 分支本来也是 A57/R9s 两份 defconfig 分开编译的。
+              "target": "A57", "label": "A57 (clean, no root)",
+              "defconfig": "vendor/msm8953-perf_defconfig",
+              "fragments": BASE_FRAGMENTS + " " + COMMON + " " + A57 + " " + NOKSU + " " + BPFC,
+              "device_names": "a57|A57|16061|msm8940|msm8937",
+              "soc": "MSM8940", "snapdragon": "Snapdragon 435",
               "allow_fail": True,
             },
           ]

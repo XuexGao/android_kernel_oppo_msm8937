@@ -2,10 +2,33 @@
 #include <dt-bindings/regulator/qcom,rpm-smd-regulator.h>
 #include <dt-bindings/spmi/spmi.h>
 #include <dt-bindings/interrupt-controller/arm-gic.h>
-#include <dt-bindings/clock/qcom,gcc-sdm429w.h>
-#include <dt-bindings/clock/qcom,cpu-sdm.h>
-#include <dt-bindings/clock/qcom,rpmcc.h>
+/*
+ * 时钟绑定：固定走 **老时钟框架**（msm-clocks-8952.h + 下面的
+ * msm8952-clk-wrapper.h）。
+ *
+ * 上游 Mi8937 那版这里是 #ifdef CONFIG_COMMON_CLK_MSM 的二选一，
+ * 但这个仓库的 DTS 预处理**拿不到 CONFIG_ 宏**：
+ *   scripts/Makefile.lib 的 dtc_cpp_flags 带 -undef，且 DTC_INCLUDE
+ *   只加 scripts/dtc/include-prefixes，不会 include 内核的 autoconf.h。
+ * 所以 #ifdef CONFIG_COMMON_CLK_MSM 永远为假，会静默走 #else 那条
+ * 新框架分支，导致 clock_gcc / clock_gcc_mdss / clock_debug 三个节点
+ * 全部消失、msm8940.dtsi 的 &clock_gcc 覆盖直接失效。
+ * 本仓库也没有别的 DTS 用 CONFIG_ 做条件编译，正好印证这一点。
+ *
+ * 这里把这几个平台固定成老框架：
+ *   · 本配置只启用 MSM8953（R9s）与 MSM8937/8940（A57）；
+ *     SDM429 / SDM439 / QM215 都没开，不会有板子需要新框架那条路。
+ *   · msm8953.dtsi（R9s 用）不经过本文件，完全不受影响。
+ */
+#include <dt-bindings/clock/msm-clocks-8952.h>
+/*
+ * MDSS DSI PLL 的时钟 ID（BYTECLK_SRC_0_CLK / PCLK_SRC_0_CLK 等）。
+ * 上游这行只写在 #else 分支里，但 COMMON_CLK_MSM 那条路同样要用到这些
+ * 宏（msm8937-mdss.dtsi 里 <&mdss_dsi0_pll BYTECLK_SRC_0_CLK>），
+ * 缺了就报 dtc: syntax error。所以移到两条分支之外。
+ */
 #include <dt-bindings/clock/mdss-28nm-pll-clk-legacy.h>
+#include "msm8952-clk-wrapper.h"
 
 #define MHZ_TO_MBPS(mhz, w) ((mhz * 1000000 * w) / (1024 * 1024))
 #define BW_OPP_ENTRY(mhz, w) opp-mhz {opp-hz = /bits/ 64 <MHZ_TO_MBPS(mhz, w)>;}
@@ -118,7 +141,7 @@
 			reusable;
 			alloc-ranges = <0x0 0x00000000 0x0 0xffffffff>;
 			alignment = <0x0 0x400000>;
-			size = <0x19d000>;
+			size = <0 0x19d000>;
 		};
 	};
 
@@ -568,65 +591,79 @@
 		qcom,summing-threshold = <10>;
 	};
 
-	rpmcc: qcom,rpmcc {
-		compatible = "qcom,rpmcc-sdm439";
-		#clock-cells = <1>;
-	};
-
-	gcc: qcom,gcc@1800000 {
-		compatible = "qcom,gcc-sdm439", "syscon";
-		reg = <0x1800000 0x80000>;
-		reg-names = "cc_base";
-		qcom,gcc_oxili_gfx3d_clk-opp-handle = <&msm_gpu>;
-		vdd_cx-supply = <&pm8937_s2_level>;
-		clocks = <&rpmcc RPM_SMD_XO_CLK_SRC>;
-		clock-names = "bi_tcxo";
+	/*
+	 * 固定使用老时钟框架（COMMON_CLK_MSM 那套）的 gcc 节点。
+	 * 上游这里用 #ifdef CONFIG_COMMON_CLK_MSM 二选一，但本仓库
+	 * DTS 预处理带 -undef、拿不到 CONFIG_ 宏，条件永远为假，
+	 * 会静默走 #else 的新框架分支。详见文件头部的说明。
+	 * 原本的 #else 分支（qcom,gcc-sdm429w 新框架）已删除。
+	 */
+	clock_gcc: qcom,gcc@1800000 {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		compatible = "qcom,gcc-8937";
+		reg = <0x1800000 0x80000>,
+			<0xb016000 0x00040>,
+			<0xb116000 0x00040>,
+			<0x00a6018 0x00004>;
+		reg-names = "cc_base", "apcs_c1_base",
+				"apcs_c0_base", "efuse";
+		qcom,gfx3d_clk_src-opp-store-vcorner = <&msm_gpu>;
+		vdd_dig-supply = <&pm8937_s2_level>;
+		vdd_sr2_dig-supply = <&pm8937_s2_level_ao>;
+		vdd_sr2_pll-supply = <&pm8937_l7_ao>;
+		vdd_hf_dig-supply = <&pm8937_s2_level_ao>;
+		vdd_hf_pll-supply = <&pm8937_l7_ao>;
 		#clock-cells = <1>;
 		#reset-cells = <1>;
+		ranges;
+		qcom,spm@0 {
+			compatible = "qcom,gcc-spm-8937";
+			reg = <0x0b111200 0x100>,
+				<0x0b011200 0x100>;
+			reg-names = "spm_c0_base", "spm_c1_base";
+		};
 	};
 
-	cpu_debug: syscon@0b11101c {
-		compatible = "syscon";
-		reg = <0xb11101c 0x4>;
-	};
-
-	debugcc: qcom,cc-debug {
-		compatible = "qcom,sdm439-debugcc";
-		qcom,gcc = <&gcc>;
-		qcom,cpu = <&cpu_debug>;
-		clocks = <&rpmcc RPM_SMD_XO_CLK_SRC>;
-		clock-names = "xo_clk_src";
+	clock_debug: qcom,cc-debug@1874000 {
+		compatible = "qcom,cc-debug-8937";
+		reg = <0x1874000 0x4>,
+			<0xb11101c 0x8>;
+		reg-names = "cc_base", "meas";
 		#clock-cells = <1>;
 	};
 
-	gcc_mdss: qcom,gcc-mdss@1800000 {
-		compatible = "qcom,gcc-mdss-msm8937";
-		reg = <0x1800000 0x80000>;
-		 clocks = <&mdss_dsi0_pll PCLK_SRC_0_CLK>,
-		 <&mdss_dsi0_pll BYTECLK_SRC_0_CLK>,
-		 <&mdss_dsi1_pll PCLK_SRC_1_CLK>,
-		 <&mdss_dsi1_pll BYTECLK_SRC_1_CLK>;
+	clock_gcc_mdss: qcom,gcc-mdss@1800000 {
+		compatible = "qcom,gcc-mdss-8937";
+		clocks = <&mdss_dsi0_pll clk_dsi_pll0_pixel_clk_src>,
+			 <&mdss_dsi0_pll clk_dsi_pll0_byte_clk_src>,
+			 <&mdss_dsi1_pll clk_dsi_pll1_pixel_clk_src>,
+			 <&mdss_dsi1_pll clk_dsi_pll1_byte_clk_src>;
 		clock-names = "pclk0_src", "byte0_src", "pclk1_src",
 			"byte1_src";
 		#clock-cells = <1>;
 	};
 
-	apsscc: qcom,clock-cpu@b111050 {
-		compatible = "qcom,cpu-clock-sdm439";
+	clock_cpu: qcom,cpu-clock-8939@b111050 {
+		compatible = "qcom,cpu-clock-8939";
 		reg =   <0xb011050 0x8>,
-			<0xb016000 0x34>,
-			<0xb011200 0x100>,
-			<0xb1d1050 0x8>,
 			<0xb111050 0x8>,
-			<0xb116000 0x34>,
-			<0xb111200 0x100>,
+			<0xb1d1050 0x8>,
 			<0x00a412c 0x8>;
-		reg-names = "apcs-c1-rcg-base", "apcs_pll1", "spm_c1_base",
-			"apcs-cci-rcg-base", "apcs-c0-rcg-base",
-			"apcs_pll0", "spm_c0_base", "efuse";
-		clocks = <&rpmcc RPM_SMD_XO_A_CLK_SRC>,
-			<&gcc GPLL0_AO_OUT_MAIN>;
-		clock-names = "xo_ao", "gpll0_ao" ;
+		reg-names = "apcs-c1-rcg-base", "apcs-c0-rcg-base",
+				"apcs-cci-rcg-base", "efuse";
+		vdd-c0-supply = <&apc_vreg_corner>;
+		vdd-c1-supply = <&apc_vreg_corner>;
+		vdd-cci-supply = <&apc_vreg_corner>;
+		clocks = <&clock_gcc clk_gpll0_ao_clk_src>,
+			<&clock_gcc clk_a53ss_c0_pll>,
+			<&clock_gcc clk_gpll0_ao_clk_src>,
+			<&clock_gcc clk_a53ss_c1_pll>,
+			<&clock_gcc clk_gpll0_ao_clk_src>,
+			<&clock_gcc clk_gpll0_ao_clk_src>;
+		clock-names = "clk-c0-4", "clk-c0-5",
+				"clk-c1-4", "clk-c1-5",
+				"clk-cci-4", "clk-cci-2";
 		qcom,speed0-bin-v0-c0 =
 			<          0 0>,
 			<  768000000 1>,
@@ -894,18 +931,15 @@
 		qcom,cpufreq-table-0 =
 			 <  960000 >,
 			 < 1094400 >,
-			 < 1209600 >,
 			 < 1248000 >,
 			 < 1344000 >,
-			 < 1401000 >,
-			 < 1497600 >;
+			 < 1401000 >;
 
 		qcom,cpufreq-table-4 =
 			 <  768000 >,
 			 <  902400 >,
 			 <  998400 >,
-			 < 1094400 >,
-			 < 1209600 >;
+			 < 1094400 >;
 	};
 
 	cci_cache: qcom,cci {
@@ -1065,6 +1099,7 @@
 		HSUSB_1p8-supply = <&pm8937_l7>;
 		HSUSB_3p3-supply = <&pm8937_l13>;
 		qcom,vdd-voltage-level = <0 1200000 1200000>;
+		vbus_otg-supply = <&smbcharger_charger_otg>;
 
 		qcom,hsusb-otg-phy-type = <3>; /* SNPS Femto PHY */
 		qcom,hsusb-otg-mode = <3>; /* OTG mode */
@@ -1088,11 +1123,14 @@
 			 <&rpmcc BIMC_USB_A_CLK>,
 			 <&rpmcc SNOC_USB_A_CLK>,
 			 <&rpmcc PNOC_USB_A_CLK>,
+			 <&gcc GCC_QUSB2_PHY_CLK>,
+			 <&gcc GCC_USB2_HS_PHY_ONLY_CLK>,
 			 <&gcc GCC_USB_HS_PHY_CFG_AHB_CLK>,
 			 <&rpmcc CXO_SMD_OTG_CLK>;
 		clock-names = "iface_clk", "core_clk", "sleep_clk",
 				"bimc_clk", "snoc_clk", "pcnoc_clk",
-				"phy_csr_clk", "xo";
+				"phy_reset_clk", "phy_por_clk", "phy_csr_clk",
+				"xo";
 		qcom,bus-clk-rate = <748800000 200000000 100000000>;
 		qcom,max-nominal-sysclk-rate = <133330000>;
 
@@ -1770,6 +1808,8 @@
 
 		qcom,scaling-lower-bus-speed-mode = "DDR52";
 		status = "disabled";
+
+		qcom,force-sdhc1-probe;
 	};
 
 	sdhc_2: sdhci@7864900 {
@@ -1951,6 +1991,7 @@
 		qcom,ssctl-instance-id = <0x12>;
 		qcom,qdsp6v56-1-8-inrush-current;
 		qcom,reset-clk;
+		qcom,iommu-vmid = <0xF>; /* VMID_MSS_MSA */
 
 		/* Inputs from mss */
 		interrupts-extended = <&modem_smp2p_in 0 0>,
@@ -1981,7 +2022,7 @@
 		qcom,proxy-reg-names = "vdd_cx";
 		qcom,vdd_cx-uV-uA = <RPM_SMD_REGULATOR_LEVEL_TURBO 100000>;
 
-		clocks = <&rpmcc CXO_SMD_PIL_PRONTO_CLK>,
+		clocks = <&rpmcc CXO_SMD_PIL_LPASS_CLK>,
 			 <&gcc GCC_CRYPTO_CLK>,
 			 <&gcc GCC_CRYPTO_AHB_CLK>,
 			 <&gcc GCC_CRYPTO_AXI_CLK>,
