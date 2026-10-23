@@ -144,29 +144,51 @@ int touch_i2c_read_block(struct i2c_client* client, u16 addr, unsigned short len
 {
     int retval;
     unsigned char retry;
-    unsigned char buffer[2] = {(addr >> 8) & 0xff, addr & 0xff};    
+    /*
+     * 传给 i2c_transfer 的缓冲区必须是**直接映射区**的内存。
+     *
+     * 原因：dma_map_single() 内部走 virt_to_page()，它只对线性映射地址成立。
+     * msm i2c 驱动（i2c_msm_qup_choose_mode）在传输量 >= FIFO 大小时会切到
+     * DMA 模式，并对 msg->buf 调 dma_map_single()；此时若 buf 是栈上数组，
+     * virt_to_page() 会算出垃圾 page，最终在
+     *     __swiotlb_map_page -> __clean_dcache_area_poc
+     * 里访问一个没有建立页表的地址，直接 Oops。
+     *
+     * 这里原先把寄存器地址放在栈上的 buffer[2]、把数据直接写进调用方的
+     * data —— 读 186 字节面板配置这种大传输会同时踩到这两个坑。
+     * 改为统一用 kmalloc 申请转发缓冲，读完再拷回 data。
+     */
+    unsigned char *stage;
     struct i2c_msg msg[2];
+
+    stage = kmalloc(length + 2, GFP_KERNEL);
+    if (!stage)
+        return -ENOMEM;
+
+    /* stage[0..1] 放寄存器地址，stage[2..] 放读回的数据 */
+    stage[0] = (addr >> 8) & 0xff;
+    stage[1] = addr & 0xff;
 
     msg[0].addr = client->addr;
     msg[0].flags = 0;
-    msg[0].buf = buffer;
+    msg[0].buf = stage;
 
     if (!register_is_16bit)  // if register is 8bit
     {
         msg[0].len = 1;
-        msg[0].buf[0] = buffer[1];
+        msg[0].buf[0] = stage[1];
     }
     else
     {
-        msg[0].len = 2;            
-        msg[0].buf[0] = buffer[0];
-        msg[0].buf[1] = buffer[1];
+        msg[0].len = 2;
+        msg[0].buf[0] = stage[0];
+        msg[0].buf[1] = stage[1];
     }
 
     msg[1].addr = client->addr;
     msg[1].flags = I2C_M_RD;
     msg[1].len = length;
-    msg[1].buf = data;
+    msg[1].buf = stage + 2;
 
     for (retry = 0; retry < MAX_I2C_RETRY_TIME; retry++) {
         if (i2c_transfer(client->adapter, msg, 2) == 2) {
@@ -178,7 +200,11 @@ int touch_i2c_read_block(struct i2c_client* client, u16 addr, unsigned short len
     if (retry == MAX_I2C_RETRY_TIME) {
         dev_err(&client->dev, "%s: I2C read over retry limit\n", __func__);
         retval = -EIO;
-    }     
+    } else {
+        memcpy(data, stage + 2, length);
+    }
+
+    kfree(stage);
     return retval;
 }
 
@@ -196,8 +222,27 @@ int touch_i2c_write_block(struct i2c_client* client, u16 addr, unsigned short le
 {
     int retval;
     unsigned char retry;
-    unsigned char buffer[length + 2];
+    /*
+     * 原来是 unsigned char buffer[length + 2]; —— 一个栈上的 VLA，
+     * 当 length 达到面板配置的长度（Goodix GT5688 是 186~240 字节，
+     * 见 gt1x_generic_oppo.h 的 GTP_CONFIG_MIN/MAX_LENGTH）时，
+     * I2C 会切到 DMA 模式并把栈地址交给 dma_map_single()，
+     * 于是 virt_to_page() 算出垃圾 page，在 __clean_dcache_area_poc
+     * 里踩到未映射地址：
+     *     Unable to handle kernel paging request at ffffffc01004b300
+     *     pc : __clean_dcache_area_poc / lr : __swiotlb_map_page
+     *     gt1x_send_cfg -> touch_i2c_write_block -> i2c_transfer
+     * 改成 kmalloc 申请，保证是线性映射内存。
+     *
+     * 对照：R9s 的 Synaptics 驱动每次只写几十字节（< FIFO），一直走
+     * FIFO 模式不碰 DMA，所以同一个内核里 R9s 正常、A57 崩。
+     */
+    unsigned char *buffer;
     struct i2c_msg msg[1];
+
+    buffer = kmalloc(length + 2, GFP_KERNEL);
+    if (!buffer)
+        return -ENOMEM;
 
     msg[0].addr = client->addr;
     msg[0].flags = 0;
@@ -208,15 +253,15 @@ int touch_i2c_write_block(struct i2c_client* client, u16 addr, unsigned short le
         msg[0].len = length + 1;
         msg[0].buf[0] = addr & 0xff;
 
-        memcpy(&buffer[1], &data[0], length);        
+        memcpy(&buffer[1], &data[0], length);
     }
     else
     {
-        msg[0].len = length + 2;     
+        msg[0].len = length + 2;
         msg[0].buf[0] = (addr >> 8) & 0xff;
         msg[0].buf[1] = addr & 0xff;
 
-        memcpy(&buffer[2], &data[0], length);        
+        memcpy(&buffer[2], &data[0], length);
     }
 
     for (retry = 0; retry < MAX_I2C_RETRY_TIME; retry++) {
@@ -227,9 +272,11 @@ int touch_i2c_write_block(struct i2c_client* client, u16 addr, unsigned short le
         msleep(20);
     }
     if (retry == MAX_I2C_RETRY_TIME) {
-        dev_err(&client->dev, "%s: I2C write over retry limit\n", __func__);        
+        dev_err(&client->dev, "%s: I2C write over retry limit\n", __func__);
         retval = -EIO;
-    }     
+    }
+
+    kfree(buffer);
     return retval;
 }
 
