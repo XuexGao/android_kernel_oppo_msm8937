@@ -198,6 +198,89 @@ uint16_t rear_module;
 uint16_t rear_sensor;
 uint16_t front_module;
 uint16_t front_sensor;
+
+static const char *oppo_camera_lookup(const struct int_string_pair *tbl, int n,
+				      uint16_t value)
+{
+	int i;
+
+	for (i = 0; i < n; i++) {
+		if (tbl[i].value == value)
+			return tbl[i].string;
+	}
+	return NULL;
+}
+
+/*
+ * Register /proc/devinfo/{r_camera,f_camera} from the module EEPROM data.
+ *
+ * The 4.9 OPPO tree only registers these from the sensor driver
+ * (legacy_m_msm_sensor_match_id -> register_device_info), i.e. only once a
+ * camera is opened.  But the OPPO camera HAL reads /proc/devinfo/r_camera to
+ * decide whether a camera exists at all, so relying on that path alone is
+ * circular: the HAL will not open a sensor until the node exists.
+ *
+ * The eeprom driver already reads the module vendor id and the sensor id at
+ * boot (see msm_eeprom_read_{rear,front}_moduleinfo), so export the node from
+ * there as well.  Both paths share deviceInfo_register_value, so whichever
+ * runs first wins and the other becomes a no-op.
+ *
+ * Returns 0 on success (or when already registered), -errno otherwise;
+ * callers may simply retry later, the module EEPROM is not always readable on
+ * the first attempt.
+ */
+int oppo_camera_register_devinfo(int position)
+{
+	char *name;
+	const char *sensor;
+	const char *vendor;
+	char *sensor_copy;
+	uint16_t module_id, sensor_id;
+	int ret;
+
+	if (position != 0 && position != 1)
+		return -EINVAL;
+
+	if (deviceInfo_register_value & (0x01 << position))
+		return 0;	/* already exported */
+
+	if (position == 0) {
+		name = "r_camera";
+		module_id = rear_module;
+		sensor_id = rear_sensor;
+	} else {
+		name = "f_camera";
+		module_id = front_module;
+		sensor_id = front_sensor;
+	}
+
+	sensor = oppo_camera_lookup(cam_sensor_info, CAM_SENSOR_INFO_COUNT,
+				    sensor_id);
+	if (!sensor)
+		return -ENOENT;	/* eeprom not read yet / unknown module */
+
+	vendor = oppo_camera_lookup(cam_module_info, CAM_MODULE_INFO_COUNT,
+				    module_id);
+	if (!vendor)
+		vendor = "unknown";
+
+	/* register_device_proc() keeps the pointers, so the version string has
+	 * to stay valid for the lifetime of the entry.
+	 */
+	sensor_copy = kstrdup(sensor, GFP_KERNEL);
+	if (!sensor_copy)
+		return -ENOMEM;
+
+	ret = register_device_proc(name, sensor_copy, (char *)vendor);
+	if (ret) {
+		kfree(sensor_copy);
+		return ret;
+	}
+
+	deviceInfo_register_value |= (0x01 << position);
+	pr_info("%s: exported %s = %s (%s)\n", __func__, name, sensor, vendor);
+	return 0;
+}
 #endif /* CONFIG_MACH_OPPO */
 
 static void dram_type_add(void)

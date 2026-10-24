@@ -1918,11 +1918,21 @@ static int msm_eeprom_platform_probe(struct platform_device *pdev)
 		 */
 		if ((strcmp(eb_info->eeprom_name, "semco_cat24c64") == 0)
 			|| (strcmp(eb_info->eeprom_name,
-				"imx258_gt24c64") == 0))
+				"imx258_gt24c64") == 0)) {
 			legacy_msm_eeprom_read_rear_moduleinfo(e_ctrl);
+			/*
+			 * Export /proc/devinfo/r_camera right away instead of
+			 * waiting for the first camera open: the OPPO HAL reads
+			 * that node to decide whether a camera exists, so the
+			 * sensor-probe path alone would deadlock.
+			 */
+			oppo_camera_register_devinfo(0);
+		}
 
-		if (strcmp(eb_info->eeprom_name, "m24c64s") == 0)
+		if (strcmp(eb_info->eeprom_name, "m24c64s") == 0) {
 			legacy_msm_eeprom_read_front_moduleinfo(e_ctrl);
+			oppo_camera_register_devinfo(1);
+		}
 #endif
 		rc = read_eeprom_memory(e_ctrl, &e_ctrl->cal_data);
 		if (rc < 0) {

@@ -67,6 +67,20 @@ extern uint16_t rear_module;
 extern uint16_t rear_sensor;
 extern uint16_t front_module;
 extern uint16_t front_sensor;
+
+/*
+ * Export /proc/devinfo/{r_camera,f_camera} from the module EEPROM data.
+ *
+ * Called by the camera eeprom drivers right after they have read the module
+ * vendor id / sensor id at boot, so that the node exists before the OPPO
+ * camera HAL enumerates cameras.  The 4.9 tree only registered it from the
+ * sensor probe path, which is circular: the HAL will not open a sensor until
+ * the node exists.
+ *
+ * position: 0 = rear, 1 = front.
+ * Returns 0 on success or when already registered, -errno otherwise.
+ */
+int oppo_camera_register_devinfo(int position);
 #endif /* CONFIG_MACH_OPPO */
 
 #endif /* _DEVICE_INFO_H */
