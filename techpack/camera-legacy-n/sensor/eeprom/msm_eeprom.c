@@ -21,7 +21,67 @@
 #ifdef CONFIG_MACH_OPPO
 /* For module vendor info (rear_module/front_module/...) */
 #include <soc/oppo/device_info.h>
-#endif
+#include <linux/proc_fs.h>
+#include <linux/fs.h>
+
+/*
+ * OPPO 的 /proc/rear_eeprom_info、/proc/front_eeprom_info。
+ *
+ * 4.9 的 OPPO 相机分支在读完模组 EEPROM 后会创建这两个 0666 的节点，
+ * 内容就是模组厂 ID。相机 HAL / 工厂工具会读它们，所以一并移植过来。
+ *
+ * 注意：三个相机驱动都带这段代码，但 qcom,eeprom 节点只会被其中一个
+ * 驱动绑定（当前是 camera_v2，链接顺序在 drivers/ 里靠前），所以
+ * proc_create_data 不会重复执行，不会出现 duplicate proc entry。
+ */
+static ssize_t legacy_n_rear_eeprom_proc_read(struct file *filp, char __user *buff,
+					  size_t len, loff_t *data)
+{
+	char value[8] = {0};
+	int n = snprintf(value, sizeof(value), "%d", rear_module);
+
+	return simple_read_from_buffer(buff, len, data, value, n);
+}
+
+static const struct file_operations legacy_n_rear_eeprom_fops = {
+	.owner	= THIS_MODULE,
+	.read	= legacy_n_rear_eeprom_proc_read,
+};
+
+static ssize_t legacy_n_front_eeprom_proc_read(struct file *filp, char __user *buff,
+					   size_t len, loff_t *data)
+{
+	char value[8] = {0};
+	int n = snprintf(value, sizeof(value), "%d", front_module);
+
+	return simple_read_from_buffer(buff, len, data, value, n);
+}
+
+static const struct file_operations legacy_n_front_eeprom_fops = {
+	.owner	= THIS_MODULE,
+	.read	= legacy_n_front_eeprom_proc_read,
+};
+
+static int legacy_n_msm_eeprom_rear_proc_init(void)
+{
+	if (!proc_create_data("rear_eeprom_info", 0666, NULL,
+			      &legacy_n_rear_eeprom_fops, NULL)) {
+		pr_err("%s: couldn't create rear_eeprom_info\n", __func__);
+		return -ENOMEM;
+	}
+	return 0;
+}
+
+static int legacy_n_msm_eeprom_front_proc_init(void)
+{
+	if (!proc_create_data("front_eeprom_info", 0666, NULL,
+			      &legacy_n_front_eeprom_fops, NULL)) {
+		pr_err("%s: couldn't create front_eeprom_info\n", __func__);
+		return -ENOMEM;
+	}
+	return 0;
+}
+#endif /* CONFIG_MACH_OPPO */
 
 #undef CDBG
 #define CDBG(fmt, args...) pr_debug(fmt, ##args)
@@ -1927,11 +1987,13 @@ static int msm_eeprom_platform_probe(struct platform_device *pdev)
 			 * sensor-probe path alone would deadlock.
 			 */
 			oppo_camera_register_devinfo(0);
+			legacy_n_msm_eeprom_rear_proc_init();
 		}
 
 		if (strcmp(eb_info->eeprom_name, "m24c64s") == 0) {
 			legacy_n_msm_eeprom_read_front_moduleinfo(e_ctrl);
 			oppo_camera_register_devinfo(1);
+			legacy_n_msm_eeprom_front_proc_init();
 		}
 #endif
 		rc = read_eeprom_memory(e_ctrl, &e_ctrl->cal_data);

@@ -438,6 +438,35 @@ static int msm_sensor_get_af_status(struct msm_sensor_ctrl_t *s_ctrl,
 	return 0;
 }
 
+#ifdef CONFIG_MACH_OPPO
+/*
+ * OPPO 私有 ABI：camera HAL 用 ioctl(fd, 0/1, NULL) 直接控制传感器上下电，
+ * 不走 VIDIOC_MSM_SENSOR_CFG 的 power_setting 数组。
+ * 4.9 的 OPPO 分支就是靠这两个钩子让 HAL 给传感器上电的；缺了它们，HAL
+ * 调上电会落到 switch 的 default 什么也不做，传感器永远不上电 ——
+ * 表现就是 HAL 枚举出 0 个摄像头、并且一条日志都不打。
+ */
+static int legacy_n_at_msm_sensor_power_down(struct msm_sensor_ctrl_t *s_ctrl)
+{
+	if (legacy_n_msm_sensor_power_down(s_ctrl) < 0) {
+		pr_err("%s:%d error\n", __func__, __LINE__);
+		return -1;
+	}
+	return 0;
+}
+
+static int legacy_n_at_msm_sensor_power_up(struct msm_sensor_ctrl_t *s_ctrl)
+{
+	pr_info("%s sensor is %s\n", __func__,
+		s_ctrl->sensordata->sensor_name);
+	if (legacy_n_msm_sensor_power_up(s_ctrl) < 0) {
+		pr_err("%s:%d error\n", __func__, __LINE__);
+		return -1;
+	}
+	return 0;
+}
+#endif /* CONFIG_MACH_OPPO */
+
 static long msm_sensor_subdev_ioctl(struct v4l2_subdev *sd,
 			unsigned int cmd, void *arg)
 {
@@ -448,6 +477,13 @@ static long msm_sensor_subdev_ioctl(struct v4l2_subdev *sd,
 		pr_err("%s s_ctrl NULL\n", __func__);
 		return -EBADF;
 	}
+#ifdef CONFIG_MACH_OPPO
+	/* OPPO 私有 ABI，见上面 at_msm_sensor_power_* 的说明 */
+	if (cmd == 0 && arg == NULL)
+		return legacy_n_at_msm_sensor_power_down(s_ctrl);
+	else if (cmd == 1 && arg == NULL)
+		return legacy_n_at_msm_sensor_power_up(s_ctrl);
+#endif
 	switch (cmd) {
 	case VIDIOC_MSM_SENSOR_CFG:
 #ifdef CONFIG_COMPAT
