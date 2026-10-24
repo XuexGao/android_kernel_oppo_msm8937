@@ -122,26 +122,15 @@ jobs:
           A57 = "vendor/oppo-a57.config"
           # BakaSU + SUSFS 配置（仅 bakasu-k4.19 分支的 *-ksu 目标使用）
           BAKASU = "vendor/oppo-bakasu-susfs.config"
+          # 本分支只构建 BakaSU + SUSFS 产物；纯净内核在 lineage-22.1-k4.19。
+          # 靠下面的 branch 字段过滤，ci/targets 只在本分支目标里再选子集。
+          BRANCH = os.environ.get("GITHUB_REF_NAME", "")
           targets = [
             {
-              "target": "base", "label": "4.19 base smoke",
-              "defconfig": "vendor/msm8953-perf_defconfig",
-              "fragments": BASE_FRAGMENTS,
-              "device_names": "", "soc": "MSM8953", "snapdragon": "Snapdragon 625",
-              "allow_fail": False,
-            },
-            {
-              # 默认目标：纯净内核（无 root），用于验证功能修复
-              "target": "R9s", "label": "R9s (clean, no root)",
-              "defconfig": "vendor/msm8953-perf_defconfig",
-              "fragments": BASE_FRAGMENTS + " " + COMMON + " " + R9S + " " + NOKSU + " " + BPFC,
-              "device_names": "r9s|R9s|16017|16027|msm8953",
-              "soc": "MSM8953", "snapdragon": "Snapdragon 625",
-              "allow_fail": True,
-            },
-            {
-              # BakaSU + SUSFS（bakasu-k4.19 分支的主目标）
-              "target": "R9s-ksu", "label": "R9s (BakaSU + SUSFS)",
+              # 注意不能叫 "*-ksu"：那会和 lineage 分支里已废弃的旧版
+              # KernelSU 目标混淆（刷错就会出现"管理器认不出 BakaSU"）。
+              "target": "R9s-bakasu", "label": "R9s (BakaSU + SUSFS)",
+              "branch": "bakasu-k4.19",
               "defconfig": "vendor/msm8953-perf_defconfig",
               "fragments": BASE_FRAGMENTS + " " + COMMON + " " + R9S + " " + BPFC + " " + BAKASU,
               "device_names": "r9s|R9s|16017|16027|msm8953",
@@ -149,37 +138,36 @@ jobs:
               "allow_fail": True,
             },
             {
-              # A57 的 BakaSU + SUSFS 版本。
-              # 与 R9s-ksu 分开构建的原因同 clean 版：Goodix 与 Synaptics
-              # 两套触摸屏驱动有同名全局符号，不能进同一个内核。
-              "target": "A57-ksu", "label": "A57 (BakaSU + SUSFS)",
+              # A57 与 R9s 必须分开构建：Goodix GT5688 与 Synaptics S3320
+              # 两套触摸屏驱动导出同名全局符号（is_gesture_enable_for_lcd /
+              # lcd_wakeup_finger_protect / touchkey_enabled），同时在编会
+              # multiple definition。
+              "target": "A57-bakasu", "label": "A57 (BakaSU + SUSFS)",
+              "branch": "bakasu-k4.19",
               "defconfig": "vendor/msm8953-perf_defconfig",
               "fragments": BASE_FRAGMENTS + " " + COMMON + " " + A57 + " " + BPFC + " " + BAKASU,
               "device_names": "a57|A57|16061|msm8940|msm8937",
               "soc": "MSM8940", "snapdragon": "Snapdragon 435",
               "allow_fail": True,
             },
-            {
-              # A57 (MSM8940 / 16061) 独立构建。
-              # 为什么不能和 R9s 合进同一个内核：两者触摸屏驱动
-              # （Goodix GT5688 vs Synaptics S3320）各自导出同名全局符号
-              # （is_gesture_enable_for_lcd / lcd_wakeup_finger_protect /
-              #   touchkey_enabled），同时在编会 multiple definition。
-              # 4.9 分支本来也是 A57/R9s 两份 defconfig 分开编译的。
-              "target": "A57", "label": "A57 (clean, no root)",
-              "defconfig": "vendor/msm8953-perf_defconfig",
-              "fragments": BASE_FRAGMENTS + " " + COMMON + " " + A57 + " " + NOKSU + " " + BPFC,
-              "device_names": "a57|A57|16061|msm8940|msm8937",
-              "soc": "MSM8940", "snapdragon": "Snapdragon 435",
-              "allow_fail": True,
-            },
           ]
 
+          # 先按分支过滤：一个分支只出自己的产物
+          on_branch = [t for t in targets if t.get("branch", "any") in ("any", BRANCH)]
+
+          # ci/targets 再选子集；若指定的目标不属于本分支（比如在 bakasu
+          # 上写了 "R9s"），忽略它并构建本分支全部目标，避免静默出错。
           want = [s.strip() for s in (sys.argv[1] if len(sys.argv) > 1 else "").split(",") if s.strip()]
           if want:
-              targets = [t for t in targets if t["target"] in want]
+              picked = [t for t in on_branch if t["target"] in want]
+              if picked:
+                  on_branch = picked
+              else:
+                  print("# ci/targets=%r 在本分支 %s 上没有匹配目标，改为构建全部：%s"
+                        % (",".join(want), BRANCH, ", ".join(t["target"] for t in on_branch)),
+                        file=sys.stderr)
 
-          print(json.dumps({"include": targets}))
+          print(json.dumps({"include": on_branch}))
           PYEOF
 
           MATRIX="$(cat matrix.json)"
