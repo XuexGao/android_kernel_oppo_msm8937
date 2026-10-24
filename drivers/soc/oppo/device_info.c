@@ -139,6 +139,67 @@ int register_device_proc(char *name, char *version, char *manufacture)
 	return 0;
 }
 
+#ifdef CONFIG_MACH_OPPO
+/*
+ * Camera module vendor info, shared by every camera driver that can bind
+ * "qcom,camera":
+ *
+ *	techpack/camera-legacy/sensor/
+ *	techpack/camera-legacy-n/sensor/
+ *	drivers/media/platform/msm/camera_v2/sensor/
+ *
+ * All of them are linked into the same image and all of them register
+ * /proc/devinfo/{r_camera,f_camera} so that whichever driver wins the
+ * "qcom,camera" probe still exports the module vendor information the OPPO
+ * HAL reads.  Because of that the state below is defined exactly once, here;
+ * per driver copies would be link time "multiple definition" errors.
+ *
+ * Table contents are taken verbatim from the 4.9 OPPO tree
+ * (techpack/camera-legacy-m/sensor/msm_sensor.c).
+ */
+struct int_string_pair cam_module_info[CAM_MODULE_INFO_COUNT] = {
+	{0x01, "Sunny"},
+	{0x02, "Truly"},
+	{0x03, "SEMCO"},
+	{0x04, "Lite-ON"},
+	{0x05, "Q-Tech"},
+	{0x06, "OFilm"},
+};
+
+struct int_string_pair cam_sensor_info[CAM_SENSOR_INFO_COUNT] = {
+	{0x17, "imx258"},
+	{0x18, "imx298"},
+	{0x1a, "imx398"},
+	{0x36, "s5k3l8"},
+	{0x1b, "imx371"},
+	{0x37, "s5k3p3"},
+	{0x38, "s5k3p3sp"},
+	{0x3a, "s5k3p8"},
+	{0x3b, "s5k3p8sp"},
+	{0x28, "ov13855_f13v08b"},
+};
+
+/* Keep the declared dimension in sync with the tables above. */
+static const int __maybe_unused cam_module_info_count_check =
+	BUILD_BUG_ON_ZERO(ARRAY_SIZE(cam_module_info) != CAM_MODULE_INFO_COUNT);
+static const int __maybe_unused cam_sensor_info_count_check =
+	BUILD_BUG_ON_ZERO(ARRAY_SIZE(cam_sensor_info) != CAM_SENSOR_INFO_COUNT);
+
+/* -1 means "not resolved yet", the camera drivers lazily set them from
+ * ARRAY_SIZE() once they have a valid chip id.
+ */
+int size_of_module_list = -1;
+int size_of_sensor_list = -1;
+
+uint8_t deviceInfo_register_value = 0x00; /* bit 1: front, bit 0: rear */
+
+/* Filled in by the eeprom drivers while reading the module EEPROM. */
+uint16_t rear_module;
+uint16_t rear_sensor;
+uint16_t front_module;
+uint16_t front_sensor;
+#endif /* CONFIG_MACH_OPPO */
+
 static void dram_type_add(void)
 {
 	struct manufacture_info dram_info;

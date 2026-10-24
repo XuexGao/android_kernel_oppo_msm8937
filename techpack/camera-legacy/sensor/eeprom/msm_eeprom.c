@@ -18,6 +18,11 @@
 #include "msm_cci.h"
 #include "msm_eeprom.h"
 
+#ifdef CONFIG_MACH_OPPO
+/* For module vendor info (rear_module/front_module/...) */
+#include <soc/oppo/device_info.h>
+#endif
+
 #undef CDBG
 #define CDBG(fmt, args...) pr_debug(fmt, ##args)
 
@@ -1584,6 +1589,187 @@ static long msm_eeprom_subdev_fops_ioctl32(struct file *file, unsigned int cmd,
 
 #endif
 
+#ifdef CONFIG_MACH_OPPO
+/*
+ * Module vendor ID / sensor ID are stored in the module EEPROM, not in the
+ * sensor itself.  The camera HAL cross checks them (through
+ * /proc/devinfo/{r_camera,f_camera}) against the sensor it actually probed.
+ *
+ * Ported from the 4.9 OPPO tree
+ * (techpack/camera-legacy-m/sensor/eeprom/msm_eeprom.c).  The rear_module /
+ * rear_sensor / front_module / front_sensor globals live in
+ * drivers/soc/oppo/device_info.c because all three 4.19 camera drivers share
+ * them.
+ */
+static void legacy_msm_eeprom_read_rear_moduleinfo(
+	struct msm_eeprom_ctrl_t *e_ctrl)
+{
+	int rc = 0, rc1 = 0, rc2 = 0;
+	uint16_t read_data = 0, read_data1 = 0, read_data2 = 0, id_low, id_high;
+
+	e_ctrl->i2c_client.addr_type = MSM_CAMERA_I2C_WORD_ADDR;
+
+	rc1 = e_ctrl->i2c_client.i2c_func_tbl->i2c_read(
+			&e_ctrl->i2c_client, 0x0031,
+			&read_data1, MSM_CAMERA_I2C_BYTE_DATA);
+	if (rc1 < 0)
+		pr_err("%s: read 0x0031 failed\n", __func__);
+
+	rc2 = e_ctrl->i2c_client.i2c_func_tbl->i2c_read(
+			&e_ctrl->i2c_client, 0x0042,
+			&read_data2, MSM_CAMERA_I2C_BYTE_DATA);
+	if (rc2 < 0)
+		pr_err("%s: read 0x0042 failed\n", __func__);
+
+	if ((rc1 < 0) && (rc2 < 0)) {
+		pr_err("%s: read rear module flag failed\n", __func__);
+		return;
+	}
+
+	if ((read_data1 == 0x01) || (read_data2 == 0x01)) {
+		int i;
+		uint16_t sum1 = 0;
+
+		for (i = 0; i <= 0x1B; i++) {
+			rc = e_ctrl->i2c_client.i2c_func_tbl->i2c_read(
+				&e_ctrl->i2c_client, i,
+				&read_data, MSM_CAMERA_I2C_BYTE_DATA);
+			if (rc < 0)
+				pr_err("%s: read 0x%x fail\n", __func__, i);
+			else
+				sum1 += read_data;
+		}
+		sum1 = sum1 % 255;
+
+		rc1 = e_ctrl->i2c_client.i2c_func_tbl->i2c_read(
+				&e_ctrl->i2c_client, 0x0032,
+				&read_data1, MSM_CAMERA_I2C_BYTE_DATA);
+		rc2 = e_ctrl->i2c_client.i2c_func_tbl->i2c_read(
+				&e_ctrl->i2c_client, 0x0043,
+				&read_data2, MSM_CAMERA_I2C_BYTE_DATA);
+
+		if ((sum1 != read_data1) && (sum1 != read_data2)) {
+			pr_err("%s: read module info checksum failed\n",
+				__func__);
+			return;
+		}
+
+		rc = e_ctrl->i2c_client.i2c_func_tbl->i2c_read(
+				&e_ctrl->i2c_client, 0x0000,
+				&id_low, MSM_CAMERA_I2C_BYTE_DATA);
+		if (rc < 0)
+			pr_err("%s: read 0x0000 failed\n", __func__);
+
+		rc = e_ctrl->i2c_client.i2c_func_tbl->i2c_read(
+				&e_ctrl->i2c_client, 0x0001,
+				&id_high, MSM_CAMERA_I2C_BYTE_DATA);
+		if (rc < 0)
+			pr_err("%s: read 0x0001 failed\n", __func__);
+
+		rear_module = (id_high << 8) | id_low;
+		pr_err("%s: rear module ID = %d\n", __func__, rear_module);
+
+		id_low = 0;
+		id_high = 0;
+		rc = e_ctrl->i2c_client.i2c_func_tbl->i2c_read(
+				&e_ctrl->i2c_client, 0x0006,
+				&id_low, MSM_CAMERA_I2C_BYTE_DATA);
+		if (rc < 0)
+			pr_err("%s: read 0x0006 failed\n", __func__);
+
+		rc = e_ctrl->i2c_client.i2c_func_tbl->i2c_read(
+				&e_ctrl->i2c_client, 0x0007,
+				&id_high, MSM_CAMERA_I2C_BYTE_DATA);
+		if (rc < 0)
+			pr_err("%s: read 0x0007 failed\n", __func__);
+
+		rear_sensor = (id_high << 8) | id_low;
+		pr_err("%s: rear sensor ID = %d\n", __func__, rear_sensor);
+	}
+}
+
+static void legacy_msm_eeprom_read_front_moduleinfo(
+	struct msm_eeprom_ctrl_t *e_ctrl)
+{
+	int rc = 0;
+	uint16_t read_data = 0, id_low, id_high;
+
+	e_ctrl->i2c_client.addr_type = MSM_CAMERA_I2C_WORD_ADDR;
+
+	rc = e_ctrl->i2c_client.i2c_func_tbl->i2c_read(
+					&e_ctrl->i2c_client, 0x0042,
+					&read_data, MSM_CAMERA_I2C_BYTE_DATA);
+	if (rc < 0) {
+		pr_err("%s: read 0x0042 failed\n", __func__);
+		return;
+	} else {
+		CDBG("%s  module info flag=%d\n", __func__, read_data);
+	}
+
+	if (read_data == 0x01) {
+		int i;
+		uint16_t sum1 = 0, read_value = 0;
+
+		for (i = 0; i <= 0x1B; i++) {
+			rc = e_ctrl->i2c_client.i2c_func_tbl->i2c_read(
+				&e_ctrl->i2c_client, i,
+				&read_data, MSM_CAMERA_I2C_BYTE_DATA);
+			if (rc < 0) {
+				pr_err("%s: read 0x%x fail\n", __func__, i);
+			} else {
+				if (i == 0)
+					read_value = read_data;
+				sum1 += read_data;
+			}
+		}
+		sum1 = sum1 % 255;
+
+		rc = e_ctrl->i2c_client.i2c_func_tbl->i2c_read(
+				&e_ctrl->i2c_client, 0x0043,
+				&read_data, MSM_CAMERA_I2C_BYTE_DATA);
+
+		if (sum1 != read_data) {
+			pr_err("%s: read module info fail, value=%d\n",
+				__func__, read_value);
+			return;
+		}
+
+		rc = e_ctrl->i2c_client.i2c_func_tbl->i2c_read(
+				&e_ctrl->i2c_client, 0x0000,
+				&id_low, MSM_CAMERA_I2C_BYTE_DATA);
+		if (rc < 0)
+			pr_err("%s: read 0x0000 failed\n", __func__);
+
+		rc = e_ctrl->i2c_client.i2c_func_tbl->i2c_read(
+				&e_ctrl->i2c_client, 0x0001,
+				&id_high, MSM_CAMERA_I2C_BYTE_DATA);
+		if (rc < 0)
+			pr_err("%s: read 0x0001 failed\n", __func__);
+
+		front_module = (id_high << 8) | id_low;
+		pr_err("%s: front_module ID =%x\n", __func__, front_module);
+
+		id_low = 0;
+		id_high = 0;
+
+		rc = e_ctrl->i2c_client.i2c_func_tbl->i2c_read(
+				&e_ctrl->i2c_client, 0x0006,
+				&id_low, MSM_CAMERA_I2C_BYTE_DATA);
+		if (rc < 0)
+			pr_err("%s: read 0x0006 failed\n", __func__);
+
+		rc = e_ctrl->i2c_client.i2c_func_tbl->i2c_read(
+				&e_ctrl->i2c_client, 0x0007,
+				&id_high, MSM_CAMERA_I2C_BYTE_DATA);
+		if (rc < 0)
+			pr_err("%s: read 0x0007 failed\n", __func__);
+
+		front_sensor = (id_high << 8) | id_low;
+		pr_err("%s: front_sensor ID = %x\n", __func__, front_sensor);
+	}
+}
+#endif /* CONFIG_MACH_OPPO */
+
 static int msm_eeprom_platform_probe(struct platform_device *pdev)
 {
 	int rc = 0;
@@ -1724,6 +1910,20 @@ static int msm_eeprom_platform_probe(struct platform_device *pdev)
 			pr_err("failed rc %d\n", rc);
 			goto memdata_free;
 		}
+#ifdef CONFIG_MACH_OPPO
+		/*
+		 * Read the module vendor ID / sensor ID out of the module
+		 * EEPROM before the calibration data, the camera sensor driver
+		 * uses them to build /proc/devinfo/{r_camera,f_camera}.
+		 */
+		if ((strcmp(eb_info->eeprom_name, "semco_cat24c64") == 0)
+			|| (strcmp(eb_info->eeprom_name,
+				"imx258_gt24c64") == 0))
+			legacy_msm_eeprom_read_rear_moduleinfo(e_ctrl);
+
+		if (strcmp(eb_info->eeprom_name, "m24c64s") == 0)
+			legacy_msm_eeprom_read_front_moduleinfo(e_ctrl);
+#endif
 		rc = read_eeprom_memory(e_ctrl, &e_ctrl->cal_data);
 		if (rc < 0) {
 			pr_err("%s read_eeprom_memory failed\n", __func__);

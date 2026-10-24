@@ -18,6 +18,12 @@
 #include <linux/regulator/rpm-smd-regulator.h>
 #include <linux/regulator/consumer.h>
 
+#ifdef CONFIG_MACH_OPPO
+/* For module vendor info */
+#include <soc/oppo/device_info.h>
+#include <soc/oppo/oppo_project.h>
+#endif
+
 #undef CDBG
 #define CDBG(fmt, args...) pr_debug(fmt, ##args)
 
@@ -237,6 +243,68 @@ static uint16_t msm_sensor_id_by_mask(struct msm_sensor_ctrl_t *s_ctrl,
 	return sensor_id;
 }
 
+#ifdef CONFIG_MACH_OPPO
+/* For module vendor info */
+static void legacy_n_register_device_info(struct msm_sensor_ctrl_t *s_ctrl)
+{
+	int i = 0, position = 0xff;
+	uint16_t module_info = 0;
+	char *p_sensor_name = NULL;
+	char position_string[20];
+
+	position = s_ctrl->sensordata->sensor_info->position;
+
+	/* Only the rear (0) and front (1) slots are exported to userspace.
+	 * Anything else (AUX_CAMERA_B / INVALID_CAMERA_B) has no devinfo
+	 * entry and would make the shift below out of range.
+	 */
+	if (position != 0 && position != 1)
+		return;
+
+	if (deviceInfo_register_value & (0x01 << position)) {
+		pr_err("%s:%d: device info of position %d already register\n",
+			__func__, __LINE__,
+			s_ctrl->sensordata->sensor_info->position);
+		return;
+	}
+
+	if (position == 0) {
+		module_info = rear_module;
+		strcpy(position_string, "r_camera");
+	} else if (position == 1) {
+		module_info = front_module;
+		strcpy(position_string, "f_camera");
+	}
+
+	for (i = 0; i < size_of_module_list; i++) {
+		if (cam_module_info[i].value == module_info)
+			break;
+	}
+	if (i < size_of_module_list) {
+		/*
+		 * register_device_proc will not copy the string, so we need
+		 * keep it always valid
+		 */
+		p_sensor_name = kzalloc(20, GFP_KERNEL);
+		if (!p_sensor_name) {
+			pr_err("%s:%d kzalloc failed\n", __func__, __LINE__);
+			return;
+		}
+		strcpy(p_sensor_name, s_ctrl->sensordata->sensor_name);
+		/* keep this log before mp */
+		CDBG("%s:%d: will register device %s %s\n",
+			__func__, __LINE__, cam_module_info[i].string,
+			p_sensor_name);
+		register_device_proc(position_string, p_sensor_name,
+			cam_module_info[i].string);
+
+		deviceInfo_register_value |= (0x01 << position);
+	}
+
+	return;
+}
+#endif
+
 int legacy_n_msm_sensor_match_id(struct msm_sensor_ctrl_t *s_ctrl)
 {
 	int rc = 0;
@@ -244,6 +312,10 @@ int legacy_n_msm_sensor_match_id(struct msm_sensor_ctrl_t *s_ctrl)
 	struct msm_camera_i2c_client *sensor_i2c_client;
 	struct msm_camera_slave_info *slave_info;
 	const char *sensor_name;
+#ifdef CONFIG_MACH_OPPO
+	/* For module vendor info */
+	int i = 0;
+#endif
 
 	if (!s_ctrl) {
 		pr_err("%s:%d failed: %pK\n",
@@ -276,6 +348,47 @@ int legacy_n_msm_sensor_match_id(struct msm_sensor_ctrl_t *s_ctrl)
 				__func__, chipid, slave_info->sensor_id);
 		return -ENODEV;
 	}
+#ifdef CONFIG_MACH_OPPO
+	/* Changes for 3p8sp */
+	pr_err("%s:rear sensor:0x%02x, front sensor:0x%02x\n",
+		__func__, rear_sensor, front_sensor);
+
+	/* Need match sensorID in sensor and eeprom */
+	if (size_of_module_list < 0)
+		size_of_module_list = ARRAY_SIZE(cam_module_info);
+
+	if (size_of_sensor_list < 0)
+		size_of_sensor_list = ARRAY_SIZE(cam_sensor_info);
+
+	CDBG("%s size_of_module_list %d,size_of_sensor_list %d\n",
+		__func__, size_of_module_list, size_of_sensor_list);
+	for (i = 0; i < size_of_sensor_list; i++) {
+		if (strcmp(cam_sensor_info[i].string,
+			s_ctrl->sensordata->sensor_name) == 0) {
+			if (((s_ctrl->sensordata->sensor_info->position == 0)
+				&& (cam_sensor_info[i].value == rear_sensor))
+				|| (rear_sensor == 0))
+				break;
+			else if (((s_ctrl->sensordata->sensor_info->position
+					== 1)
+				&& (cam_sensor_info[i].value == front_sensor))
+				|| (front_sensor == 0))
+				break;
+		}
+	}
+	if (i >= size_of_sensor_list) {
+		pr_err("%s %s match sensorID of eeprom failed\n",
+			__func__, s_ctrl->sensordata->sensor_name);
+		return -ENODEV;
+	} else {
+		CDBG("%s %s match sensorID of eeprom at i %d\n",
+			__func__, s_ctrl->sensordata->sensor_name, i);
+	}
+
+	CDBG("%s:%d: %s mached success\n", __func__, __LINE__,
+		s_ctrl->sensordata->sensor_name);
+	legacy_n_register_device_info(s_ctrl);
+#endif
 	return rc;
 }
 

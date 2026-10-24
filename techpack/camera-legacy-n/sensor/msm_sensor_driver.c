@@ -24,6 +24,11 @@
 
 #define SENSOR_MAX_MOUNTANGLE (360)
 
+#ifdef CONFIG_MACH_OPPO
+/* For module vendor info */
+#include <soc/oppo/device_info.h>
+#endif
+
 static struct v4l2_file_operations msm_sensor_v4l2_subdev_fops;
 static int32_t msm_sensor_driver_platform_probe(struct platform_device *pdev);
 
@@ -685,6 +690,11 @@ int32_t legacy_n_msm_sensor_driver_probe(void *setting,
 	unsigned long                        mount_pos = 0;
 	uint32_t                             is_yuv;
 
+#ifdef CONFIG_MACH_OPPO
+	/* For module vendor info */
+	int i = 0;
+#endif
+
 	/* Validate input parameters */
 	if (!setting) {
 		pr_err("failed: slave_info %pK", setting);
@@ -834,7 +844,38 @@ int32_t legacy_n_msm_sensor_driver_probe(void *setting,
 			pr_err("slot %d has some other sensor\n",
 				slave_info->camera_id);
 
+#ifdef CONFIG_MACH_OPPO
+		/* Need match sensorID in sensor and eeprom */
+		if (size_of_sensor_list < 0)
+			size_of_sensor_list = ARRAY_SIZE(cam_sensor_info);
+
+		for (i = 0; i < size_of_sensor_list; i++) {
+			if (strcmp(cam_sensor_info[i].string,
+				s_ctrl->sensordata->sensor_name) == 0) {
+				if (((s_ctrl->sensordata->sensor_info->
+						position == 0)
+					&& (cam_sensor_info[i].value
+						== rear_sensor))
+					|| (rear_sensor == 0))
+					break;
+				else if (((s_ctrl->sensordata->sensor_info->
+						position == 1)
+					&& (cam_sensor_info[i].value
+						== front_sensor))
+					|| (front_sensor == 0))
+					break;
+			}
+		}
+		if (i >= size_of_sensor_list)
+			rc = -ENODEV;
+		else
+			rc = 0;
+
+		pr_err("%s:%d: %s mached result %d\n",
+			__func__, __LINE__, slave_info->sensor_name, rc);
+#else
 		rc = 0;
+#endif
 		goto free_slave_info;
 	}
 
