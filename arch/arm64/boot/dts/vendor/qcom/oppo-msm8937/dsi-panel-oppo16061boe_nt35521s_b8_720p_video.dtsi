@@ -194,7 +194,13 @@
 		qcom,esd-check-enabled;
 		qcom,mdss-dsi-panel-status-command = [06 01 00 01 05 00 02 0A 08];
 		qcom,mdss-dsi-panel-status-command-state = "dsi_lp_mode";
-		qcom,mdss-dsi-panel-status-check-mode = "reg_read";
+		/*
+		 * 原为 "reg_read"：4.19 下 DSI 读面板状态寄存器失败，check_status 返回 0，
+		 * HWC 判 "panel is in bad state" -> ResetPanel 断电 -> 锁屏后按电源键黑屏。
+		 * video 面板不能用 te_signal_check（仅 command mode 有效），
+		 * 改用 bta_check（BTA 总线检测；同平台 icn9706 video 面板即用此）。
+		 */
+		qcom,mdss-dsi-panel-status-check-mode = "bta_check";
 		qcom,mdss-dsi-panel-status-read-length = <1>;
 		qcom,mdss-dsi-panel-status-value = <0x9C>;
 		qcom,mdss-dsi-pan-enable-dynamic-fps;

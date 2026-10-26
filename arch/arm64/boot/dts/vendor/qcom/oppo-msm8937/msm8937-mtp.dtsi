@@ -249,7 +249,12 @@
 		 *2:touchpanel,button-map
 		 *type (X1,Y1)(X2,Y2)(X3,Y3)(Width_X,Hight_Y)--Only when button-type is 0
 		 */
-		touchpanel,button-type = <2 0x05>;
+		/*
+		 * 原值 <2 0x05> = BIT_MENU|BIT_BACK，缺 BIT_HOME(0x02)，
+		 * 导致 HOME 虚拟键不被注册 -> 按 HOME 无事件。
+		 * 改为 0x07 = BIT_MENU|BIT_HOME|BIT_BACK。
+		 */
+		touchpanel,button-type = <2 0x07>;
 	};
 };
 

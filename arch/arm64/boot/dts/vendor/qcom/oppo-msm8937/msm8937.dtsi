@@ -101,3 +101,19 @@
 	};
 
 };
+
+/*
+ * ADSP 固件 adsp.mdt 加载时需分配 0x1200000 的 relocatable region，
+ * 而本机(msm8940)的 adsp_fw_region 仅 0x1100000 -> dma_alloc 失败 ->
+ * "Failed to allocate relocatable region" -> ADSP 加载失败 ->
+ * pmic_analog_codec 一直 defer -> No soundcards found。
+ * 关键：地址必须用 msm8940 的实际值 0x8d200000（msm8937 才是 0x8b800000），
+ * 且必须用 &引用覆盖（本文件 include 在 msm8940.dtsi 之后才会生效）。
+ */
+&adsp_fw_mem {
+	reg = <0x0 0x8d200000 0x0 0x1400000>;
+};
+
+&wcnss_fw_mem {
+	reg = <0x0 0x8e600000 0x0 0x700000>;
+};

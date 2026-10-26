@@ -690,7 +690,11 @@ void *qcom_smem_get(unsigned host, unsigned item, size_t *size)
 	if (!__smem)
 		return ptr;
 
-	if (WARN_ON(item >= __smem->item_count))
+	/*
+	 * item 号越界属于可恢复的配置差异（不同平台 SMEM 表大小不同），
+	 * 调用方已按 ERR_PTR 处理，不应触发 WARN 并 taint 内核。
+	 */
+	if (item >= __smem->item_count)
 		return ERR_PTR(-EINVAL);
 
 	ret = hwspin_lock_timeout_irqsave(__smem->hwlock,

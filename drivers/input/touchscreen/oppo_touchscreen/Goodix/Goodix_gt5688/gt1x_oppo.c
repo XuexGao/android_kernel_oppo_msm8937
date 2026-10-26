@@ -1715,6 +1715,9 @@ static u8 goodix_get_keycode(void *chip_data)
         SET_BIT(bitmap_result, BIT_MENU);
     if (bitmap & 0x02)
         SET_BIT(bitmap_result, BIT_BACK);
+    /* bit2 -> HOME（原驱动缺失，导致 HOME 虚拟键无上报） */
+    if (bitmap & 0x04)
+        SET_BIT(bitmap_result, BIT_HOME);
 
     ret = goodix_clear_irq(chip_info->client);
 

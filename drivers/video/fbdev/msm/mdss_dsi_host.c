@@ -1662,7 +1662,7 @@ static void mdss_dsi_wait4active_region(struct mdss_dsi_ctrl_pdata *ctrl)
 		MDSS_XLOG_TOUT_HANDLER("mdp", "dsi0_ctrl",
 			"dsi0_phy", "dsi1_ctrl", "dsi1_phy",
 			"vbif", "vbif_nrt", "dbg_bus",
-			"vbif_dbg_bus", "dsi_dbg_bus", "panic");
+			"vbif_dbg_bus", "dsi_dbg_bus");
 }
 
 /**
