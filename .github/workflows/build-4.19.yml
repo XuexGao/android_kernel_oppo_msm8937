@@ -120,12 +120,46 @@ jobs:
           BPFC = "vendor/oppo-bpf-containers.config"
           # OPPO A57 (16061 / MSM8940) 机型片段
           A57 = "vendor/oppo-a57.config"
-          # BakaSU + SUSFS 配置（仅 bakasu-k4.19 分支的 *-ksu 目标使用）
+          # BakaSU + SUSFS 配置（仅 bakasu-k4.19 分支的目标使用）
           BAKASU = "vendor/oppo-bakasu-susfs.config"
-          # 本分支只构建 BakaSU + SUSFS 产物；纯净内核在 lineage-22.1-k4.19。
-          # 靠下面的 branch 字段过滤，ci/targets 只在本分支目标里再选子集。
+
+          # 每个分支只构建自己的产物：lineage-22.1-k4.19 出纯净内核，
+          # bakasu-k4.19 出 BakaSU + SUSFS。靠 branch 字段过滤；
+          # ci/targets 只是在**本分支的目标里**再选子集（可留空）。
           BRANCH = os.environ.get("GITHUB_REF_NAME", "")
           targets = [
+            {
+              "target": "base", "label": "4.19 base smoke",
+              "branch": "lineage-22.1-k4.19",
+              "defconfig": "vendor/msm8953-perf_defconfig",
+              "fragments": BASE_FRAGMENTS,
+              "device_names": "", "soc": "MSM8953", "snapdragon": "Snapdragon 625",
+              "allow_fail": False,
+            },
+            {
+              # 纯净内核（无 root）。config 里 KSU 是 default y，
+              # 不显式关掉的话编出来一定自带 BakaSU。
+              "target": "R9s", "label": "R9s (clean, no root)",
+              "branch": "lineage-22.1-k4.19",
+              "defconfig": "vendor/msm8953-perf_defconfig",
+              "fragments": BASE_FRAGMENTS + " " + COMMON + " " + R9S + " " + NOKSU + " " + BPFC,
+              "device_names": "r9s|R9s|16017|16027|msm8953",
+              "soc": "MSM8953", "snapdragon": "Snapdragon 625",
+              "allow_fail": True,
+            },
+            {
+              # A57 (MSM8940 / 16061) 独立构建：Goodix GT5688 与 Synaptics
+              # S3320 两套触摸屏驱动导出同名全局符号
+              # （is_gesture_enable_for_lcd / lcd_wakeup_finger_protect /
+              #   touchkey_enabled），同时在编会 multiple definition。
+              "target": "A57", "label": "A57 (clean, no root)",
+              "branch": "lineage-22.1-k4.19",
+              "defconfig": "vendor/msm8953-perf_defconfig",
+              "fragments": BASE_FRAGMENTS + " " + COMMON + " " + A57 + " " + NOKSU + " " + BPFC,
+              "device_names": "a57|A57|16061|msm8940|msm8937",
+              "soc": "MSM8940", "snapdragon": "Snapdragon 435",
+              "allow_fail": True,
+            },
             {
               # 注意不能叫 "*-ksu"：那会和 lineage 分支里已废弃的旧版
               # KernelSU 目标混淆（刷错就会出现"管理器认不出 BakaSU"）。
@@ -138,10 +172,6 @@ jobs:
               "allow_fail": True,
             },
             {
-              # A57 与 R9s 必须分开构建：Goodix GT5688 与 Synaptics S3320
-              # 两套触摸屏驱动导出同名全局符号（is_gesture_enable_for_lcd /
-              # lcd_wakeup_finger_protect / touchkey_enabled），同时在编会
-              # multiple definition。
               "target": "A57-bakasu", "label": "A57 (BakaSU + SUSFS)",
               "branch": "bakasu-k4.19",
               "defconfig": "vendor/msm8953-perf_defconfig",

@@ -231,6 +231,16 @@ static inline int radix_tree_exception(void *arg)
 	return unlikely((unsigned long)arg & RADIX_TREE_ENTRY_MASK);
 }
 
+/*
+ * 兼容别名：MGLRU 的代码（mm/memory.c、mm/swap_state.c）用的是上游
+ * 老名字 radix_tree_exceptional_entry()，本树 4.19.325 已跟随 xarray
+ * 改名成 radix_tree_exception()，两者语义完全一致。
+ */
+static inline int radix_tree_exceptional_entry(void *arg)
+{
+	return radix_tree_exception(arg);
+}
+
 int __radix_tree_insert(struct radix_tree_root *, unsigned long index,
 			unsigned order, void *);
 static inline int radix_tree_insert(struct radix_tree_root *root,
@@ -240,6 +250,14 @@ static inline int radix_tree_insert(struct radix_tree_root *root,
 }
 void *__radix_tree_lookup(const struct radix_tree_root *, unsigned long index,
 			  struct radix_tree_node **nodep, void __rcu ***slotp);
+/*
+ * MGLRU backport 需要：mm/swap_state.c 要用 __radix_tree_create 拿到 slot，
+ * 才能把 swap cache 条目替换成 shadow（refault 检测）。
+ * 上游同一时期也是把 __radix_tree_create 从 static 里放出来的。
+ */
+int __radix_tree_create(struct radix_tree_root *root, unsigned long index,
+			unsigned order, struct radix_tree_node **nodep,
+			void __rcu ***slotp);
 void *radix_tree_lookup(const struct radix_tree_root *, unsigned long);
 void __rcu **radix_tree_lookup_slot(const struct radix_tree_root *,
 					unsigned long index);
