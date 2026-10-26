@@ -1,0 +1,86 @@
+/*
+ * Copyright (c) 2014-2016, The Linux Foundation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+/ {
+	reserved-memory {
+		other_ext_mem: other_ext_region@85b00000 {
+			reg = <0x0 0x84a00000 0x0 0x1e00000>;
+		};
+
+		cont_splash_mem: splash_region@83000000 {
+			reg = <0x0 0x82000000 0x0 0x2800000>;
+		};
+
+		ramoops: ramoops@b0000000 {
+			compatible = "ramoops";
+			reg = <0 0xb0000000 0 0x800000>;
+			record-size = <0x200000>;
+			console-size = <0x200000>;
+			pmsg-size = <0x200000>;
+		};
+	};
+};
+
+#include "msm8976-pinctrl.dtsi"
+#include "pmi8950.dtsi"
+#include "msm8976-regulator.dtsi"
+
+&soc {
+	/delete-node/ slim@c140000;
+
+	qcom,oembackup_sharedmem@0 {
+		compatible = "qcom,sharedmem-uio";
+		reg = <0x0 0x00100000>; /* '0' indicates dynamic allocation */
+		reg-names = "oembackup";
+		qcom,client-id = <0x00000003>;
+	};
+
+	usb_otg: usb@78db000 {
+		qcom,hsusb-otg-phy-init-seq = <0x73 0x80 0x38 0x81 0x3b 0x82 0xffffffff>;
+	};
+
+	qcom,wdt@b017000 {
+		qcom,bark-time = <20000>;
+	};
+
+	/delete-node/ qseecom@85b00000;
+	qcom_seecom: qseecom@84a00000 {
+		compatible = "qcom,qseecom";
+		reg = <0x84a00000 0x800000>;
+		reg-names = "secapp-region";
+		qcom,hlos-num-ce-hw-instances = <1>;
+		qcom,hlos-ce-hw-instance = <0>;
+		qcom,qsee-ce-hw-instance = <0>;
+		qcom,msm-bus,name = "qseecom-noc";
+		qcom,disk-encrypt-pipe-pair = <2>;
+		qcom,support-fde;
+		qcom,appsbl-qseecom-support;
+		qcom,msm-bus,num-cases = <4>;
+		qcom,msm-bus,num-paths = <1>;
+		qcom,support-bus-scaling;
+		qcom,msm-bus,vectors-KBps =
+			<55 512 0 0>,
+			<55 512 200000 400000>,
+			<55 512 300000 800000>,
+			<55 512 400000 1000000>;
+		clocks = <&clock_gcc clk_crypto_clk_src>,
+			 <&clock_gcc clk_gcc_crypto_clk>,
+			 <&clock_gcc clk_gcc_crypto_ahb_clk>,
+			 <&clock_gcc clk_gcc_crypto_axi_clk>;
+		clock-names = "core_clk_src", "core_clk",
+				"iface_clk", "bus_clk";
+		qcom,ce-opp-freq = <100000000>;
+	};
+};
+
+#include "msm8976-audio.dtsi"

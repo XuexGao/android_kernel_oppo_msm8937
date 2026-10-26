@@ -1,0 +1,122 @@
+/*
+ * Copyright (c) 2015-2018, The Linux Foundation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+&soc {
+	tlmm: pinctrl@1000000 {
+		cam_sensor_front1_default: cam_sensor_front1_default {
+			/* RESET, STANDBY */
+			mux {
+				pins = "gpio61", "gpio129", "gpio130";
+			};
+
+			config {
+				pins = "gpio61", "gpio129", "gpio130";
+			};
+		};
+
+		cam_sensor_front1_sleep: cam_sensor_front1_sleep {
+			/* RESET, STANDBY */
+			mux {
+				pins = "gpio61", "gpio129", "gpio130";
+			};
+
+			config {
+				pins = "gpio61", "gpio129", "gpio130";
+			};
+		};
+
+		pmx_mdss: pmx_mdss {
+			mdss_dsi_active: mdss_dsi_active {
+				mux {
+					pins = "gpio34", "gpio38", "gpio131";
+				};
+
+				config {
+					pins = "gpio34", "gpio38", "gpio131";
+					/delete-property/ output-high;
+				};
+			};
+
+			mdss_dsi_suspend: mdss_dsi_suspend {
+				mux {
+					pins = "gpio34", "gpio38", "gpio131";
+				};
+
+				config {
+					pins = "gpio34", "gpio38", "gpio131";
+					/delete-property/ bias-pull-down;
+					bias-disable;
+				};
+			};
+		};
+
+		pmx_mdss_te {
+			mdss_te_active: mdss_te_active {
+				mux {
+					pins = "gpio24", "gpio63";
+				};
+				config {
+					pins = "gpio24", "gpio63";
+				};
+			};
+
+			mdss_te_suspend: mdss_te_suspend {
+				mux {
+					pins = "gpio24", "gpio63";
+				};
+				config {
+					pins = "gpio24", "gpio63";
+				};
+			};
+		};
+
+		pmx_ts_reset_suspend {
+			ts_reset_suspend: ts_reset_suspend {
+				mux {
+					pins = "gpio67";
+				};
+
+				config {
+					pins = "gpio67";
+				};
+			};
+		};
+
+		pmx_ts_release {
+			ts_release: ts_release {
+				mux {
+					pins = "gpio65", "gpio67";
+				};
+
+				config {
+					pins = "gpio65", "gpio67";
+				};
+			};
+		};
+
+		smart_pa_int {
+			pa_int_default: pa_int_default {
+				mux {
+					pins = "gpio64";
+					function = "gpio";
+				};
+
+				config {
+					pins = "gpio64";
+					drive-strength = <4>;
+					bias-disable;
+				};
+			};
+		};
+	};
+};

@@ -1,0 +1,107 @@
+/*
+ * Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+#include "msm8976-pinctrl.dtsi"
+#include "msm8976-camera-sensor-mtp.dtsi"
+
+&reloc_mem {
+    reg = <0x0 0x8c200000 0x0 0x1c00000>;
+};
+
+&i2c_2 { /* BLSP1 QUP2 */
+	lm3697@36 {
+		compatible = "ti,lm3697";
+		reg = <0x36>;
+		ti,enable-gpio = <&msm_gpio 62 0x00>;
+
+		lcd_bl {
+			backlight-name = "lm3697";
+			led-sources = <2>;
+			max-current-milliamp = <18>;
+			initial-brightness = <1024>;
+		};
+	};
+
+	ktd2026@30 {
+		status = "okay";
+		compatible = "ktd,ktd2026";
+		reg = <0x30>;
+		vcc_i2c_1v8-supply = <&pm8950_l6>; /* unused */
+		ktd2026,max_brightness = <0x0f>;
+	};
+};
+
+&i2c_4 { /* BLSP1 QUP4 */
+    status = "okay";
+    synaptics16037@20 {
+        compatible = "synaptics-s3320";
+        reg = <0x20>;
+        interrupt-parent = <&msm_gpio>;
+        interrupts = <65 0x2008>;
+        vdd_2v8-supply = <&touchpanel_vdd>;
+        vcc_i2c_1v8-supply = <&pm8950_l6>;
+        synaptics,irq-gpio = <&msm_gpio 65 0x2008>;
+        synaptics,reset-gpio = <&msm_gpio 64 0x1>;
+        pinctrl-names = "default","default";
+        pinctrl-0 = <&ts_int_active>;
+        pinctrl-1 = <&ts_reset_active>;
+
+        synaptics,max-num-support = <10>;
+        synaptics,max-x-point = <10>;
+        synaptics,button-map = <200 200 2021>;
+        synaptics,tx-rx-num = <21 32>;
+        synaptics,display-coords = <1080 1920>;
+        synaptics,panel-coords = <1080 1920>;
+        synaptics,black-gesture-enabled;
+        synaptics,i2c-pull-up;
+        synaptics,power-down;
+        synaptics,disable-gpios;
+
+        /*
+         * NOTE: The driver used in official kernel is not identical
+         * to what is available here.
+         *
+         * TODO: Merge synaptics drivers into oppo_touchscreen module,
+         * as donw on newer kernels from the manufacturer.
+         */
+    };
+};
+
+/* MDSS panels for 16037 */
+#include "dsi-panel-oppo16037jdi_r63452_1080p_cmd.dtsi"
+#include "dsi-panel-oppo16037samsung_ea8064_1080p_cmd.dtsi"
+#include "dsi-panel-oppo16037samsung_ea8064_1080p_video.dtsi"
+#include "dsi-panel-oppo16037samsung_s6e3fa5_1080p_cmd.dtsi"
+
+&mdss_dsi_active {
+    mux {
+        pins = "gpio25" , "gpio34", "gpio128";
+    };
+    config {
+        pins = "gpio25" , "gpio34", "gpio128";
+    };
+};
+
+&mdss_dsi_suspend {
+    mux {
+        pins = "gpio25" , "gpio34", "gpio128";
+    };
+    config {
+        pins = "gpio25" , "gpio34", "gpio128";
+    };
+};
+
+&mdss_dsi0 {
+    qcom,dsi-pref-prim-pan = <&dsi_oppo16037jdi_r63452_1080p_cmd>;
+    qcom,platform-bklight-en-gpio = <&msm_gpio 34 0>;
+};

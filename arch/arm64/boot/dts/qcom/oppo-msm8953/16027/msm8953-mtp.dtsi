@@ -1,0 +1,83 @@
+/*
+ * Copyright (c) 2015-2019, The Linux Foundation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+#include "msm8953-mdss-panels.dtsi"
+#include "msm8953-pinctrl.dtsi"
+
+&mdss_dsi0 {
+	qcom,dsi-pref-prim-pan = <&dsi_oppo16027jdi_r63452_1080p_cmd>;
+
+	qcom,platform-enable-gpio = <&tlmm 38 0>;
+	qcom,platform-bklight-en-gpio = <&tlmm 34 0>;
+};
+
+&labibb {
+	qcom,qpnp-labibb-mode = "lcd";
+};
+
+&i2c_2 {
+	lm3697@36 {
+		compatible = "ti,lm3697";
+		reg = <0x36>;
+		ti,enable-gpio = <&tlmm 46 0x00>;
+
+		lcd_bl {
+			backlight-name = "lm3697";
+			led-sources = <2>;
+			max-current-milliamp = <18>;
+			initial-brightness = <1024>;
+		};
+	};
+
+	ktd2026@30 {
+		status = "okay";
+		compatible = "ktd,ktd2026";
+		reg = <0x30>;
+		ktd2026,max_brightness = <0x18>;
+	};
+};
+
+&i2c_3 { /* BLSP1 QUP3 */
+	synaptics15018@20 {
+		compatible = "synaptics-s3320";
+		synaptics,tx-rx-num = <18 32>;
+		synaptics,enable1v8-gpio = <&tlmm 134 0x1>;
+	};
+};
+
+&i2c_8 { /* BLSP2 QUP4 */
+	tfa98xx@36 {
+		reset-gpio = <&tlmm 64 0x00>;
+	};
+};
+
+/* msm8953-regulator.dtsi */
+&eldo2_8953 {
+	gpio = <&tlmm 67 0>;
+};
+
+/* msm8953-camera-sensor-mtp.dtsi */
+&led_flash0 {
+	gpios = <&tlmm 13 0>, <&tlmm 141 0>;
+};
+
+&cci {
+	eeprom1: qcom,eeprom@1 {
+		gpios = <&tlmm 61 0>;
+	};
+
+	qcom,camera@1 {
+		gpios = <&tlmm 27 0>, <&tlmm 129 0>,
+				<&tlmm 130 0>, <&tlmm 61 0>;
+	};
+};

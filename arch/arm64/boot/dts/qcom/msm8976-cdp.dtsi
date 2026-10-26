@@ -1,0 +1,310 @@
+/*
+ * Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+#include "msm8976-pinctrl.dtsi"
+#include "msm8976-camera-sensor-cdp.dtsi"
+#include "msm8976-mdss-cdp.dtsi"
+#include "msm8976-wsa881x.dtsi"
+
+&i2c_4 { /* BLSP1 QUP4 */
+	synaptics@20 {
+		compatible = "synaptics,dsx";
+		reg = <0x20>;
+		interrupt-parent = <&msm_gpio>;
+		interrupts = <65 0x2008>;
+		avdd-supply = <&pm8950_l10>;
+		vdd-supply = <&pm8950_l6>;
+		clock-names = "iface_clk", "core_clk";
+		clocks = <&clock_gcc clk_gcc_blsp1_ahb_clk>,
+			<&clock_gcc clk_gcc_blsp1_qup4_i2c_apps_clk>;
+		/* pins used by touchscreen */
+		pinctrl-names = "pmx_ts_active","pmx_ts_suspend","pmx_ts_release";
+		pinctrl-0 = <&ts_int_active &ts_reset_active>;
+		pinctrl-1 = <&ts_int_suspend &ts_reset_suspend>;
+		pinctrl-2 = <&ts_release>;
+		synaptics,irq-gpio = <&msm_gpio 65 0x2008>;
+		synaptics,reset-gpio = <&msm_gpio 64 0x0>;
+		synaptics,disable-gpios;
+		synaptics,detect-device;
+		synaptics,bypass-packrat-id-check;
+		synaptics,device1 {
+			synaptics,package-id = <3528>;
+			synaptics,bypass-sensor-coords-check;
+			synaptics,display-coords = <0 0 1439 2559>;
+			synaptics,panel-coords = <0 0 1439 2559>;
+		};
+		synaptics,device2 {
+			synaptics,package-id = <3408>;
+			synaptics,display-coords = <0 0 1079 1919>;
+			synaptics,panel-coords = <0 0 1079 2063>;
+			synaptics,key-codes = <158 139 172 217>;
+		};
+	};
+};
+
+&i2c_8 { /* BLSP2 QUP4 */
+	/* DSI_TO_HDMI I2C configuration */
+	adv7533@39 {
+		compatible = "adv7533";
+		reg = <0x39>;
+		adi,video-mode = <3>; /* 3 = 1080p */
+		adi,main-addr = <0x39>;
+		adi,cec-dsi-addr = <0x3C>;
+		adi,enable-audio;
+		pinctrl-names = "pmx_adv7533_active","pmx_adv7533_suspend";
+		pinctrl-0 = <&adv7533_int_active &adv7533_hpd_int_active>;
+		pinctrl-1 = <&adv7533_int_suspend &adv7533_hpd_int_suspend>;
+		adi,irq-gpio = <&msm_gpio 135 0x2002>;
+		adi,hpd-irq-gpio = <&msm_gpio 52 0x2003>;
+		hpd-5v-en-supply = <&adv_vreg>;
+		qcom,supply-names = "hpd-5v-en";
+		qcom,min-voltage-level = <0>;
+		qcom,max-voltage-level = <0>;
+		qcom,enable-load = <0>;
+		qcom,disable-load = <0>;
+	};
+};
+
+&i2c_2 {
+	pericom-type-c@3d {
+		compatible = "pericom,usb-type-c";
+		reg = <0x3d>;
+		vdd_io-supply = <&pm8950_l5>;
+		interrupt-parent = <&msm_gpio>;
+		interrupts = <102 2>;    /* MSM GPIO 102, TRIGGER_FALLING */
+		pericom,enb-gpio = <&msm_gpio 101 0x1>;	/* active low ENB */
+		pinctrl-names = "default";
+		pinctrl-0 = <&usbc_int_default>;
+	};
+
+	ti-type-c@61 {
+		compatible = "ti,usb-type-c";
+		reg = <0x61>;
+		vdd_io-supply = <&pm8950_l5>;
+		interrupt-parent = <&msm_gpio>;
+		interrupts = <102 2>;    /* MSM GPIO 102, TRIGGER_FALLING */
+		ti,enb-gpio = <&msm_gpio 101 0x1>;	/* active low ENB */
+		pinctrl-names = "default";
+		pinctrl-0 = <&usbc_int_default>;
+	};
+};
+
+&soc {
+	gpio_keys {
+		compatible = "gpio-keys";
+		label = "gpio-keys";
+		pinctrl-names = "default";
+		pinctrl-0 = <&gpio_key_active>;
+
+		camera_focus {
+			label = "camera_focus";
+			gpios = <&msm_gpio 115 0x1>;
+			linux,input-type = <1>;
+			linux,code = <0x210>;
+			gpio-key,wakeup;
+			debounce-interval = <15>;
+			linux,can-disable;
+		};
+
+		camera_snapshot {
+			label = "camera_snapshot";
+			gpios = <&msm_gpio 114 0x1>;
+			linux,input-type = <1>;
+			linux,code = <0x2fe>;
+			gpio-key,wakeup;
+			debounce-interval = <15>;
+			linux,can-disable;
+		};
+
+		vol_up {
+			label = "volume_up";
+			gpios = <&msm_gpio 113 0x1>;
+			linux,input-type = <1>;
+			linux,code = <115>;
+			gpio-key,wakeup;
+			debounce-interval = <15>;
+			linux,can-disable;
+		};
+
+		home {
+			label = "home";
+			gpios = <&msm_gpio 112 0x1>;
+			linux,input-type = <1>;
+			linux,code = <102>;
+			gpio-key,wakeup;
+			debounce-interval = <15>;
+			linux,can-disable;
+		};
+	};
+
+	sound-9335 {
+		qcom,cdc-us-euro-gpios = <&msm_gpio 144 0>;
+		qcom,quin-mi2s-gpios = <&cdc_quin_mi2s_gpios>;
+	};
+
+	cdc_quin_mi2s_gpios: msm_cdc_pinctrl_quin {
+		compatible = "qcom,msm-cdc-pinctrl";
+		pinctrl-names = "aud_active", "aud_sleep";
+		pinctrl-0 = <&pri_tlmm_lines_act>;
+		pinctrl-1 = <&pri_tlmm_lines_sus>;
+	};
+};
+
+&msm_gpio {
+	tlmm_gpio_key {
+		gpio_key_active: gpio_key_active {
+			mux {
+				pins = "gpio112", "gpio113", "gpio114", "gpio115";
+				function = "gpio";
+			};
+
+			config {
+				pins = "gpio112", "gpio113", "gpio114", "gpio115";
+			};
+		};
+
+		gpio_key_suspend: gpio_key_suspend {
+			mux {
+				pins = "gpio112", "gpio113", "gpio114", "gpio115";
+				function = "gpio";
+			};
+
+			config {
+				pins = "gpio112", "gpio113", "gpio114", "gpio115";
+			};
+		};
+	};
+	pmx_adv7533_int: pmx_adv7533_int {
+		adv7533_int_active: adv7533_int_active {
+			mux {
+				pins = "gpio135";
+				function = "gpio";
+			};
+
+			config {
+				pins = "gpio135";
+			};
+		};
+
+		adv7533_int_suspend: adv7533_int_suspend {
+			mux {
+				pins = "gpio52";
+				function = "gpio";
+			};
+
+			config {
+				pins = "gpio52";
+			};
+		};
+	};
+};
+
+&blsp1_uart2 {
+	status = "ok";
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart_console_sleep>;
+};
+
+
+&spmi_bus {
+	qcom,pmi8950@3 {
+		qcom,leds@d800 {
+			qcom,fs-curr-ua = <20000>;
+		};
+	};
+};
+
+&sdhc_1 {
+	vdd-supply = <&pm8950_l8>;
+	qcom,vdd-voltage-level = <2900000 2900000>;
+	qcom,vdd-current-level = <200 570000>;
+
+	vdd-io-supply = <&pm8950_l5>;
+	qcom,vdd-io-always-on;
+	qcom,vdd-io-lpm-sup;
+	qcom,vdd-io-voltage-level = <1800000 1800000>;
+	qcom,vdd-io-current-level = <200 325000>;
+
+	pinctrl-names = "active", "sleep";
+	pinctrl-0 = <&sdc1_clk_on &sdc1_cmd_on &sdc1_data_on &sdc1_rclk_on>;
+	pinctrl-1 = <&sdc1_clk_off &sdc1_cmd_off &sdc1_data_off &sdc1_rclk_off>;
+
+	qcom,nonremovable;
+
+	status = "ok";
+};
+
+&sdhc_2 {
+	vdd-supply = <&pm8950_l11>;
+	qcom,vdd-voltage-level = <2950000 2950000>;
+	qcom,vdd-current-level = <15000 800000>;
+
+	vdd-io-supply = <&pm8950_l12>;
+	qcom,vdd-io-voltage-level = <1800000 2950000>;
+	qcom,vdd-io-current-level = <200 22000>;
+
+	pinctrl-names = "active", "sleep";
+	pinctrl-0 = <&sdc2_clk_on &sdc2_cmd_on &sdc2_data_on &sdc2_cd_on>;
+	pinctrl-1 = <&sdc2_clk_off &sdc2_cmd_off &sdc2_data_off &sdc2_cd_off>;
+
+	#address-cells = <0>;
+	interrupt-parent = <&sdhc_2>;
+	interrupts = <0 1 2>;
+	#interrupt-cells = <1>;
+	interrupt-map-mask = <0xffffffff>;
+	interrupt-map = <0 &intc 0 125 0
+			1 &intc 0 221 0
+			2 &msm_gpio 100 0>;
+	interrupt-names = "hc_irq", "pwr_irq", "status_irq";
+	cd-gpios = <&msm_gpio 100 0x1>;
+
+	status = "ok";
+};
+
+&sdhc_3 {
+	vdd-supply = <&pm8950_l5>;
+	qcom,vdd-voltage-level = <1800000 1800000>;
+	qcom,vdd-current-level = <200 639000>;
+
+	vdd-io-supply = <&pm8950_l5>;
+	qcom,vdd-io-always-on;
+	qcom,vdd-io-voltage-level = <1800000 1800000>;
+	qcom,vdd-io-current-level = <200 639000>;
+
+	pinctrl-names = "active", "sleep";
+	pinctrl-0 = <&sdc3_clk_on &sdc3_cmd_on &sdc3_dat_on
+					&sdc3_wlan_gpio_active>;
+	pinctrl-1 = <&sdc3_clk_off &sdc3_cmd_off &sdc3_dat_off
+					&sdc3_wlan_gpio_sleep>;
+
+	status = "disabled";
+};
+
+&msm_digital_codec {
+	status = "disabled";
+};
+
+&pmic_analog_codec {
+	status = "disabled";
+};
+
+&pm8004_mpps {
+	pinctrl-names = "default";
+	pinctrl-0 = <&pm_mpp4_hdmi_vreg_default>;
+	pm_mpp4_hdmi_vreg_default: pm8004_mpp4 {
+		pins = "mpp4"; /* HDMI_vreg regulator enable */
+		function = "digital"; /* Digital */
+		output-high;	/* Output */
+		power-source = <0>; /* VPH_PWR */
+	};
+};

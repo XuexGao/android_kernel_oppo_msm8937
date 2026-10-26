@@ -1,0 +1,27 @@
+/* Copyright (c) 2015, The Linux Foundation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+&mdss_mdp {
+	/delete-node/ qcom,mdss_dsi_sim_video;
+	/delete-node/ qcom,mdss_dsi_sim_cmd;
+	/delete-node/ qcom,mdss_dsi_nt35597_wqxga_video;
+	/delete-node/ qcom,mdss_dsi_nt35597_wqxga_cmd;
+	/delete-node/ qcom,mdss_dsi_otm1906c_1080p_cmd;
+	/delete-node/ qcom,mdss_dsi_hx8399a_1080p_video;
+	/delete-node/ qcom,mdss_dsi_nt35597_dsc_wqxga_video;
+	/delete-node/ qcom,mdss_dsi_nt35597_dsc_wqxga_cmd;
+	/delete-node/ qcom,mdss_dsi_truly_1080p_video;
+	/delete-node/ qcom,mdss_dsi_truly_1080p_cmd;
+	/delete-node/ qcom,mdss_dsi_adv7533_1080p;
+	/delete-node/ qcom,mdss_dsi_adv7533_720p;
+	/delete-node/ qcom,mdss_dsi_nt35523_wqxga_video;
+};

@@ -1,0 +1,5 @@
+menu "Tech packages"
+
+source "techpack/camera-legacy-m/Kconfig"
+
+endmenu

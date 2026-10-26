@@ -1,0 +1,157 @@
+/*
+ * Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+#include "msm8976-pinctrl.dtsi"
+#include "msm8976-camera-sensor-mtp.dtsi"
+
+&reloc_mem {
+	reg = <0x0 0x8c200000 0x0 0x2000000>;
+};
+
+&i2c_2 { /* BLSP1 QUP2 */
+	synaptics-rmi-ts@20 {
+		compatible = "synaptics,s1302";
+		reg = <0x20>;
+		interrupt-parent = <&msm_gpio>;
+		interrupts = <142 0x2008>;
+		synaptics,irq-gpio = <&msm_gpio 142 0x2008>;
+		vdd_2v8-supply = <&msm_gpio 130 0x1>;
+		vcc_i2c_1v8-supply = <&pm8950_l5>;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&touch_key_int_active>;
+	};
+};
+
+&i2c_4 { /* BLSP1 QUP4 */
+	status = "okay";
+	synaptics15018@20 {
+		compatible = "synaptics-s3508";
+		reg = <0x20>;
+		interrupt-parent = <&msm_gpio>;
+		interrupts = <65 0x2008>;
+		vdd_2v8-supply = <&touchpanel_vdd>;
+		vcc_i2c_1v8-supply = <&pm8950_l5>;
+		synaptics,irq-gpio = <&msm_gpio 65 0x2008>;
+		synaptics,reset-gpio = <&msm_gpio 64 0x1>;
+		pinctrl-names = "default","default";
+		pinctrl-0 = <&ts_int_active>;
+		pinctrl-1 = <&ts_reset_active>;
+
+		synaptics,max-num-support = <10>;
+		synaptics,max-x-point = <10>;
+		synaptics,button-map = <200 200 2021>;
+		synaptics,tx-rx-num = <17 29>;
+		synaptics,display-coords = <1080 1920>;
+		synaptics,panel-coords = <1080 1920>;
+		synaptics,black-gesture-enabled;
+		synaptics,glove-mode-enabled;
+		synaptics,i2c-pull-up;
+		synaptics,power-down;
+		synaptics,disable-gpios;
+	};
+
+	ktd2026@30 {
+		status = "okay";
+		compatible = "ktd,ktd2026";
+		reg = <0x30>;
+		ktd2026,max_brightness = <0x18>;
+	};
+};
+
+&i2c_8 { /* BLSP2 QUP4 */
+	ak4376@10 {
+		enable-gpio = <&msm_gpio 16 0x00>;
+	};
+};
+
+&ak4376_vdd_default {
+	mux {
+		pins = "gpio16";
+	};
+
+	config {
+		pins = "gpio16";
+	};
+};
+
+&soc {
+	fpc_fpc1020 {
+		fpc,reset-gpio = <&msm_gpio 110 0x00>;
+	};
+
+	gpio_keys {
+		home {
+			label = "home";
+			gpios = <&msm_gpio 109 0x1>;
+			linux,input-type = <1>;
+			linux,code = <102>;
+			gpio-key,wakeup;
+			debounce-interval = <15>;
+			linux,can-disable;
+		};
+
+		hallsensor_key {
+			label = "hallsensor_key";
+			gpios = <&msm_gpio 107 0x1>;
+			interrupt-parent = <&msm_gpio>;
+			interrupts = <107 0x00>;
+			linux,input-type = <5>;
+			linux,code = <0>;
+			gpio-key,wakeup;
+			debounce-interval = <150>;
+			linux,can-disable;
+		};
+	};
+
+	devinfo {
+		Hw,operator-gpio2 = <&msm_gpio 96 0x00>;
+		pinctrl-0 = <&hw_operator_gpio1_active &hw_operator_gpio2_active &hw_operator_gpio3_active &hw_sub_gpio1_active &hw_sub_gpio2_active>;
+	};
+};
+
+&hw_operator_gpio2_active {
+	mux {
+		pins = "gpio96";
+	};
+
+	config {
+		pins = "gpio96";
+	};
+};
+
+/* MDSS panels for 15103 */
+#include "dsi-panel-oppo15103samsung_ea8064_1080p_cmd.dtsi"
+#include "dsi-panel-oppo15103samsung_ea8064_1080p_video.dtsi"
+
+&mdss_dsi_active {
+	mux {
+		pins = "gpio25" , "gpio128";
+	};
+	config {
+		pins = "gpio25" , "gpio128";
+	};
+};
+
+&mdss_dsi_suspend {
+	mux {
+		pins = "gpio25" , "gpio128";
+	};
+	config {
+		pins = "gpio25" , "gpio128";
+	};
+};
+
+&mdss_dsi0 {
+	qcom,dsi-pref-prim-pan = <&dsi_samsung_oppo15103_ea8064_1080p_cmd>;
+};

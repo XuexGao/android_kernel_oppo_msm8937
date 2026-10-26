@@ -1,0 +1,81 @@
+/*
+ * Copyright (c) 2018, 2020, The Linux Foundation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+/ {
+	qcom,enable-legacy-adsp-hacks;
+};
+
+&soc {
+	int_codec: sound {
+		/delete-property/ qcom,cdc-us-euro-gpios;
+		/delete-property/ qcom,cdc-us-eu-gpios;
+		/delete-property/ qcom,quin-mi2s-gpios;
+		/delete-property/ asoc-wsa-codec-names;
+		/delete-property/ asoc-wsa-codec-prefixes;
+		/delete-property/ msm-vdd-wsa-switch-supply;
+		/delete-property/ qcom,msm-vdd-wsa-switch-voltage;
+		/delete-property/ qcom,msm-vdd-wsa-switch-current;
+
+		qcom,msm-mbhc-hphl-swh = <1>;
+		qcom,msm-micbias2-ext-cap;
+		qcom,audio-routing =
+				"RX_BIAS", "MCLK",
+				"SPK_RX_BIAS", "MCLK",
+				"INT_LDO_H", "MCLK",
+				"MIC BIAS External", "Handset Mic",
+				"MIC BIAS External2", "Headset Mic",
+				"MIC BIAS External", "Secondary Mic",
+				"AMIC1", "MIC BIAS External",
+				"AMIC2", "MIC BIAS External2",
+				"AMIC3", "MIC BIAS External";
+		qcom,use-legacy-voice-cpu-dais;
+
+		oppo-spk-pa-en = <&tlmm 86 0x00>;
+		oppo-spk-boost-en = <&tlmm 85 0x00>;
+		oppo-hp-pa-en = <&tlmm 46 0x00>;
+		oppo-hp-vdd-supply = <&pm8937_l11>;
+	};
+
+	i2c@78b6000 {
+		/delete-node/ wsa881x-i2c-codec@f;
+		/delete-node/ wsa881x-i2c-codec@45;
+	};
+
+	/delete-node/ msm_cdc_pinctrl_us_euro_sw;
+	/delete-node/ msm_cdc_pinctrl_quin;
+
+	/delete-node/ sound-9335;
+	/delete-node/ wsa881x_analog_vi_pctrl;
+	/delete-node/ wsa881x_analog_clk_pctrl;
+	/delete-node/ wsa881x_analog_reset_pctrl;
+};
+
+&slim_msm {
+	tasha_codec {
+		/delete-node/ swr_master;
+	};
+};
+
+&tlmm {
+	/delete-node/ wsa_clk;
+	/delete-node/ wsa_reset;
+	/delete-node/ wsa-vi;
+};
+
+&msm_digital_codec {
+	status = "okay";
+};
+
+&pmic_analog_codec {
+	status = "okay";
+};
