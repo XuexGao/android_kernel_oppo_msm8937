@@ -1,0 +1,18 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * OPPO R9sk (16027) —— MSM8953
+ *
+ * board-id <8 0 16027>。本机型是用户手上那台（16027）。
+ */
+
+/dts-v1/;
+
+#include "msm8953-oppo-common.dtsi"
+
+/ {
+	model = "OPPO R9sk";
+	compatible = "oppo,r9sk", "qcom,msm8953";
+
+	qcom,msm-id = <293 0>;
+	qcom,board-id = <8 0 16027>;
+};

@@ -1,0 +1,119 @@
+name: "6.12 Android OPPO MSM8953"
+
+# 这个 workflow 构建的是 **真正的 Android 内核**：
+#   · 基线：Android Common Kernel (ACK) android16-6.12 —— Linux 6.12.52
+#     + Google 的 Android 补丁（binder / dmabuf heaps / vendor hooks）
+#   · 平台：ACK 继承自主线的 MSM8953 支持（clk / pinctrl / interconnect /
+#     sdhci / usb phy / remoteproc 一应俱全）
+#   · 板级：本项目新增的 OPPO R9s(16017) / R9sk(16027) 设备树
+#
+# 与 4.19 分支（lineage-22.1-k4.19 / bakasu-k4.19）的区别：
+#   4.19 是 CAF downstream，能跑完整 LineageOS；
+#   本分支是 ACK + 主线平台层，缺少高通 vendor 栈
+#   （KGSL / ION / camera / Q6 音频路由 / qpnp 充电电量计），
+#   所以 **还不能跑起 Android 用户态**，属于 bring-up 阶段。
+#
+# 工具链用 GCC：ACK 的 GKI 配置面向 clang，但我们走自定义 defconfig，
+# 不用 LTO/CFI 那些 clang-only 特性，GCC 够用且 CI 上现成。
+
+on:
+  push:
+    branches:
+      - 6.12-test
+    paths:
+      - 'ci/**'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: 安装编译依赖
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            build-essential bc bison flex \
+            gcc-aarch64-linux-gnu \
+            libssl-dev libelf-dev \
+            device-tree-compiler \
+            python3 rsync cpio kmod zstd
+
+      - name: 工具链版本
+        run: |
+          set -euo pipefail
+          aarch64-linux-gnu-gcc --version | head -1
+          make --version | head -1
+
+      - name: 配置内核
+        run: |
+          set -euo pipefail
+          set -x
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+            msm8953-oppo_defconfig
+          echo "--- Android 核心配置："
+          grep -E '^CONFIG_(ANDROID_BINDER_IPC|ANDROID_BINDERFS|ANDROID_VENDOR_HOOKS|DMABUF_HEAPS)=' .config
+          echo "--- MSM8953 平台："
+          grep -E '^CONFIG_(MSM_GCC_8953|PINCTRL_MSM8953|MMC_SDHCI_MSM|USB_DWC3|QCOM_SMD_RPM)=' .config
+
+      - name: 编译内核与设备树
+        run: |
+          set -euo pipefail
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+            -j"$(nproc)" Image dtbs 2>&1 | tee build.log
+
+      - name: 打包产物
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          cp arch/arm64/boot/Image out/Image
+          gzip -9 -c arch/arm64/boot/Image > out/Image.gz
+
+          D=arch/arm64/boot/dts/qcom
+          cp "$D/msm8953-oppo-r9s.dtb"  out/ 2>/dev/null || true
+          cp "$D/msm8953-oppo-r9sk.dtb" out/ 2>/dev/null || true
+
+          # CAF ABL 认 Image.gz + 追加 DTB
+          for dtb in out/msm8953-oppo-*.dtb; do
+            [ -f "$dtb" ] || continue
+            base="$(basename "$dtb" .dtb)"
+            cat out/Image.gz "$dtb" > "out/${base}-Image.gz-dtb"
+          done
+
+          KREL="$(make -s ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- kernelrelease)"
+          {
+            echo "KERNEL_RELEASE=${KREL}"
+            echo "BASE=ACK android16-6.12"
+            echo "COMMIT=$(git rev-parse --short HEAD)"
+          } | tee out/meta.env
+
+          ls -la out/
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: "android-6.12-msm8953-${{ github.sha }}"
+          path: out/*
+          if-no-files-found: error
+
+      - name: 失败时上传构建日志
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: "android-6.12-buildlog-${{ github.sha }}"
+          path: build.log
+          if-no-files-found: ignore

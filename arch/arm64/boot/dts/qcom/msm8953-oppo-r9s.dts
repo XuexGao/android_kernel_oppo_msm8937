@@ -1,0 +1,21 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * OPPO R9s (16017) —— MSM8953
+ *
+ * board-id <8 0 16017>：ABL 在启动时按这个三元组选 DTB。
+ * 与 R9sk(16027) 的唯一区别就是 board-id 和机型名，
+ * 硬件差异（面板 JDI/Samsung）在 mainline 的 simple-framebuffer
+ * 方案下不体现 —— 屏幕内容由 bootloader 直接留在 framebuffer 里。
+ */
+
+/dts-v1/;
+
+#include "msm8953-oppo-common.dtsi"
+
+/ {
+	model = "OPPO R9s";
+	compatible = "oppo,r9s", "qcom,msm8953";
+
+	qcom,msm-id = <293 0>;
+	qcom,board-id = <8 0 16017>;
+};
