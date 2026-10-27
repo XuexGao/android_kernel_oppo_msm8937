@@ -76,6 +76,48 @@ jobs:
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
             -j"$(nproc)" Image dtbs 2>&1 | tee build.log
 
+      # 反编译 dtb 做静态自检：显示链路/面板/偏压必须真的进了 dtb，
+      # 否则一旦有人把 status 改回 disabled 或删了面板节点，CI 会直接失败，
+      # 而不是等到刷机才发现屏不亮。
+      # 反编译 dtb 做静态自检：显示链路/面板/偏压必须真的进了 dtb。
+      # 一旦有人把 status 改回 disabled、删了面板节点，或把 simpledrm 加回来，
+      # CI 直接失败，而不是等刷机才发现屏不亮。
+      - name: DTB 自检（显示链路）
+        run: |
+          set -euo pipefail
+          D=arch/arm64/boot/dts/qcom
+          fail=0
+
+          check() {
+            local dtb="$1" pat="$2" desc="$3"
+            if dtc -I dtb -O dts "$dtb" 2>/dev/null | grep -q "$pat"; then
+              echo "  OK   $desc"
+            else
+              echo "  FAIL $desc  (未在 $(basename "$dtb") 里找到 '$pat')"
+              fail=1
+            fi
+          }
+
+          echo "=== r9sk (16027, 实机) ==="
+          check "$D/msm8953-oppo-r9sk.dtb" 'oppo,r63452-cmd'       'JDI R63452 面板节点'
+          check "$D/msm8953-oppo-r9sk.dtb" 'qcom,pmi8998-lab-ibb'  'LAB/IBB 偏压'
+          check "$D/msm8953-oppo-r9sk.dtb" 'qcom,msm8953-dsi-ctrl' 'DSI 控制器'
+
+          echo "=== r9s (16017) ==="
+          check "$D/msm8953-oppo-r9s.dtb" 'oppo,ea8064-cmd'        'Samsung EA8064 面板节点'
+          check "$D/msm8953-oppo-r9s.dtb" 'qcom,msm8953-dsi-ctrl'  'DSI 控制器'
+
+          echo "=== simpledrm 必须移除（否则和 mdss 抢屏 → 花屏）==="
+          for d in r9s r9sk; do
+            if dtc -I dtb -O dts "$D/msm8953-oppo-$d.dtb" 2>/dev/null | grep -q 'simple-framebuffer'; then
+              echo "  FAIL $d 仍含 simple-framebuffer"; fail=1
+            else
+              echo "  OK   $d 已移除 simpledrm 节点"
+            fi
+          done
+
+          exit $fail
+
       - name: 打包产物
         run: |
           set -euo pipefail
