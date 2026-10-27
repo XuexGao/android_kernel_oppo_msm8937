@@ -63,12 +63,25 @@ MSM8953 + PM8953 + PMI8950，触摸屏同在 i2c_3@0x20 且都是 Synaptics）�
 
 ## 已验证
 
-本地（aarch64-linux-gnu-gcc 14.2）实际编译：
+### 本地（aarch64-linux-gnu-gcc 14.2）
 
 ```
 msm8953-oppo-r9s.dtb    39475 bytes
 msm8953-oppo-r9sk.dtb   39475 bytes
 ```
+
+### GitHub Actions 实跑通过（run 40460610787）
+
+```
+KERNEL_RELEASE = 6.12.52-gc8707895af5a      ← ACK android16-6.12
+Image                 52,816,384 bytes
+Image.gz              16,230,031 bytes
+msm8953-oppo-r9s-Image.gz-dtb   16,269,506 bytes
+msm8953-oppo-r9sk-Image.gz-dtb  16,269,506 bytes
+```
+
+日志确认 DTC 两个 dtb 都编了，配置也确认落地
+（`CONFIG_ANDROID_BINDER_IPC=y`、`CONFIG_PINCTRL_MSM8953=y` 等）。
 
 配置确认落地：
 
@@ -140,4 +153,5 @@ CI 用 GCC 而不是 clang：ACK 的 GKI 配置面向 clang（LTO/CFI），
 - `[vendor]` = 来自本仓库 4.9/4.19 下游树
 - `FIXME(unverified)` = 未真机验证
 
-**当前阶段：内核能编译，但还没在任何真机上启动过。**
+**当前阶段：内核能编译出完整产物（ACK 6.12.52 + OPPO R9s 板级），
+但还没有任何 vendor 驱动，真机启动未验证。**
