@@ -16,6 +16,7 @@
  *   不是 Android/LOS 内核。缺少的 vendor 栈见 6.12-test 分支的 README。
  */
 
+#include <dt-bindings/leds/common.h>
 #include "msm8953.dtsi"
 #include "pm8953.dtsi"
 #include "pmi8950.dtsi"
@@ -111,6 +112,31 @@
 		};
 	};
 
+	/*
+	 * 触摸屏的两路使能（对应 vendor 的 enable1v8 / enable2v8 gpio）。
+	 * 用 gpio 控制的 fixed regulator 表达，让 rmi4 驱动按标准
+	 * vdd-supply / vio-supply 去 enable。
+	 */
+	touch_1v8: regulator-touch-1v8 {
+		compatible = "regulator-fixed";
+		regulator-name = "touch_1v8";
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <1800000>;
+		gpio = <&tlmm 134 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		startup-delay-us = <100>;
+	};
+
+	touch_2v8: regulator-touch-2v8 {
+		compatible = "regulator-fixed";
+		regulator-name = "touch_2v8";
+		regulator-min-microvolt = <2800000>;
+		regulator-max-microvolt = <2800000>;
+		gpio = <&tlmm 132 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		startup-delay-us = <100>;
+	};
+
 	vph_pwr: vph-pwr-regulator {
 		compatible = "regulator-fixed";
 		regulator-name = "vph_pwr";
@@ -139,6 +165,19 @@
 &i2c_3 {
 	status = "okay";
 
+	/*
+	 * 触摸屏：Synaptics（16027 是 S3320，16 引脚 reset / 17 引脚 irq）。
+	 *
+	 * 4.19 vendor 驱动是私有的 synaptics-s3320，mainline 这边只能挂通用
+	 * rmi4。S3320 是否走标准 RMI4 协议需要真机确认 —— 这是第一个
+	 * 上机时要看的点。
+	 *
+	 * 供电（来自 4.19 oppo-msm8953/msm8953-mtp.dtsi 的 s3320 节点）：
+	 *   synaptics,enable1v8-gpio = <&tlmm 134>   1.8V IO 使能
+	 *   synaptics,enable2v8-gpio = <&tlmm 132>   2.8V 模拟使能
+	 * 这两脚在 mainline 没有对应绑定，用 fixed-regulator + gpio 表达，
+	 * 见下面 touch_1v8 / touch_2v8。
+	 */
 	touchscreen@20 {
 		reg = <0x20>;
 		compatible = "syna,rmi4-i2c";
@@ -147,11 +186,10 @@
 		interrupts = <17 IRQ_TYPE_EDGE_FALLING>;
 
 		pinctrl-names = "default";
-		pinctrl-0 = <&ts_reset>;
+		pinctrl-0 = <&ts_reset &ts_int>;
 
-		/* 4.19 里没有单独的 vdd/vio supply 绑定，暂按 PM8953 常电轨给 */
-		vdd-supply = <&pm8953_l22>;
-		vio-supply = <&pm8953_l6>;
+		vdd-supply = <&touch_2v8>;
+		vio-supply = <&touch_1v8>;
 
 		syna,reset-delay-ms = <200>;
 		syna,startup-delay-ms = <500>;
@@ -340,6 +378,14 @@
 		drive-strength = <2>;
 		bias-pull-up;
 	};
+
+	/* 触摸屏中断脚 gpio17（4.19: ts_int_active） */
+	ts_int: ts-int-state {
+		pins = "gpio17";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-up;
+	};
 };
 
 &usb3 {
@@ -373,4 +419,51 @@
 	 * 具体面板节点放在各机型 dts 里（r9s 是 EA8064，r9sk 是 R63452），
 	 * 因为它们 compatile 不同。
 	 */
+};
+
+/*
+ * 背光：TI LM3697 @ i2c_2 0x36，enable GPIO 46
+ *
+ * 参数来自本仓库 4.19 的 oppo-msm8953/16027/msm8953-mtp.dtsi：
+ *     lm3697@36 {
+ *         ti,enable-gpio = <&tlmm 46 0x00>;
+ *         lcd_bl { led-sources = <2>; max-current-milliamp = <18>;
+ *                  initial-brightness = <1024>; };
+ *     };
+ *
+ * 换算到主线 leds-lm3697 绑定：
+ *   · 主线的 enable 属性名是 enable-gpios（devm_gpiod_get(dev, "enable")）
+ *   · 主线的子节点用 reg 表示 control bank（只能是 0/1，对应 CONTROL_A/B），
+ *     而 vendor 的 led-sources=<2> 才是"用第 3 路灯串"的意思 ——
+ *     两者含义不同，别把 2 写进 reg，否则 probe 直接报 "reg property is invalid"
+ *   · vled-supply 不写也行：devm_regulator_get() 拿不到 supply 时
+ *     会退化成 dummy regulator
+ *
+ * default-trigger 用 "default-on"：bring-up 阶段没有 Android 用户态去设
+ * 亮度，用这个触发器可以在内核启动时就把背光点亮（最亮），
+ * 好让"屏到底亮没亮"这件事可观测。
+ * 将来接 Android 时改成 led-backlight 桥接（CONFIG_BACKLIGHT_LED），
+ * 由 HAL 通过 /sys/class/backlight 控制。
+ */
+&i2c_2 {
+	status = "okay";
+
+	led-controller@36 {
+		compatible = "ti,lm3697";
+		reg = <0x36>;
+
+		enable-gpios = <&tlmm 46 GPIO_ACTIVE_HIGH>;
+
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		backlight_led: led@0 {
+			reg = <0>;
+			led-sources = <2>;
+			max-current-milliamp = <18>;
+			label = "backlight";
+			function = LED_FUNCTION_BACKLIGHT;
+			default-trigger = "default-on";
+		};
+	};
 };

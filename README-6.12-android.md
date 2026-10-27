@@ -127,6 +127,65 @@ LAB/IBB 能直接复用主线 pmi8998 驱动的原因：主线 `qcom-labibb-regu
 要回退做对照实验：把 `chosen/framebuffer@90001000` 加回来，并把
 `&mdss / &mdp / &mdss_dsi0` 设回 `disabled`。
 
+
+### 背光 / 触摸 / USB / 存储（第三轮）
+
+| 子系统 | 做了什么 | 关键点 |
+|---|---|---|
+| 背光 | LM3697 @ i2c_2 0x36，enable gpio46 | 见下 |
+| 触摸 | RMI4 + 两路 gpio 使能 regulator | 见下 |
+| USB gadget | configfs + ffs 内置 | `CONFIG_USB_CONFIGFS=y` |
+| 存储 | EROFS + F2FS 打开 | Android 12+ 的 system 常用 EROFS |
+
+#### 背光（LM3697）
+
+ACK 自带 `leds-lm3697.c`，DTS 里配：
+
+```
+led-controller@36 { compatible="ti,lm3697"; reg=<0x36>;
+                    enable-gpios=<&tlmm 46>; led@0 { reg=<0>; led-sources=<2>;
+                    max-current-milliamp=<18>; default-trigger="default-on"; } }
+```
+
+两个容易搞错的地方：
+
+1. **`reg` 是 control bank，不是灯串号**。主线驱动只接受 `reg=<0>` 或 `<1>`
+   （对应 CONTROL_A/B）；vendor 里的 `led-sources=<2>` 才是"用第 3 路灯串"，
+   写进 `reg` 会直接 `probe` 失败报 `reg property is invalid`。
+2. `vled-supply` 可以不给 —— `devm_regulator_get()` 拿不到就退化成 dummy。
+
+`default-trigger="default-on"`：bring-up 阶段没有 Android 用户态去设亮度，
+用这个触发器让内核启动就把背光点亮，好让"屏到底亮没亮"可观测。
+接 Android 后改成 `CONFIG_BACKLIGHT_LED` 桥接，由 HAL 走
+`/sys/class/backlight`。
+
+#### 触摸（Synaptics S3320）
+
+16027 用的是 **S3320**，4.19 上是私有驱动 `synaptics-s3320`，主线只能挂
+通用 `rmi4`。DTS 补齐了 vendor 节点里的两路使能脚：
+
+```
+synaptics,enable1v8-gpio = <&tlmm 134>   → touch_1v8 (fixed-regulator, vio-supply)
+synaptics,enable2v8-gpio = <&tlmm 132>   → touch_2v8 (fixed-regulator, vdd-supply)
+```
+
+原来只写了 `vdd-supply=<&pm8953_l22>` 是错的 —— 这两路是 **GPIO 控制**的
+LDO 使能，不是 PMIC 常电轨。同时补了 `ts_int`（gpio17）pinctrl。
+
+另外开了 `CONFIG_RMI4_F12`（2D 多点触控）—— 不开的话设备能 probe
+但完全不出触摸事件。
+
+#### USB gadget
+
+Android 的 adb / fastboot 都靠 `configfs + ffs`，原来这几个是 `=m`，
+改成内置（`USB_CONFIGFS / USB_F_FS / USB_CONFIGFS_F_FS`），
+并把 `&usb3` 设成 `dr_mode="peripheral"`。
+
+#### 存储
+
+`CONFIG_EROFS_FS(+XATTR/ZIP)` 与 `CONFIG_F2FS_FS(+XATTR/COMPRESSION)`，
+EROFS 给 system/vendor，F2FS 给 data。
+
 CI 新增 **DTB 静态自检**：反编译 dtb 确认面板节点 / DSI 控制器 / LAB-IBB
 都在，且 `simple-framebuffer` 确实不存在。任一不满足则构建失败，
 避免"等刷机才发现屏不亮"。
