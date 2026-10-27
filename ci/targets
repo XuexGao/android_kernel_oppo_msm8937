@@ -1,3 +1,1 @@
-# 构建触发器：改本文件并推到 6.12-test 分支即触发 build-6.12.yml
-# （workflow 的 on.push.paths 只监听 ci/**）
-all
+run-1793082039
