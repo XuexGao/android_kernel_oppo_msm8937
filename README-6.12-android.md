@@ -222,6 +222,23 @@ ACK 给了 Android **内核接口**，主线给了 MSM8953 **平台**，
 
 ---
 
+## 刷机包
+
+CI 会额外产出 **AnyKernel3 刷机包**（`r9s-android-6.12-<kver>-<date>.zip`），
+直接 TWRP 刷入即可，只替换 boot 分区里的内核+dtb，不动其它分区。
+
+打包脚本是 `ci/mkflashable.sh`，要点：
+
+- `BLOCK=/dev/block/bootdevice/by-name/boot`（注意变量名是**大写**）
+- `do.devicecheck=0`：不靠机型字符串校验，因为 R9s/R9sk 的 `ro.product.device`
+  在不同 ROM 上写法不统一
+- `do.modules=0` / `do.systemless=0`：本内核不带模块
+- 包内同时放两个 dtb，安装时由 `ak3-oppo-dtb.sh` 读
+  `/proc/device-tree/qcom,board-id` 自动选：
+  `0x3e91` → r9s(16017)，`0x3e9b` → r9sk(16027)，读不到默认 r9sk
+
+> 本地没有 `zip` 命令时脚本会退化用 python 的 zipfile，CI 上装了 `zip`。
+
 ## 构建
 
 ```bash

@@ -51,7 +51,7 @@ jobs:
             gcc-aarch64-linux-gnu \
             libssl-dev libelf-dev \
             device-tree-compiler \
-            python3 rsync cpio kmod zstd
+            python3 rsync cpio kmod zstd zip
 
       - name: 工具链版本
         run: |
@@ -144,6 +144,13 @@ jobs:
           } | tee out/meta.env
 
           ls -la out/
+          chmod +x ci/mkflashable.sh
+
+      - name: 打包 AnyKernel3 刷机包
+        run: |
+          set -euo pipefail
+          KREL="$(make -s ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- kernelrelease)"
+          ci/mkflashable.sh out "r9s-android-6.12-${KREL}-$(date +%Y%m%d).zip"
 
       - name: 上传产物
         uses: actions/upload-artifact@v4
