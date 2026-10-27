@@ -100,3 +100,5 @@ obj-$(CONFIG_DRM_PANEL_VISIONOX_VTDR6130) += panel-visionox-vtdr6130.o
 obj-$(CONFIG_DRM_PANEL_VISIONOX_R66451) += panel-visionox-r66451.o
 obj-$(CONFIG_DRM_PANEL_WIDECHIPS_WS2401) += panel-widechips-ws2401.o
 obj-$(CONFIG_DRM_PANEL_XINPENG_XPP055C272) += panel-xinpeng-xpp055c272.o
+obj-$(CONFIG_DRM_PANEL_OPPO_EA8064) += panel-oppo-ea8064.o
+obj-$(CONFIG_DRM_PANEL_JDI_R63452) += panel-oppo-jdi-r63452.o

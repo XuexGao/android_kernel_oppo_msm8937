@@ -37,29 +37,17 @@
 		ranges;
 
 		/*
-		 * R9s 的屏幕是 1080x1920，与 potter 一致。
-		 * 开机后由 bootloader 留下的连续 framebuffer 直接映射，
-		 * 没有 MDSS/DSI 驱动参与 —— 这是 mainline 上能亮屏的最小方案。
+		 * 原来这里是 simple-framebuffer（simpledrm 直接映射 bootloader
+		 * 留下的连续 framebuffer）。现在改成真正的 MDSS/DSI 链路：
+		 * 面板由 oppo,r63452-cmd / oppo,ea8064-cmd 两个 DRM panel 驱动接管。
+		 *
+		 * 这里刻意不再声明 framebuffer 节点 —— simpledrm 和 mdss 同时
+		 * 拥有同一块屏幕会打架（一个写线性 framebuffer、一个配 MDP/DSI），
+		 * 结果是花屏。
+		 *
+		 * 想回退到 simpledrm 做对照实验时，把原来的 framebuffer@90001000
+		 * 节点加回来、并把下面 &mdss/&mdp/&mdss_dsi0 的 status 设回 disabled。
 		 */
-		framebuffer@90001000 {
-			compatible = "simple-framebuffer";
-			reg = <0 0x90001000 0 (1080 * 1920 * 3)>;
-
-			width = <1080>;
-			height = <1920>;
-			stride = <(1080 * 3)>;
-			format = "r8g8b8";
-
-			power-domains = <&gcc MDSS_GDSC>;
-
-			clocks = <&gcc GCC_MDSS_AHB_CLK>,
-				 <&gcc GCC_MDSS_AXI_CLK>,
-				 <&gcc GCC_MDSS_VSYNC_CLK>,
-				 <&gcc GCC_MDSS_MDP_CLK>,
-				 <&gcc GCC_MDSS_BYTE0_CLK>,
-				 <&gcc GCC_MDSS_PCLK0_CLK>,
-				 <&gcc GCC_MDSS_ESC0_CLK>;
-		};
 	};
 
 	/*
@@ -361,4 +349,28 @@
 &usb3_dwc3 {
 	/delete-property/ usb-role-switch;
 	dr_mode = "peripheral";
+};
+
+/*
+ * 显示链路：MDSS + MDP5 + DSI0 + 面板。
+ *
+ * msm8953.dtsi 里这些节点都是现成的（mdss/mdp/mdss_dsi0/mdss_dsi0_phy，
+ * DSI 控制器 compatible 是 qcom,msm8953-dsi-ctrl），主线 drm/msm 的
+ * MDP5 + DSI 驱动可以直接用。
+ */
+&mdss {
+	status = "okay";
+};
+
+&mdp {
+	status = "okay";
+};
+
+&mdss_dsi0 {
+	status = "okay";
+
+	/*
+	 * 具体面板节点放在各机型 dts 里（r9s 是 EA8064，r9sk 是 R63452），
+	 * 因为它们 compatile 不同。
+	 */
 };

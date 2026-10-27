@@ -19,3 +19,32 @@
 	qcom,msm-id = <293 0>;
 	qcom,board-id = <8 0 16017>;
 };
+
+/*
+ * 16017 的面板：Samsung EA8064 AMOLED
+ *
+ * reset 同 16027（都是 131，来自通用 oppo-msm8953/msm8953-mtp.dtsi 的
+ * qcom,platform-reset-gpio）。AMOLED 的 AVDD/VNEG 来自 PMI8950 的
+ * LAB/IBB 正负压轨：
+ *   avdd-supply = <&lab>   正压
+ *   vneg        = <&ibb>   负压（驱动里是 optional，先不接，避免无证据
+ *                          直接上负压轨）
+ *   vci         = 1.8V 逻辑供电（驱动里是必需项）
+ */
+&mdss_dsi0 {
+	panel@0 {
+		compatible = "oppo,ea8064-cmd";
+		reg = <0>;
+
+		reset-gpios = <&tlmm 131 GPIO_ACTIVE_HIGH>;
+
+		vci-supply = <&pm8953_l6>;
+		avdd-supply = <&lab>;
+
+		port {
+			panel_in: endpoint {
+				remote-endpoint = <&mdss_dsi0_out>;
+			};
+		};
+	};
+};

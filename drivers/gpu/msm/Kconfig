@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# Qualcomm KGSL (Adreno GPU) —— 从下游 4.9/4.19 前移到 Linux 6.12 的适配版
+#
+# 与 4.19 原版 Kconfig 的差异（都是因为符号在 6.12 里改名/挪位了）：
+#   · QCOM_QFPROM  → NVMEM_QCOM_QFPROM（6.x 把 QFPROM 挪进 drivers/nvmem）
+#   · MSM_IOMMU    → 6.12 没有这个符号，只保留 ARM_SMMU 条件
+#   · 其余 select 项在 6.12 里都还在
+#
+config QCOM_KGSL
+	tristate "Qualcomm Technologies, Inc. 3D Graphics driver"
+	depends on ARCH_QCOM
+	depends on NVMEM_QCOM_QFPROM
+	select GENERIC_ALLOCATOR
+	select FW_LOADER
+	select PM_DEVFREQ
+	select QCOM_SCM
+	select DEVFREQ_GOV_SIMPLE_ONDEMAND
+	select DEVFREQ_GOV_PERFORMANCE
+	select DEVFREQ_GOV_QCOM_ADRENO_TZ
+	select DEVFREQ_GOV_QCOM_GPUBW_MON
+	help
+	  3D graphics driver for the Adreno family of GPUs from QTI.
+	  Required to use hardware accelerated OpenGL, compute and Vulkan
+	  on QTI targets. This includes power management, memory management,
+	  and scheduling for the Adreno GPUs.
+
+config QCOM_ADRENO_DEFAULT_GOVERNOR
+	string "devfreq governor for the adreno core"
+	default "msm-adreno-tz" if DEVFREQ_GOV_QCOM_ADRENO_TZ
+	default "simple_ondemand"
+	depends on QCOM_KGSL
+
+config QCOM_KGSL_IOMMU
+	bool
+	default y if QCOM_KGSL && ARM_SMMU
+
+config CORESIGHT_ADRENO
+	bool
+	default y if QCOM_KGSL=y && CORESIGHT=y

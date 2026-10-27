@@ -16,3 +16,31 @@
 	qcom,msm-id = <293 0>;
 	qcom,board-id = <8 0 16027>;
 };
+
+/*
+ * 16027 的面板：JDI R63452（command-mode TFT/LCD）
+ *
+ * 参数来源（本仓库 4.19 的 oppo-msm8953/16027/msm8953-mtp.dtsi）：
+ *   qcom,platform-enable-gpio   = <&tlmm 38  0>
+ *   qcom,platform-bklight-en-gpio = <&tlmm 34 0>   ← 背光使能，暂未接
+ *   qcom,platform-reset-gpio    = <&tlmm 131 0>
+ * LCD 偏压走 PMI8950 的 LAB/IBB（qcom,qpnp-labibb-mode = "lcd"）。
+ */
+&mdss_dsi0 {
+	panel@0 {
+		compatible = "oppo,r63452-cmd";
+		reg = <0>;
+
+		reset-gpios = <&tlmm 131 GPIO_ACTIVE_HIGH>;
+		enable-gpios = <&tlmm 38 GPIO_ACTIVE_HIGH>;
+
+		lab-supply = <&lab>;
+		ibb-supply = <&ibb>;
+
+		port {
+			panel_in: endpoint {
+				remote-endpoint = <&mdss_dsi0_out>;
+			};
+		};
+	};
+};

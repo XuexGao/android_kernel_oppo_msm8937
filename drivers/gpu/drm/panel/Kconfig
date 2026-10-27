@@ -988,4 +988,24 @@ config DRM_PANEL_XINPENG_XPP055C272
 	  Say Y here if you want to enable support for the Xinpeng
 	  XPP055C272 controller for 720x1280 LCD panels with MIPI/RGB/SPI
 	  system interfaces.
+config DRM_PANEL_OPPO_EA8064
+	tristate "OPPO Samsung EA8064 AMOLED panel"
+	depends on OF
+	depends on DRM_MIPI_DSI
+	depends on BACKLIGHT_CLASS_DEVICE
+	help
+	  Say Y here if you want to enable support for the Samsung EA8064
+	  AMOLED panel found on OPPO R9s (16017 / MSM8953).
+	  Ported from the oppo-r9s-mainline bring-up project.
+
+config DRM_PANEL_JDI_R63452
+	tristate "OPPO JDI R63452 LCD panel"
+	depends on OF
+	depends on DRM_MIPI_DSI
+	depends on BACKLIGHT_CLASS_DEVICE
+	help
+	  Say Y here if you want to enable support for the JDI R63452
+	  command-mode LCD panel found on OPPO R9sk (16027 / MSM8953).
+	  Ported from the oppo-r9s-mainline bring-up project.
+
 endmenu

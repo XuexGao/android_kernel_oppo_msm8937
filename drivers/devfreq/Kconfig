@@ -153,3 +153,17 @@ config ARM_SUN8I_A33_MBUS_DEVFREQ
 source "drivers/devfreq/event/Kconfig"
 
 endif # PM_DEVFREQ
+
+config DEVFREQ_GOV_QCOM_ADRENO_TZ
+	tristate "Adreno TZ governor"
+	depends on QCOM_KGSL
+	help
+	  The Adreno TZ (TrustZone) GPU frequency governor for KGSL.
+	  Ported from downstream 4.19 for the msm8953 bring-up.
+
+config DEVFREQ_GOV_QCOM_GPUBW_MON
+	tristate "GPU bandwidth monitor governor"
+	depends on QCOM_KGSL
+	help
+	  The GPU bandwidth monitor governor for KGSL.
+	  Ported from downstream 4.19 for the msm8953 bring-up.

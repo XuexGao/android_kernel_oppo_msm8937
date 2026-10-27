@@ -91,6 +91,34 @@
 			status = "disabled";
 		};
 
+		/*
+		 * LCD bias（LAB/IBB）—— OPPO R9s 的 16027(JDI) / 16017(Samsung)
+		 * 面板都要这个正负压轨。
+		 *
+		 * 用主线驱动的 compatible（qcom,pmi8998-lab-ibb），因为：
+		 *   · 4.9/4.19 用的是私有驱动 qcom,qpnp-labibb-regulator，
+		 *     主线没有这个 driver；
+		 *   · 主线 qcom-labibb-regulator.c 里 LAB/IBB 的寄存器基址
+		 *     硬编码为 0xde00/0xdc00，与 PMI8950 的 lab@de00 / ibb@dc00
+		 *     完全一致（见 4.9 下游 pmi8950.dtsi），所以可以直接复用；
+		 *   · labibb 挂在 PMI8950 的 SPMI USID 3 上，与 pmi8998 相同。
+		 */
+		labibb {
+			compatible = "qcom,pmi8998-lab-ibb";
+
+			ibb: ibb {
+				interrupts = <0x3 0xdc 0x2 IRQ_TYPE_EDGE_RISING>,
+					     <0x3 0xdc 0x0 IRQ_TYPE_LEVEL_HIGH>;
+				interrupt-names = "sc-err", "ocp";
+			};
+
+			lab: lab {
+				interrupts = <0x3 0xde 0x1 IRQ_TYPE_EDGE_RISING>,
+					     <0x3 0xde 0x0 IRQ_TYPE_LEVEL_LOW>;
+				interrupt-names = "sc-err", "ocp";
+			};
+		};
+
 		pmi8950_wled: leds@d800 {
 			compatible = "qcom,pmi8950-wled";
 			reg = <0xd800>, <0xd900>;
