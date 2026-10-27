@@ -100,6 +100,37 @@ CONFIG_RMI4_I2C=y
 > `ANDROID_VENDOR_HOOKS` 依赖 `TRACEPOINTS`，所以 defconfig 里同时开了
 > `CONFIG_TRACING=y`，否则这个选项会被 Kconfig 静默丢掉。
 
+### 显示链路（第二轮，已接入真 MDSS/DSI）
+
+把显示从 `simpledrm` 的静态 framebuffer 换成了**真正的 MDSS/DSI 链路**：
+
+| 组件 | 来源 | 状态 |
+|---|---|---|
+| MDSS / MDP5 | ACK 的 `drm/msm`（`qcom,msm8953-mdp5`） | ✅ DTS 已 enable |
+| DSI 控制器 | ACK（`qcom,msm8953-dsi-ctrl`） | ✅ DTS 已 enable |
+| JDI R63452 面板（16027） | 从 `oppo-r9s-mainline` 搬入 | ✅ 编入内核 |
+| Samsung EA8064 面板（16017） | 从 `oppo-r9s-mainline` 搬入 | ✅ 编入内核 |
+| PMI8950 LAB/IBB 偏压 | 给 `pmi8950.dtsi` 新增 | ✅ 复用主线 `qcom,pmi8998-lab-ibb` |
+
+搬面板驱动时踩到两处 API 差异：
+
+1. `gpiod_set_value_cansleep()` 在 mainline/6.12 返回 **void**，而原驱动
+   沿用了 downstream 的 `ret = gpiod_...` 写法 → `void value not ignored`
+2. 修掉上一条后 `err_ibb` 成为不可达标签 → `-Werror=unused-label`
+
+LAB/IBB 能直接复用主线 pmi8998 驱动的原因：主线 `qcom-labibb-regulator.c`
+把寄存器基址硬编码为 `LAB=0xde00 / IBB=0xdc00`，与 PMI8950 一致，
+且同在 SPMI USID 3。
+
+**`simpledrm` 节点已刻意移除** —— simpledrm 与 mdss 同时拥有同一块屏会打架
+（一个写线性 framebuffer、一个配 MDP/DSI），结果就是花屏。
+要回退做对照实验：把 `chosen/framebuffer@90001000` 加回来，并把
+`&mdss / &mdp / &mdss_dsi0` 设回 `disabled`。
+
+CI 新增 **DTB 静态自检**：反编译 dtb 确认面板节点 / DSI 控制器 / LAB-IBB
+都在，且 `simple-framebuffer` 确实不存在。任一不满足则构建失败，
+避免"等刷机才发现屏不亮"。
+
 ---
 
 ## 还差什么才能跑 Android
