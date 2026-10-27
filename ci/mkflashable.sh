@@ -30,6 +30,9 @@ cp "$OUT/Image.gz" Image.gz
 cp "$OUT/msm8953-oppo-r9s.dtb"  . 2>/dev/null || true
 cp "$OUT/msm8953-oppo-r9sk.dtb" . 2>/dev/null || true
 
+# 保险：必须已经在 ak3-tpl 里，否则会误改/误生成仓库根的 anykernel.sh
+[ -f anykernel.sh ] || { echo "不在 ak3-tpl 目录，anykernel.sh 不存在" >&2; exit 1; }
+
 # anykernel.sh：指向 boot 分区，关闭机型校验与模块安装
 sed -i 's|^BLOCK=.*|BLOCK=/dev/block/bootdevice/by-name/boot;|' anykernel.sh
 sed -i 's|^do.devicecheck=.*|do.devicecheck=0;|'  anykernel.sh
