@@ -76,6 +76,67 @@
 			interrupt-controller;
 			#interrupt-cells = <2>;
 		};
+
+		/*
+		 * PMI8950 充电器 / 电量计 —— 从下游 4.19 移植的 QPNP 驱动。
+		 *
+		 * 参数取自 4.19 的 oppo-msm8953/pmi8950.dtsi（R9s 用的是
+		 * PMI8950 的 SMB 充电器 + FG 电量计，不是 smb2/smb5 那一代）。
+		 *
+		 * 注意 6.12 的 power_supply 框架里 qcom,vchg_sns-vadc 这种
+		 * 私有 ADC phandle 已经改成标准 IIO consumer（iio_channel_get），
+		 * 所以这里用 io-channels / io-channel-names 表达。
+		 */
+		qpnp_smbcharger: charger@1000 {
+			compatible = "qcom,qpnp-smbcharger";
+			reg = <0x1000>, <0x1100>, <0x1600>;
+
+			interrupts = <0x2 0x10 0x2 IRQ_TYPE_EDGE_RISING>,
+				     <0x2 0x10 0x3 IRQ_TYPE_EDGE_RISING>,
+				     <0x2 0x10 0x4 IRQ_TYPE_EDGE_RISING>,
+				     <0x2 0x10 0x5 IRQ_TYPE_EDGE_RISING>,
+				     <0x2 0x10 0x6 IRQ_TYPE_EDGE_RISING>,
+				     <0x2 0x10 0x7 IRQ_TYPE_EDGE_RISING>;
+			interrupt-names = "chg-done", "chg-false-done",
+					  "batt-hot", "chg-trim-done",
+					  "batt-trim-done", "chg-trim-delta";
+
+			qcom,iterm-ma = <200>;
+			qcom,float-voltage-mv = <4380>;
+			qcom,thermal-mitigation = <2000 1500 1000 800>;
+			qcom,fastchg-current-ma = <2000>;
+			qcom,fastchg-current-comp = <1200>;
+			qcom,dc-psy-type = "Mains";
+			qcom,dc-psy-ma = <2000>;
+			qcom,hvdcp-not-supported;
+
+			io-channels = <&pmi8950_vadc 3>;
+			io-channel-names = "vchg_sns";
+
+			status = "okay";
+		};
+
+		qpnp_fg: fg@4000 {
+			compatible = "qcom,qpnp-fg";
+			reg = <0x4000>;
+
+			interrupts = <0x2 0x40 0x0 IRQ_TYPE_EDGE_RISING>,
+				     <0x2 0x40 0x1 IRQ_TYPE_EDGE_RISING>,
+				     <0x2 0x40 0x2 IRQ_TYPE_EDGE_RISING>,
+				     <0x2 0x40 0x3 IRQ_TYPE_EDGE_RISING>;
+			interrupt-names = "soc-update", "soc-ready",
+					  "bsoc-delta", "resume-soc";
+
+			qcom,fg-iterm-ma = <200>;
+			qcom,fg-chg-iterm-ma = <150>;
+			qcom,fg-cutoff-voltage-mv = <3200>;
+			qcom,fg-cc-cv-threshold-mv = <4360>;
+			qcom,fg-batt-capacity-mah = <2820>;
+			qcom,fg-batt-soc;
+
+			status = "okay";
+		};
+
 	};
 
 	pmic@3 {

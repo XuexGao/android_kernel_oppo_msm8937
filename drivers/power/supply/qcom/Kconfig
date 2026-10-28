@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# QCOM/QPNP 电源驱动 —— 从下游 4.9/4.19 前移到 Linux 6.12
+#
+# R9s 用的是老一代 QPNP 组合：
+#   qpnp-smbcharger  (PMI8950 充电/OTG)
+#   qpnp-fg          (PMI8950 电量计)
+# 这两个都由标准 power_supply API 写成，没有 smb2 那一套 pmic-voter 依赖，
+# 所以前移难度远低于 qpnp-smb2/smb5 系列。
+
+config QPNP_SMBCHARGER
+	tristate "QPNP Switch-Mode Battery Charger"
+	depends on SPMI
+	# 注意：不要写 depends on REGULATOR 或 depends on EXTCON。
+	# 这两个符号都被别的 POWER_SUPPLY 用户 select 过
+	# （REGULATOR <- OLPC_EC，EXTCON <- CHARGER_MANAGER），
+	# 而 POWER_SUPPLY 又被本符号 select，于是形成环：
+	#   QPNP_SMBCHARGER -> EXTCON -> CHARGER_MANAGER -> POWER_SUPPLY
+	#                   -> QPNP_SMBCHARGER
+	# 改成 select 表达"我用到它们"，不引入反向依赖。
+	select POWER_SUPPLY
+	select REGULATOR
+	select EXTCON
+	help
+	  Say Y to enable the Qualcomm QPNP switch-mode battery charger
+	  driver. This is the PMI8950 charger used on MSM8953 boards
+	  such as OPPO R9s. Ported from downstream 4.19.
+
+config QPNP_FG
+	tristate "QPNP Fuel Gauge"
+	depends on SPMI
+	select POWER_SUPPLY
+	help
+	  Say Y to enable the Qualcomm QPNP fuel gauge driver
+	  (PMI8950). Ported from downstream 4.19.

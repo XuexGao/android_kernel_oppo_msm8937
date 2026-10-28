@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: GPL-2.0-only
+config QPNP_REVID
+	tristate "QPNP PMIC revision ID reader"
+	depends on SPMI
+	help
+	  Read PMIC revision data from QPNP PMICs. Used by the fuel gauge
+	  and charger drivers. Ported from downstream 4.19.

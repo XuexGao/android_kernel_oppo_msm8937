@@ -121,3 +121,11 @@ config OF_NUMA
 	bool
 
 endif # OF
+
+config OF_BATTERYDATA
+	bool "Device Tree battery data parser"
+	depends on OF
+	select POWER_SUPPLY
+	help
+	  Parse battery profile data from device tree. Needed by the
+	  QPNP fuel gauge on MSM8953 boards. Ported from downstream 4.19.
