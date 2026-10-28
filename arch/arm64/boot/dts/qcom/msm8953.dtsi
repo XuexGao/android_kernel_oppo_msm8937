@@ -1906,6 +1906,17 @@
 								reg = <PRIMARY_MI2S_RX>;
 								qcom,sd-lines = <0 1>;
 							};
+							/*
+							 * OPPO R9s 的外放（TFA98XX）走 QUATERNARY_MI2S_RX。
+							 * 上游 msm8953.dtsi 只列了 PRIMARY/TERTIARY/QUINARY，
+							 * 这里补上第四条 —— q6dsp-lpass-ports.h 里
+							 * QUATERNARY_MI2S_RX 定义为 22，q6afe 驱动认识它。
+							 */
+							dai@22 {
+								reg = <QUATERNARY_MI2S_RX>;
+								qcom,sd-lines = <0 1>;
+							};
+
 							dai@20 {
 								reg = <TERTIARY_MI2S_TX>;
 								qcom,sd-lines = <0 1>;

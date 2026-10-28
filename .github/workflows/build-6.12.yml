@@ -71,6 +71,15 @@ jobs:
           grep -E '^CONFIG_(MSM_GCC_8953|PINCTRL_MSM8953|MMC_SDHCI_MSM|USB_DWC3|QCOM_SMD_RPM)=' .config
           # 充电/电量计也要内置：bring-up 阶段没有 init 去 modprobe，
           # 而且 Android 的 health HAL 依赖开机就有 battery/charger 设备。
+          echo "--- 音频栈（必须 =y）："
+          for sym in QCOM_APR SND_SOC_QDSP6 SND_SOC_QCOM_COMMON SND_SOC_MSM8953_OPPO; do
+            v="$(grep -E "^CONFIG_${sym}=" .config | head -1)"
+            case "$v" in
+              "CONFIG_${sym}=y") echo "  OK   $v" ;;
+              *) echo "::error::音频栈未内置: ${sym} 实际为 '${v:-未设置}'"; exit 1 ;;
+            esac
+          done
+
           echo "--- 充电/电量计（必须 =y）："
           for sym in QPNP_SMBCHARGER QPNP_FG QPNP_REVID OF_BATTERYDATA; do
             v="$(grep -E "^CONFIG_${sym}=" .config | head -1)"

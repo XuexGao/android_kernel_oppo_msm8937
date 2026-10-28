@@ -467,3 +467,64 @@
 		};
 	};
 };
+
+/*
+ * ---- 音频 ----
+ *
+ * ACK 6.12 的上游 QDSP6 栈是完整的：msm8953.dtsi 里 LPASS remoteproc
+ * （compatible qcom,msm8953-adsp-pil，驱动在 qcom_q6v5_pas.c 里有这个
+ * compatible）+ apr-v2 总线 + q6core/q6afe/q6asm/q6adm 全部现成。
+ * 只需要：
+ *   1) 把 lpass 打开（默认 disabled）
+ *   2) 新建一个 sound 节点，由 msm8953-oppo-sndcard.c 解析
+ *
+ * R9s 的外放链路 [vendor]：QUATERNARY_MI2S_RX -> TFA98XX (i2c_8 0x36)
+ * 耳机：AK4376 (i2c 0x10)
+ *
+ * FIXME(unverified)：TFA98XX / AK4376 的 mainline 驱动还没接入，
+ * 所以下面只描述了 CPU 侧的 dai link。codec 一旦接上，
+ * 在 sound 节点里补对应的 codec 子节点即可，machine driver 不用改。
+ */
+&lpass {
+	status = "okay";
+};
+
+/ {
+	/*
+	 * 声卡节点。所有 dai link 都写在这里，machine driver 通过
+	 * qcom_snd_parse_of() 自动解析 —— 加/改链路不需要动 C 代码。
+	 *
+	 * 目前只挂了 QUATERNARY_MI2S_RX（外放）。codec 侧还没接入，
+	 * 所以 link 里暂时用 dummy codec；等 TFA98XX/AK4376 驱动进来后
+	 * 把 codec 子节点换成真实 codec。
+	 */
+	sound: sound {
+		compatible = "oppo,msm8953-sndcard";
+		model = "OPPO R9s";
+
+		/* 外放：QUATERNARY MI2S -> TFA98XX */
+		quaternary-mi2s-rx-dai-link {
+			link-name = "Quaternary MI2S RX";
+			status = "okay";
+
+			cpu {
+				sound-dai = <&q6afedai QUATERNARY_MI2S_RX>;
+			};
+
+			platform {
+				sound-dai = <&q6routing>;
+			};
+
+			/*
+			 * codec 节点刻意留空：soc-core.c 的
+			 * snd_soc_fill_dummy_dai() 会在 num_codecs==0 时
+			 * 自动填 snd_soc_dummy_dlc。
+			 * 等 TFA98XX / AK4376 驱动接入后，在这里补
+			 *   codec { sound-dai = <&tfa98xx>; };
+			 * machine driver 不用改。
+			 */
+			codec {
+			};
+		};
+	};
+};

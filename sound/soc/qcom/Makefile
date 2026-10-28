@@ -45,3 +45,5 @@ obj-$(CONFIG_SND_SOC_X1E80100) += snd-soc-x1e80100.o
 
 #DSP lib
 obj-$(CONFIG_SND_SOC_QDSP6) += qdsp6/
+snd-soc-msm8953-oppo-objs := msm8953-oppo-sndcard.o
+obj-$(CONFIG_SND_SOC_MSM8953_OPPO) += snd-soc-msm8953-oppo.o

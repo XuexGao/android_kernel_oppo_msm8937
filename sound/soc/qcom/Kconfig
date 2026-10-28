@@ -236,3 +236,12 @@ config SND_SOC_X1E80100
 	  Say Y or M if you want to use audio device on this SoCs.
 
 endif #SND_SOC_QCOM
+
+config SND_SOC_MSM8953_OPPO
+	tristate "OPPO MSM8953 sound card (DTS-driven)"
+	depends on SND_SOC_QDSP6
+	select SND_SOC_QCOM_COMMON
+	help
+	  DTS-driven sound card for OPPO R9s / R9sk (MSM8953).
+	  Uses the upstream QDSP6 (q6afe/q6asm/q6adm) stack together with
+	  an external codec, and parses all DAI links from device tree.
