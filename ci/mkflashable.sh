@@ -58,9 +58,30 @@ ui_print "  board-id=${AK_BOARD_ID:-unknown} -> $AK_DTB"
 cat Image.gz "$AK_DTB" > Image.gz-dtb
 AKD
 
-# 让 anykernel.sh 在安装阶段 source 这个片段
+# 让 anykernel.sh 在 **dump_boot 之前** source 这个片段。
+#
+# 为什么不能简单 append 到文件末尾：AnyKernel3 模板的安装流程是
+#     line 41: dump_boot;
+#     line 59: write_boot;
+# 后续还有一堆 init_boot / vendor_kernel_boot 的**注释掉的**示例分支。
+# 直接把 source 追加到末尾，会落在 write_boot 之后 —— 那时 boot 分区
+# 早就写完了，Image.gz-dtb 根本没被拼出来，刷进去的内核不带 dtb。
+#
+# 正确做法：插到第一处 "dump_boot;" 之前，并把行尾注释去掉，
+# 保证它是**唯一生效**的 dump_boot（模板里其它 dump_boot 都在注释块内）。
 if ! grep -q 'ak3-oppo-dtb.sh' anykernel.sh; then
-  echo '. ./ak3-oppo-dtb.sh' >> anykernel.sh
+  python3 - <<'PYINS'
+import re
+p = 'anykernel.sh'
+s = open(p).read()
+hook = '. ./ak3-oppo-dtb.sh\n'
+# 找到第一个非注释的 dump_boot;
+m = re.search(r'^dump_boot;', s, re.M)
+assert m, 'anykernel.sh 里找不到生效的 dump_boot;'
+s = s[:m.start()] + hook + s[m.start():]
+open(p, 'w').write(s)
+print('  已在 dump_boot 之前插入 source 钩子')
+PYINS
 fi
 
 # 打包
