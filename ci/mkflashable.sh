@@ -101,5 +101,20 @@ with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as z:
             z.write(p, os.path.relpath(p, '.'))
 PZ
 fi
+# 自检：包里的 anykernel.sh 必须把 source 钩子放在 dump_boot 之前，
+# 否则 dtb 拼接发生在写分区之后，刷进去的是不带 dtb 的裸内核。
+# 这类错误不会让构建失败，只有刷机才暴露 —— 所以在这里拦。
+HOOK_LINE=$(grep -nF '. ./ak3-oppo-dtb.sh' anykernel.sh | head -1 | cut -d: -f1)
+DUMP_LINE=$(grep -n '^dump_boot;' anykernel.sh | cut -d: -f1)
+if [ -z "$HOOK_LINE" ] || [ -z "$DUMP_LINE" ]; then
+  echo "自检失败：找不到 source 钩子或 dump_boot" >&2; exit 1
+fi
+if [ "$HOOK_LINE" -ge "$DUMP_LINE" ]; then
+  echo "自检失败：source 钩子(第 $HOOK_LINE 行) 不在 dump_boot(第 $DUMP_LINE 行) 之前" >&2
+  echo "        这样 Image.gz-dtb 会在写分区之后才生成，dtb 不会被刷进去" >&2
+  exit 1
+fi
+echo "  自检通过：source(第 $HOOK_LINE 行) 先于 dump_boot(第 $DUMP_LINE 行)"
+
 echo "打包完成: $OUT/$ZIP_NAME"
 ls -la "$OUT/$ZIP_NAME"
