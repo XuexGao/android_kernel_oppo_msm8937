@@ -10,7 +10,6 @@
 #include <linux/dma-buf.h>
 #include <linux/fdtable.h>
 #include <linux/io.h>
-#include <linux/ion.h>
 #include <linux/mman.h>
 #include <linux/module.h>
 #include <linux/msm-bus.h>
@@ -5412,8 +5411,8 @@ int kgsl_device_platform_probe(struct kgsl_device *device)
 	device->pwrctrl.pm_qos_req_dma.irq = device->pwrctrl.interrupt_num;
 
 #endif
-	pm_qos_add_request(&device->pwrctrl.pm_qos_req_dma,
-				PM_QOS_CPU_DMA_LATENCY,
+	cpu_latency_qos_add_request(&device->pwrctrl.pm_qos_req_dma,
+				PM_QOS_DEFAULT_VALUE,
 				PM_QOS_DEFAULT_VALUE);
 
 	if (device->pwrctrl.l2pc_cpus_mask) {
@@ -5427,8 +5426,8 @@ int kgsl_device_platform_probe(struct kgsl_device *device)
 				cpumask_set_cpu(cpu, &qos->cpus_affine);
 		}
 
-		pm_qos_add_request(&device->pwrctrl.l2pc_cpus_qos,
-				PM_QOS_CPU_DMA_LATENCY,
+		cpu_latency_qos_add_request(&device->pwrctrl.l2pc_cpus_qos,
+				PM_QOS_DEFAULT_VALUE,
 				PM_QOS_DEFAULT_VALUE);
 	}
 
@@ -5467,9 +5466,9 @@ void kgsl_device_platform_remove(struct kgsl_device *device)
 
 	kgsl_pwrctrl_uninit_sysfs(device);
 
-	pm_qos_remove_request(&device->pwrctrl.pm_qos_req_dma);
+	cpu_latency_qos_remove_request(&device->pwrctrl.pm_qos_req_dma);
 	if (device->pwrctrl.l2pc_cpus_mask)
-		pm_qos_remove_request(&device->pwrctrl.l2pc_cpus_qos);
+		cpu_latency_qos_remove_request(&device->pwrctrl.l2pc_cpus_qos);
 
 	idr_destroy(&device->context_idr);
 	idr_destroy(&device->timelines);

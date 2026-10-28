@@ -8,6 +8,14 @@
 #define ARM64_ASM_PREAMBLE
 #endif
 
+/*
+ * 下游 4.19 的 scm.c 用 __asmeq() 做编译期寄存器名校验（do-while 展开时
+ * 检查 %0..%N 绑定的确实是 x0..xN）。上游 5.x 之后删掉了 aarch64 的这份
+ * 定义（只留了 arch/arm），但我们要搬的 scm.c 依赖它，故补回。
+ */
+#define __asmeq(x, y)  ".ifnc " x "," y " ; .err ; .endif\n\t"
+
+
 #define xpaclri(ptr)							\
 ({									\
 	register unsigned long __xpaclri_ptr asm("x30") = (ptr);	\

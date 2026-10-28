@@ -243,6 +243,17 @@ enum node_stat_item {
 	PGDEMOTE_KSWAPD,
 	PGDEMOTE_DIRECT,
 	PGDEMOTE_KHUGEPAGED,
+	/*
+	 * ---- Qualcomm 私有节点统计项 ----
+	 * 下游 QCOM 在 NR_VM_NODE_STAT_ITEMS 前插了这几项，上游删掉了。
+	 * KGSL 用它记 GPU 内存池 / ION 堆的页面数
+	 * （kgsl_pool.c / kgsl_sharedmem.c 里的 mod_node_page_state）。
+	 * 追加在末尾，保持既有统计项编号不变。
+	 */
+	NR_UNRECLAIMABLE_PAGES,
+	NR_ION_HEAP,
+	NR_ION_HEAP_POOL,
+	NR_GPU_HEAP,
 	NR_VM_NODE_STAT_ITEMS
 };
 

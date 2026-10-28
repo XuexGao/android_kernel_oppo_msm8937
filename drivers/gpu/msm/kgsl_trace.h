@@ -49,7 +49,7 @@ TRACE_EVENT(kgsl_issueibcmds,
 	),
 
 	TP_fast_assign(
-		__assign_str(device_name, device->name);
+		__assign_str(device_name);
 		__entry->drawctxt_id = drawctxt_id;
 		__entry->numibs = numibs;
 		__entry->timestamp = timestamp;
@@ -91,7 +91,7 @@ TRACE_EVENT(kgsl_readtimestamp,
 	),
 
 	TP_fast_assign(
-		__assign_str(device_name, device->name);
+		__assign_str(device_name);
 		__entry->context_id = context_id;
 		__entry->type = type;
 		__entry->timestamp = timestamp;
@@ -128,7 +128,7 @@ TRACE_EVENT(kgsl_waittimestamp_entry,
 	),
 
 	TP_fast_assign(
-		__assign_str(device_name, device->name);
+		__assign_str(device_name);
 		__entry->context_id = context_id;
 		__entry->curr_ts = curr_ts;
 		__entry->wait_ts = wait_ts;
@@ -162,7 +162,7 @@ TRACE_EVENT(kgsl_waittimestamp_exit,
 	),
 
 	TP_fast_assign(
-		__assign_str(device_name, device->name);
+		__assign_str(device_name);
 		__entry->curr_ts = curr_ts;
 		__entry->result = result;
 	),
@@ -186,7 +186,7 @@ DECLARE_EVENT_CLASS(kgsl_pwr_template,
 	),
 
 	TP_fast_assign(
-		__assign_str(device_name, device->name);
+		__assign_str(device_name);
 		__entry->on = on;
 	),
 
@@ -226,7 +226,7 @@ TRACE_EVENT(kgsl_clk,
 	),
 
 	TP_fast_assign(
-		__assign_str(device_name, device->name);
+		__assign_str(device_name);
 		__entry->on = on;
 		__entry->freq = freq;
 	),
@@ -258,7 +258,7 @@ TRACE_EVENT(kgsl_pwrlevel,
 	),
 
 	TP_fast_assign(
-		__assign_str(device_name, device->name);
+		__assign_str(device_name);
 		__entry->pwrlevel = pwrlevel;
 		__entry->freq = freq;
 		__entry->prev_pwrlevel = prev_pwrlevel;
@@ -289,7 +289,7 @@ TRACE_EVENT(kgsl_buslevel,
 	),
 
 	TP_fast_assign(
-		__assign_str(device_name, device->name);
+		__assign_str(device_name);
 		__entry->pwrlevel = pwrlevel;
 		__entry->bus = bus;
 	),
@@ -315,7 +315,7 @@ TRACE_EVENT(kgsl_gpubusy,
 	),
 
 	TP_fast_assign(
-		__assign_str(device_name, device->name);
+		__assign_str(device_name);
 		__entry->busy = busy;
 		__entry->elapsed = elapsed;
 	),
@@ -344,7 +344,7 @@ TRACE_EVENT(kgsl_pwrstats,
 	),
 
 	TP_fast_assign(
-		__assign_str(device_name, device->name);
+		__assign_str(device_name);
 		__entry->total_time = time;
 		__entry->busy_time = pstats->busy_time;
 		__entry->ram_time = pstats->ram_time;
@@ -370,7 +370,7 @@ DECLARE_EVENT_CLASS(kgsl_pwrstate_template,
 	),
 
 	TP_fast_assign(
-		__assign_str(device_name, device->name);
+		__assign_str(device_name);
 		__entry->state = state;
 	),
 
@@ -631,7 +631,7 @@ DECLARE_EVENT_CLASS(kgsl_mem_timestamp_template,
 	),
 
 	TP_fast_assign(
-		__assign_str(device_name, device->name);
+		__assign_str(device_name);
 		__entry->gpuaddr = mem_entry->memdesc.gpuaddr;
 		__entry->size = mem_entry->memdesc.size;
 		kgsl_get_memory_usage(__entry->usage, sizeof(__entry->usage),
@@ -685,7 +685,7 @@ TRACE_EVENT(kgsl_context_create,
 	),
 
 	TP_fast_assign(
-		__assign_str(device_name, device->name);
+		__assign_str(device_name);
 		__entry->id = context->id;
 		__entry->flags = flags & ~(KGSL_CONTEXT_PRIORITY_MASK |
 						KGSL_CONTEXT_TYPE_MASK);
@@ -719,7 +719,7 @@ TRACE_EVENT(kgsl_context_detach,
 	),
 
 	TP_fast_assign(
-		__assign_str(device_name, device->name);
+		__assign_str(device_name);
 		__entry->id = context->id;
 	),
 
@@ -741,7 +741,7 @@ TRACE_EVENT(kgsl_context_destroy,
 	),
 
 	TP_fast_assign(
-		__assign_str(device_name, device->name);
+		__assign_str(device_name);
 		__entry->id = context->id;
 	),
 
@@ -766,7 +766,7 @@ TRACE_EVENT(kgsl_user_pwrlevel_constraint,
 	),
 
 	TP_fast_assign(
-		__assign_str(device_name, device->name);
+		__assign_str(device_name);
 		__entry->id = id;
 		__entry->type = type;
 		__entry->sub_type = sub_type;
@@ -796,7 +796,7 @@ TRACE_EVENT(kgsl_constraint,
 	),
 
 	TP_fast_assign(
-		__assign_str(device_name, device->name);
+		__assign_str(device_name);
 		__entry->type = type;
 		__entry->value = value;
 		__entry->on = on;
@@ -827,11 +827,11 @@ TRACE_EVENT(kgsl_mmu_pagefault,
 	),
 
 	TP_fast_assign(
-		__assign_str(device_name, device->name);
+		__assign_str(device_name);
 		__entry->page = page;
 		__entry->pt = pt;
-		__assign_str(name, name);
-		__assign_str(op, op);
+		__assign_str(name);
+		__assign_str(op);
 	),
 
 	TP_printk(
@@ -855,7 +855,7 @@ TRACE_EVENT(kgsl_regwrite,
 	),
 
 	TP_fast_assign(
-		__assign_str(device_name, device->name);
+		__assign_str(device_name);
 		__entry->offset = offset;
 		__entry->value = value;
 	),
@@ -879,7 +879,7 @@ TRACE_EVENT(kgsl_popp_level,
 	),
 
 	TP_fast_assign(
-		__assign_str(device_name, device->name);
+		__assign_str(device_name);
 		__entry->level1 = level1;
 		__entry->level2 = level2;
 	),
@@ -902,7 +902,7 @@ TRACE_EVENT(kgsl_popp_mod,
 	),
 
 	TP_fast_assign(
-		__assign_str(device_name, device->name);
+		__assign_str(device_name);
 		__entry->x = x;
 		__entry->y = y;
 	),
@@ -926,7 +926,7 @@ TRACE_EVENT(kgsl_popp_nap,
 	),
 
 	TP_fast_assign(
-		__assign_str(device_name, device->name);
+		__assign_str(device_name);
 		__entry->t = t;
 		__entry->nap = nap;
 		__entry->percent = percent;
@@ -994,7 +994,7 @@ TRACE_EVENT(kgsl_active_count,
 	),
 
 	TP_fast_assign(
-		__assign_str(device_name, device->name);
+		__assign_str(device_name);
 		__entry->count = atomic_read(&device->active_cnt);
 		__entry->ip = ip;
 	),
@@ -1062,7 +1062,7 @@ DECLARE_EVENT_CLASS(syncpoint_fence_template,
 	),
 	TP_fast_assign(
 		__entry->syncobj_context_id = syncobj->base.context->id;
-		__assign_str(fence_name, name);
+		__assign_str(fence_name);
 	),
 	TP_printk("ctx=%d fence=%s",
 		__entry->syncobj_context_id, __get_str(fence_name))
@@ -1085,7 +1085,7 @@ TRACE_EVENT(kgsl_msg,
 		__string(msg, msg)
 	),
 	TP_fast_assign(
-		__assign_str(msg, msg);
+		__assign_str(msg);
 	),
 	TP_printk(
 		"%s", __get_str(msg)

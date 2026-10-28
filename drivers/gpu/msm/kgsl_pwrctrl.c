@@ -2929,10 +2929,10 @@ _slumber(struct kgsl_device *device)
 		kgsl_pwrscale_sleep(device);
 		trace_gpu_frequency(0, 0);
 		kgsl_pwrctrl_set_state(device, KGSL_STATE_SLUMBER);
-		pm_qos_update_request(&device->pwrctrl.pm_qos_req_dma,
+		cpu_latency_qos_update_request(&device->pwrctrl.pm_qos_req_dma,
 						PM_QOS_DEFAULT_VALUE);
 		if (device->pwrctrl.l2pc_cpus_mask)
-			pm_qos_update_request(
+			cpu_latency_qos_update_request(
 					&device->pwrctrl.l2pc_cpus_qos,
 					PM_QOS_DEFAULT_VALUE);
 		break;

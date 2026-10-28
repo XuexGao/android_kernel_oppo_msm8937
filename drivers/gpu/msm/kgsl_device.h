@@ -7,6 +7,7 @@
 #define __KGSL_DEVICE_H
 
 #include <linux/sched/mm.h>
+#include <linux/interrupt.h>
 #include <linux/sched/task.h>
 
 #include "kgsl.h"

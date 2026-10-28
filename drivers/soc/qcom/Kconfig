@@ -296,3 +296,26 @@ config QCOM_PBS
 	  PBS trigger event to the PBS RAM.
 
 endmenu
+
+config QCOM_BUS_SCALING
+	bool "QCOM bus scaling driver"
+	depends on ARCH_QCOM
+	select MSM_RPM_SMD
+	help
+	  Qualcomm bus-scaling framework (msm_bus_scale_* API). Required by
+	  KGSL and several other downstream drivers. Ported from 4.19.
+	  NOTE: upstream removed this framework in 5.x in favor of
+	  interconnect; we carry it because the vendor drivers still use it.
+
+config QCOM_BUS_CONFIG_RPMH
+	bool "Use RPMh-based bus config"
+	depends on QCOM_BUS_SCALING
+	help
+	  Select the RPMh variant. MSM8953 is RPM-SMD based, leave this off.
+
+config QCOM_SCM_LEGACY
+	tristate "Qualcomm SCM legacy interface (scm_call2)"
+	depends on ARCH_QCOM
+	help
+	  The downstream SCM interface (scm_call2 / struct scm_desc) that
+	  6.x's qcom_scm does not provide. Required by KGSL. Ported from 4.19.

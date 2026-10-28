@@ -22,6 +22,34 @@
  * system into unrecoverable OOM panics
  */
 
+
+/*
+ * 6.x 删除了 arch/arm64 的 dmac_flush_range / dmac_clean_range /
+ * dmac_inv_range（这些是 32 位 ARM 的 cache 维护 helper）。
+ * aarch64 上等价的用户态内存维护走 dcache_by_line_op，这里用
+ * flush_cache_all 语义的对外接口替代：
+ *   kgsl_cache_flush_range -> 先 clean 再 invalidate
+ *   kgsl_cache_clean_range -> clean
+ *   kgsl_cache_inv_range   -> invalidate
+ * 参数是内核线性地址，用 __flush_dcache_area 之类的原语不合适，
+ * 这里直接调用 flush_dcache_page 覆盖不到的块，改用
+ * dcache_clean_inval_poc / dcache_clean_poc / dcache_inval_poc。
+ */
+static void kgsl_cache_flush_range(const void *start, const void *end)
+{
+	dcache_clean_inval_poc((unsigned long)start, (unsigned long)end);
+}
+
+static void kgsl_cache_clean_range(const void *start, const void *end)
+{
+	dcache_clean_poc((unsigned long)start, (unsigned long)end);
+}
+
+static void kgsl_cache_inv_range(const void *start, const void *end)
+{
+	dcache_inval_poc((unsigned long)start, (unsigned long)end);
+}
+
 static bool sharedmem_noretry_flag;
 
 static DEFINE_MUTEX(kernel_map_global_lock);
@@ -766,13 +794,13 @@ static inline void _cache_op(unsigned int op,
 	 */
 	switch (_fixup_cache_range_op(op)) {
 	case KGSL_CACHE_OP_FLUSH:
-		dmac_flush_range(start, end);
+		kgsl_cache_flush_range(start, end);
 		break;
 	case KGSL_CACHE_OP_CLEAN:
-		dmac_clean_range(start, end);
+		kgsl_cache_clean_range(start, end);
 		break;
 	case KGSL_CACHE_OP_INV:
-		dmac_inv_range(start, end);
+		kgsl_cache_inv_range(start, end);
 		break;
 	}
 }
@@ -1569,7 +1597,7 @@ static int scm_lock_chunk(struct kgsl_memdesc *memdesc, int lock)
 		return -ENOMEM;
 
 	chunk_list[0] = memdesc->physaddr;
-	dmac_flush_range((void *)chunk_list, (void *)chunk_list + 1);
+	kgsl_cache_flush_range((void *)chunk_list, (void *)chunk_list + 1);
 
 	request.chunks.chunk_list = virt_to_phys(chunk_list);
 	/*
@@ -1586,7 +1614,7 @@ static int scm_lock_chunk(struct kgsl_memdesc *memdesc, int lock)
 	desc.arginfo = SCM_ARGS(6, SCM_RW, SCM_VAL, SCM_VAL, SCM_VAL, SCM_VAL,
 				SCM_VAL);
 	kmap_flush_unused();
-	kmap_atomic_flush_unused();
+	/* kmap_atomic_flush_unused() 在 6.x 已删除，无等价操作 */
 	/*
 	 * scm_call2 now supports both 32 and 64 bit calls
 	 * so we dont need scm_call separately.
@@ -1691,7 +1719,7 @@ void kgsl_zero_page(struct page *p, unsigned int order)
 		void *addr = kmap_atomic(page);
 
 		memset(addr, 0, PAGE_SIZE);
-		dmac_flush_range(addr, addr + PAGE_SIZE);
+		kgsl_cache_flush_range(addr, addr + PAGE_SIZE);
 		kunmap_atomic(addr);
 	}
 }
@@ -1700,7 +1728,7 @@ void kgsl_flush_page(struct page *page)
 {
 	void *addr = kmap_atomic(page);
 
-	dmac_flush_range(addr, addr + PAGE_SIZE);
+	kgsl_cache_flush_range(addr, addr + PAGE_SIZE);
 	kunmap_atomic(addr);
 }
 
