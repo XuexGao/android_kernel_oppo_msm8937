@@ -2597,3 +2597,11 @@ config SND_SOC_LPASS_TX_MACRO
 	tristate "Qualcomm TX Macro in LPASS(Low Power Audio SubSystem)"
 
 endmenu
+
+config SND_SOC_AK4376
+	tristate "Asahi Kasei AK4376 CODEC"
+	depends on I2C
+	select REGMAP_I2C
+	help
+	  Enable support for the AK4376 DAC/headphone amplifier found on
+	  OPPO R9s. Ported from downstream 4.19.

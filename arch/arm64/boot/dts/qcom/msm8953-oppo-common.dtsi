@@ -491,6 +491,23 @@
 
 / {
 	/*
+	 * 耳机 DAC：AK4376 @ i2c_8 0x10
+	 *
+	 * 参数取自 4.19 的 oppo-msm8953/msm8953-mtp.dtsi:178：
+	 *   ak4376,pdn-gpio = <&tlmm 28>
+	 *   enable-gpio    = <&tlmm 62>
+	 */
+	ak4376: audio-codec@10 {
+		compatible = "akm,ak4376";
+		reg = <0x10>;
+
+		ak4376,pdn-gpio = <&tlmm 28 GPIO_ACTIVE_LOW>;
+		enable-gpios = <&tlmm 62 GPIO_ACTIVE_HIGH>;
+
+		#sound-dai-cells = <0>;
+	};
+
+	/*
 	 * 声卡节点。所有 dai link 都写在这里，machine driver 通过
 	 * qcom_snd_parse_of() 自动解析 —— 加/改链路不需要动 C 代码。
 	 *
@@ -526,5 +543,34 @@
 			codec {
 			};
 		};
+
+		/*
+		 * 耳机：PRIMARY MI2S -> AK4376。
+		 * AK4376 是 DAC + 耳机放大器，直接接在 MI2S 上。
+		 */
+		primary-mi2s-rx-dai-link {
+			link-name = "Primary MI2S RX";
+			status = "okay";
+
+			cpu {
+				sound-dai = <&q6afedai PRIMARY_MI2S_RX>;
+			};
+
+			platform {
+				sound-dai = <&q6routing>;
+			};
+
+			codec {
+				sound-dai = <&ak4376>;
+			};
+		};
 	};
+};
+
+/*
+ * AK4376 挂 i2c_8（BLSP2 QUP4）。
+ * msm8953.dtsi 里 i2c_8 默认 disabled。
+ */
+&i2c_8 {
+	status = "okay";
 };
