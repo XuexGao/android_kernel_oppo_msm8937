@@ -192,6 +192,72 @@ CI 新增 **DTB 静态自检**：反编译 dtb 确认面板节点 / DSI 控制�
 
 ---
 
+## 充电 / 电量计（第四轮）
+
+从 4.9/4.19 前移了 PMI8950 的 QPNP 电源栈：
+
+| 文件 | 行数 | 作用 |
+|---|---|---|
+| `qpnp-smbcharger.c` | 8443 | 充电器 / OTG |
+| `qpnp-fg.c` | 9299 | 电量计 |
+| `batterydata-lib.c` | 485 | 电池曲线解析 |
+| `pmic-voter.c` | 832 | 充电参数投票框架 |
+| `qpnp-revid.c` | 298 | PMIC 版本识别 |
+| `of_batterydata.c` | 719 | DT 电池特性解析 |
+
+选 `qpnp-smbcharger + qpnp-fg` 而不是 `qpnp-smb2/smb5`：R9s 的 vendor DTS
+用的就是这代，而且它们只依赖标准 `power_supply` API。
+
+### 最大障碍：power_supply 私有属性被上游删光
+
+4.19 有 **213** 个 property，6.12 只剩 **109**。QCOM 加的那批
+（`USB_OTG` / `CAPACITY_RAW` / `BATTERY_INFO` / `SOC_REPORTING_READY` …）
+全没了，另外还有 `DP_DM` 协商命令、`HVDCP` 类型等独立枚举。
+
+处理方式：把 4.19 独有的 **147 个 property + 11 个 type + DP_DM 匿名 enum
++ 2 个 CHARGE_TYPE** 用脚本精确 diff 后**追加到枚举末尾**。
+
+> 关键点：不能插到中间 —— property 的数值是 sysfs ABI，插中间会改掉所有
+> 后续项的编号。追加则不影响既有 ABI。
+>
+> 安全性：`power_supply_sysfs.c` 的 `show_property` 对新名字没有专门
+> case，会落到 `default` 直接打印 intval，不会崩也不会误走分支。
+
+### 修掉的 9 类不兼容
+
+1. **私有 ADC 框架** `qpnp-adc.h` 不存在 —— 但驱动其实只用标准 IIO
+   consumer API（`iio_read_channel_processed`），去掉私有 include 即可
+2. **Kconfig 循环依赖** —— `depends on REGULATOR/EXTCON` 形成
+   `QPNP_SMBCHARGER → EXTCON → CHARGER_MANAGER → POWER_SUPPLY → 回来`，改 select
+3. **batterydata-lib.h 条件漏了 QPNP_FG** —— 头文件走 inline stub 与 `.c`
+   实现撞名（8 个 redefinition）
+4. **Xiaomi 机型 hack** —— 下游插了一批未受 CONFIG 保护的
+   `xiaomi_msm8953_mach_get()`，新增恒假 stub 头
+5. `rtc_tm_to_time` → `rtc_tm_to_time64`（含变量类型改 `time64_t`）
+6. `debugfs_create_u32/x32` 在 6.x 返回 void
+7. `platform_driver.remove` 从 6.11 起返回 void
+8. **implicit-fallthrough 里一处真 bug** —— `POWER_SUPPLY_PROP_CURRENT_MAX`
+   分支缺 `break`，会误落到 `default` 返回 `-EINVAL`，已补
+9. `%ld` 与 `time64_t` 不匹配 → `(long long)` + `%lld`
+
+### DTS
+
+`pmi8950.dtsi` 新增两个节点（参数取自 4.19 vendor）：
+
+```
+charger@1000  qcom,qpnp-smbcharger
+              iterm 200mA / float 4380mV / fastchg 2000mA
+              thermal-mitigation <2000 1500 1000 800>
+              io-channels = <&pmi8950_vadc 3>     ← vchg_sns
+fg@4000       qcom,qpnp-fg
+              iterm 200mA / cutoff 3200mV / cc-cv 4360mV / 2820mAh
+```
+
+私有 phandle 属性 `qcom,vchg_sns-vadc` 改成标准 `io-channels/io-channel-names`。
+
+> FIXME：R9s 的电池曲线（BATTERYDATA profile）还没塞进 DTS，
+> 上机后 SOC 可能不准。
+
 ## 还差什么才能跑 Android
 
 ACK 给了 Android **内核接口**，主线给了 MSM8953 **平台**，
