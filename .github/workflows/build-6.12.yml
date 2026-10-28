@@ -69,6 +69,21 @@ jobs:
           grep -E '^CONFIG_(ANDROID_BINDER_IPC|ANDROID_BINDERFS|ANDROID_VENDOR_HOOKS|DMABUF_HEAPS)=' .config
           echo "--- MSM8953 平台："
           grep -E '^CONFIG_(MSM_GCC_8953|PINCTRL_MSM8953|MMC_SDHCI_MSM|USB_DWC3|QCOM_SMD_RPM)=' .config
+          # 显示栈必须全内置：面板驱动是 =y，父驱动若为 =m 则开机时
+          # 不存在，屏幕永远不亮（bring-up 没有 init 去 modprobe）。
+          #
+          # 注意这里**不查 BACKLIGHT_LED**：两个 OPPO 面板驱动都把亮度
+          # 写死在初始化序列的 0x51/0x53 里，不导出 backlight 设备；
+          # 背光是独立的 LM3697 LED 驱动（default-on）负责。
+          echo "--- 显示栈（必须全部 =y）："
+          for sym in DRM_MSM DRM_MSM_DSI DRM_MSM_DSI_14NM_PHY DRM_MSM_MDP5 \
+                     DRM_PANEL_OPPO_EA8064 DRM_PANEL_JDI_R63452 LEDS_LM3697; do
+            v="$(grep -E "^CONFIG_${sym}=" .config | head -1)"
+            case "$v" in
+              "CONFIG_${sym}=y") echo "  OK   $v" ;;
+              *) echo "::error::显示栈未内置: ${sym} 实际为 '${v:-未设置}'"; exit 1 ;;
+            esac
+          done
 
       - name: 编译内核与设备树
         run: |
