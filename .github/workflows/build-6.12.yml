@@ -67,6 +67,32 @@ jobs:
             msm8953-oppo_defconfig
           echo "--- Android 核心配置："
           grep -E '^CONFIG_(ANDROID_BINDER_IPC|ANDROID_BINDERFS|ANDROID_VENDOR_HOOKS|DMABUF_HEAPS)=' .config
+
+          # ---- 架构级断言：错了就是"卡一屏、无任何日志" ----
+          #
+          # MSM8953/MSM8937 是 Cortex-A53（ARMv8.0），只支持 39-bit VA。
+          # ACK 默认给的是 52-bit + 5 级页表，那是 ARMv8.2 的 LPA 扩展，
+          # A53 没有。用 52-bit 会在 head.S 建页表时就挂死，
+          # 现象正是刷机后卡一屏、连 dmesg 都拿不到。
+          #
+          # pstore 也必须全内置：bring-up 阶段没有 init 去 modprobe，
+          # 而卡屏/painc 时唯一的线索就是它。曾经因为 PSTORE_RAM=m
+          # 且没开 PSTORE_CONSOLE，导致完全抓不到崩溃日志。
+          echo "--- 架构与 pstore（错了就卡一屏且无日志）："
+          for sym in ARM64_VA_BITS_39 PSTORE PSTORE_RAM PSTORE_CONSOLE PSTORE_PMSG; do
+            v="$(grep -E "^CONFIG_${sym}=" .config | head -1)"
+            case "$v" in
+              "CONFIG_${sym}=y") echo "  OK   $v" ;;
+              *) echo "::error::关键配置缺失: ${sym} 实际为 '${v:-未设置}'"; exit 1 ;;
+            esac
+          done
+          # VA_BITS 必须真的是 39（上面的 ARM64_VA_BITS_39=y 只是选了
+          # 选项，这里再确认算出来的生效值）。
+          v="$(grep -E '^CONFIG_ARM64_VA_BITS=' .config | head -1)"
+          case "$v" in
+            "CONFIG_ARM64_VA_BITS=39") echo "  OK   $v" ;;
+            *) echo "::error::VA_BITS 必须为 39（Cortex-A53 限制），实际 '${v:-未设置}'"; exit 1 ;;
+          esac
           echo "--- MSM8953 平台："
           grep -E '^CONFIG_(MSM_GCC_8953|PINCTRL_MSM8953|MMC_SDHCI_MSM|USB_DWC3|QCOM_SMD_RPM)=' .config
           # 充电/电量计也要内置：bring-up 阶段没有 init 去 modprobe，
