@@ -5,7 +5,9 @@
  */
 
 #include <uapi/linux/sched/types.h>
+#include <linux/of_platform.h>
 #include <linux/ctype.h>
+#include <linux/vmalloc.h>
 #include <linux/debugfs.h>
 #include <linux/dma-buf.h>
 #include <linux/fdtable.h>
@@ -18,6 +20,16 @@
 #include <linux/pm_runtime.h>
 #include <linux/security.h>
 #include <linux/sort.h>
+/*
+ * ION_FLAG_CACHED 是 ION 导出给 dma_buf 的私有标志位（bit0），
+ * HAL 通过 dma_buf_get_flags() 读它来判断 buffer 是否 cacheable。
+ * 6.12 没有 ION 了，但 HAL 仍然在用这个位值，所以这里按 4.9 的原值定义，
+ * KGSL 用它决定 memdesc 的 cachemode。
+ */
+#ifndef ION_FLAG_CACHED
+#define ION_FLAG_CACHED 1
+#endif
+
 #include <asm/cacheflush.h>
 
 #include "kgsl_compat.h"
@@ -1393,8 +1405,12 @@ struct msm_bus_scale_pdata *kgsl_get_bus_scale_table(struct kgsl_device *device)
 
 	parent = device->pdev->dev.of_node;
 
-	snprintf(str, sizeof(str), "qcom,gpu-bus-table-ddr%d",
-		of_fdt_get_ddrtype());
+	/*
+	 * 原代码用 of_fdt_get_ddrtype()（QCOM 私有 helper，6.12 没有）读
+	 * bootloader 传的 DDR 类型，再拼出 bus-table 节点名。
+	 * MSM8953 平台固定是 LPDDR3，按 4.9 的命名约定直接用 ddr3。
+	 */
+	snprintf(str, sizeof(str), "qcom,gpu-bus-table-ddr3");
 
 	child = of_find_compatible_node(parent, NULL, str);
 
@@ -2606,7 +2622,19 @@ static int memdesc_sg_virt(struct kgsl_memdesc *memdesc, unsigned long useraddr)
 		goto out;
 	}
 
-	npages = get_user_pages(useraddr, sglen, write, pages, NULL);
+	/*
+	 * 6.x 的 get_user_pages() 签名变成
+	 *   get_user_pages(start, nr_pages, gup_flags, pages, NULL)
+	 * —— 第 3 参从 bool write 变成 FOLL_* 标志。
+	 */
+	/*
+	 * 6.x: 跨进程抓页要用 get_user_pages_remote(mm, start, nr, gup_flags,
+	 * pages, locked)，比 get_user_pages 多 mm 与 locked 两个参数。
+	 * 这里是在目标的 mm 上操作（前面已经 mmap_read_lock 了它），
+	 * locked=NULL 表示"锁由调用方持有"。
+	 */
+	npages = get_user_pages_remote(current->mm, useraddr, sglen,
+				write ? FOLL_WRITE : 0, pages, NULL);
 	mmap_read_unlock(current->mm);
 
 	ret = (npages < 0) ? (int)npages : 0;
@@ -4670,7 +4698,7 @@ kgsl_mmap_memstore(struct kgsl_device *device, struct vm_area_struct *vma)
 	if (vma->vm_flags & VM_WRITE)
 		return -EPERM;
 
-	vma->vm_flags &= ~VM_MAYWRITE;
+	vm_flags_clear(vma, VM_MAYWRITE);
 
 	if (memdesc->size  !=  vma_size) {
 		dev_err(device->dev,
@@ -5093,7 +5121,7 @@ static int kgsl_mmap(struct file *file, struct vm_area_struct *vma)
 	if (ret)
 		return ret;
 
-	vma->vm_flags |= entry->memdesc.ops->vmflags;
+	vm_flags_set(vma, entry->memdesc.ops->vmflags);
 
 	vma->vm_private_data = entry;
 
@@ -5265,8 +5293,7 @@ static int _register_device(struct kgsl_device *device)
 	}
 
 	device->dev->dma_mask = &dma_mask;
-	arch_setup_dma_ops(device->dev, 0, 0, NULL, false);
-
+	/* arch_setup_dma_ops() 在 6.x 已删除，DMA ops 由设备创建时设置 */
 	dev_set_drvdata(&device->pdev->dev, device);
 	return 0;
 }
@@ -5293,7 +5320,7 @@ int kgsl_of_property_read_ddrtype(struct device_node *node, const char *base,
 		u32 *ptr)
 {
 	char str[32];
-	int ddr = of_fdt_get_ddrtype();
+	int ddr = 3 /* MSM8953 固定 LPDDR3 */;
 
 	/* of_fdt_get_ddrtype returns error if the DDR type isn't determined */
 	if (ddr >= 0) {
@@ -5318,7 +5345,7 @@ int kgsl_of_property_read_ddrtype(struct device_node *node, const char *base,
 int kgsl_device_platform_probe(struct kgsl_device *device)
 {
 	int status = -EINVAL;
-	int cpu;
+	/* cpu 变量在移除 L2PC 后不再需要 */
 
 	status = _register_device(device);
 	if (status)
@@ -5405,31 +5432,24 @@ int kgsl_device_platform_probe(struct kgsl_device *device)
 	 * type shall update/apply the vote only to that CPU to
 	 * which IRQ's affinity is set to.
 	 */
-#ifdef CONFIG_SMP
-
-	device->pwrctrl.pm_qos_req_dma.type = PM_QOS_REQ_AFFINE_IRQ;
-	device->pwrctrl.pm_qos_req_dma.irq = device->pwrctrl.interrupt_num;
-
-#endif
+	/*
+	 * QCOM 在 pm_qos_request 里加了 type / irq / cpus_affine 三个字段，
+	 * 用来把 DMA latency 投票只施加到 IRQ 亲和的那些 CPU 上（省电）。
+	 * 6.12 的 struct pm_qos_request 只有 plist_node + qos，没有这些字段，
+	 * 而且这涉及调度器行为，没法用简单 shim 补。
+	 * 这里退回标准 cpu_latency_qos：投票对所有 CPU 生效，
+	 * 略微费电但功能不受影响。
+	 */
 	cpu_latency_qos_add_request(&device->pwrctrl.pm_qos_req_dma,
-				PM_QOS_DEFAULT_VALUE,
-				PM_QOS_DEFAULT_VALUE);
+				    PM_QOS_DEFAULT_VALUE);
 
-	if (device->pwrctrl.l2pc_cpus_mask) {
-		struct pm_qos_request *qos = &device->pwrctrl.l2pc_cpus_qos;
-
-		qos->type = PM_QOS_REQ_AFFINE_CORES;
-
-		cpumask_empty(&qos->cpus_affine);
-		for_each_possible_cpu(cpu) {
-			if ((1 << cpu) & device->pwrctrl.l2pc_cpus_mask)
-				cpumask_set_cpu(cpu, &qos->cpus_affine);
-		}
-
-		cpu_latency_qos_add_request(&device->pwrctrl.l2pc_cpus_qos,
-				PM_QOS_DEFAULT_VALUE,
-				PM_QOS_DEFAULT_VALUE);
-	}
+	/*
+	 * L2PC（L2 power collapse）的按-CPU 投票依赖 QCOM 私有的
+	 * pm_qos_request::cpus_affine 字段，6.12 没有。
+	 * 整块跳过：L2PC 是省电优化，不做也不影响 GPU 功能。
+	 * FIXME(unverified)：若要恢复 L2PC 省电，需自己实现按 cpumask
+	 * 生效的 latency 投票机制。
+	 */
 
 	/* Initialize the snapshot engine */
 	kgsl_device_snapshot_init(device);
@@ -5468,7 +5488,7 @@ void kgsl_device_platform_remove(struct kgsl_device *device)
 
 	cpu_latency_qos_remove_request(&device->pwrctrl.pm_qos_req_dma);
 	if (device->pwrctrl.l2pc_cpus_mask)
-		cpu_latency_qos_remove_request(&device->pwrctrl.l2pc_cpus_qos);
+		/* L2PC 按-CPU 投票未启用（见上面 add 处），故无需 remove */
 
 	idr_destroy(&device->context_idr);
 	idr_destroy(&device->timelines);
@@ -5557,7 +5577,7 @@ static int __init kgsl_core_init(void)
 		goto err;
 	}
 
-	kgsl_driver.class = class_create(THIS_MODULE, "kgsl");
+	kgsl_driver.class = class_create("kgsl");
 
 	if (IS_ERR(kgsl_driver.class)) {
 		result = PTR_ERR(kgsl_driver.class);

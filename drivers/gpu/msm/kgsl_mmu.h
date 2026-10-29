@@ -374,7 +374,8 @@ static inline bool kgsl_mmu_bus_secured(struct device *dev)
 	return true;
 }
 
-static inline struct bus_type *kgsl_mmu_get_bus(struct device *dev)
+/* 6.12 起 platform_bus_type 是 const，返回类型要跟着加 const */
+static inline const struct bus_type *kgsl_mmu_get_bus(struct device *dev)
 {
 	return &platform_bus_type;
 }

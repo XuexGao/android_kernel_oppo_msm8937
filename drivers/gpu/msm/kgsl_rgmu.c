@@ -432,8 +432,11 @@ static int rgmu_start(struct kgsl_device *device)
 		ret = rgmu_suspend(device);
 		if (ret)
 			goto error_rgmu;
+		fallthrough;
 	case KGSL_STATE_INIT:
+		fallthrough;
 	case KGSL_STATE_SUSPEND:
+		fallthrough;
 	case KGSL_STATE_SLUMBER:
 		rgmu_enable_gdsc(rgmu);
 		rgmu_enable_clks(device);

@@ -6,6 +6,7 @@
 #include <linux/of.h>
 #include <linux/slab.h>
 #include <linux/utsname.h>
+#include <linux/vmalloc.h>
 
 #include "adreno_cp_parser.h"
 #include "kgsl_device.h"
@@ -106,13 +107,13 @@ static size_t snapshot_os(struct kgsl_device *device,
 	header->osid = KGSL_SNAPSHOT_OS_LINUX_V3;
 
 	/* Get the kernel build information */
-	strlcpy(header->release, init_utsname()->release,
+	strscpy(header->release, init_utsname()->release,
 			sizeof(header->release));
-	strlcpy(header->version, init_utsname()->version,
+	strscpy(header->version, init_utsname()->version,
 			sizeof(header->version));
 
 	/* Get the Unix time for the timestamp */
-	header->seconds = get_seconds();
+	header->seconds = ktime_get_real_seconds();
 
 	/* Remember the power information */
 	header->power_flags = pwr->power_flags;
@@ -137,7 +138,7 @@ static size_t snapshot_os(struct kgsl_device *device,
 	if (context) {
 
 		header->pid = context->tid;
-		strlcpy(header->comm, context->proc_priv->comm,
+		strscpy(header->comm, context->proc_priv->comm,
 				sizeof(header->comm));
 		kgsl_context_put(context);
 		context = NULL;
@@ -194,13 +195,13 @@ static size_t snapshot_os_no_ctxt(struct kgsl_device *device,
 	header->osid = KGSL_SNAPSHOT_OS_LINUX_V3;
 
 	/* Get the kernel build information */
-	strlcpy(header->release, init_utsname()->release,
+	strscpy(header->release, init_utsname()->release,
 			sizeof(header->release));
-	strlcpy(header->version, init_utsname()->version,
+	strscpy(header->version, init_utsname()->version,
 			sizeof(header->version));
 
 	/* Get the Unix time for the timestamp */
-	header->seconds = get_seconds();
+	header->seconds = ktime_get_real_seconds();
 
 	/* Remember the power information */
 	header->power_flags = pwr->power_flags;
@@ -653,7 +654,10 @@ void kgsl_device_snapshot(struct kgsl_device *device,
 {
 	struct kgsl_snapshot_header *header = device->snapshot_memory.ptr;
 	struct kgsl_snapshot *snapshot;
-	struct timespec boot;
+		/*
+	 * struct timespec 在 6.x 已被 timespec64 取代（32 位 time_t 退役）。
+	 */
+	struct timespec64 boot;
 	phys_addr_t pa;
 
 	set_isdb_breakpoint_registers(device);
@@ -744,8 +748,8 @@ void kgsl_device_snapshot(struct kgsl_device *device,
 	 * the kernel log
 	 */
 
-	getboottime(&boot);
-	snapshot->timestamp = get_seconds() - boot.tv_sec;
+	getboottime64(&boot);
+	snapshot->timestamp = ktime_get_real_seconds() - boot.tv_sec;
 
 	/* Store the instance in the device until it gets dumped */
 	device->snapshot = snapshot;
@@ -958,7 +962,7 @@ static ssize_t force_panic_show(struct kgsl_device *device, char *buf)
 static ssize_t force_panic_store(struct kgsl_device *device, const char *buf,
 	size_t count)
 {
-	if (strtobool(buf, &device->force_panic))
+	if (kstrtobool(buf, &device->force_panic))
 		return -EINVAL;
 	return count;
 }
@@ -991,7 +995,7 @@ static ssize_t prioritize_unrecoverable_show(
 static ssize_t prioritize_unrecoverable_store(
 		struct kgsl_device *device, const char *buf, size_t count)
 {
-	if (strtobool(buf, &device->prioritize_unrecoverable))
+	if (kstrtobool(buf, &device->prioritize_unrecoverable))
 		return -EINVAL;
 
 	return count;
@@ -1008,7 +1012,7 @@ static ssize_t snapshot_crashdumper_show(struct kgsl_device *device, char *buf)
 static ssize_t snapshot_crashdumper_store(struct kgsl_device *device,
 	const char *buf, size_t count)
 {
-	if (strtobool(buf, &device->snapshot_crashdumper))
+	if (kstrtobool(buf, &device->snapshot_crashdumper))
 		return -EINVAL;
 	return count;
 }
@@ -1032,7 +1036,7 @@ static ssize_t snapshot_legacy_show(struct kgsl_device *device, char *buf)
 static ssize_t snapshot_legacy_store(struct kgsl_device *device,
 	const char *buf, size_t count)
 {
-	if (strtobool(buf, &device->snapshot_legacy))
+	if (kstrtobool(buf, &device->snapshot_legacy))
 		return -EINVAL;
 
 	return count;

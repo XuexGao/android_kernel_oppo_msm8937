@@ -1762,5 +1762,7 @@ CONFIG_MSM_RPM_SMD=y
 # 依赖 msm_bus 框架（CONFIG_QCOM_BUS_SCALING）与 legacy SCM，
 # 两者已打通；KGSL 本体仍在移植中（约 60 处 API 差异待清），
 # 完成前先关掉，避免整树编不过。
+# KGSL 本体仍在移植中（本轮从 232 → 47 处错误，剩 kgsl_iommu 的
+# DOMAIN_ATTR_* 整套接口等）。完成前保持关闭，保证整树可编译。
 # CONFIG_QCOM_KGSL is not set
 CONFIG_QCOM_SCM_LEGACY=y

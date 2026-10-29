@@ -215,7 +215,7 @@ void kgsl_pool_free_pages(struct page **pages, unsigned int pcount)
 	if (pages == NULL || pcount == 0)
 		return;
 
-	if (WARN(!kern_addr_valid((unsigned long)pages),
+	if (WARN(!virt_addr_valid((unsigned long)pages),
 		"Address of pages=%pK is not valid\n", pages))
 		return;
 
@@ -225,7 +225,7 @@ void kgsl_pool_free_pages(struct page **pages, unsigned int pcount)
 		 */
 		struct page *p = pages[i];
 
-		if (WARN(!kern_addr_valid((unsigned long)p),
+		if (WARN(!virt_addr_valid((unsigned long)p),
 			"Address of page=%pK is not valid\n", p))
 			return;
 
@@ -560,7 +560,7 @@ void kgsl_init_page_pools(struct kgsl_device *device)
 	kgsl_pool_reserve_pages();
 
 	/* Initialize shrinker */
-	register_shrinker(&kgsl_pool_shrinker);
+	register_shrinker(&kgsl_pool_shrinker, "kgsl-pool");
 }
 
 void kgsl_exit_page_pools(void)
@@ -569,6 +569,6 @@ void kgsl_exit_page_pools(void)
 	kgsl_pool_reduce(0, true);
 
 	/* Unregister shrinker */
-	unregister_shrinker(&kgsl_pool_shrinker);
+	unregister_shrinker(&kgsl_pool_shrinker, "kgsl-pool");
 }
 

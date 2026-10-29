@@ -27,6 +27,13 @@ enum {
 	MM_ANONPAGES,	/* Resident anonymous pages */
 	MM_SWAPENTS,	/* Anonymous swap entries */
 	MM_SHMEMPAGES,	/* Resident shared memory pages */
+	/*
+	 * Qualcomm 下游加的计数项：与硬件共享、不可回收的页面。
+	 * KGSL 用 add_mm_counter(current->mm, MM_UNRECLAIMABLE, ...) 记
+	 * GPU 内存（kgsl_device.h）。上游 5.x 删掉了，这里补回，
+	 * 放在 NR_MM_COUNTERS 之前，不影响既有的 MM_FILEPAGES 等编号。
+	 */
+	MM_UNRECLAIMABLE,	/* Unreclaimable pages, e.g. shared with HW */
 	NR_MM_COUNTERS
 };
 

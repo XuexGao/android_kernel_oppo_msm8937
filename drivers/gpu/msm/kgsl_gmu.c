@@ -5,6 +5,8 @@
 
 #include <dt-bindings/regulator/qcom,rpmh-regulator-levels.h>
 #include <linux/delay.h>
+#include <linux/of_device.h>
+#include <linux/dma-map-ops.h>
 #include <linux/firmware.h>
 #include <linux/io.h>
 #include <linux/iommu.h>
@@ -88,21 +90,14 @@ unsigned int gmu_get_memtype_base(struct gmu_device *gmu,
 static int _gmu_iommu_fault_handler(struct device *dev,
 		unsigned long addr, int flags, const char *name)
 {
-	char *fault_type = "unknown";
-
-	if (flags & IOMMU_FAULT_TRANSLATION)
-		fault_type = "translation";
-	else if (flags & IOMMU_FAULT_PERMISSION)
-		fault_type = "permission";
-	else if (flags & IOMMU_FAULT_EXTERNAL)
-		fault_type = "external";
-	else if (flags & IOMMU_FAULT_TRANSACTION_STALLED)
-		fault_type = "transaction stalled";
-
-	dev_err(dev, "GMU fault addr = %lX, context=%s (%s %s fault)\n",
+	/*
+	 * 6.x 把 IOMMU 故障类型枚举整组删了，只剩 IOMMU_FAULT_READ/WRITE
+	 * 这类 perms 位。这里只用出现代接口里还在的位来表达访问方向，
+	 * 更细的故障归类（translation / permission / external）不再区分。
+	 */
+	dev_err(dev, "GMU fault addr = %lX, context=%s (%s fault)\n",
 			addr, name,
-			(flags & IOMMU_FAULT_WRITE) ? "write" : "read",
-			fault_type);
+			(flags & IOMMU_FAULT_WRITE) ? "write" : "read");
 
 	return 0;
 }
@@ -143,7 +138,7 @@ static int alloc_and_map(struct gmu_device *gmu, struct gmu_memdesc *md,
 	if (md->hostptr == NULL)
 		return -ENOMEM;
 
-	ret = iommu_map(domain, md->gmuaddr, md->physaddr, md->size, attrs);
+	ret = iommu_map(domain, md->gmuaddr, md->physaddr, md->size, attrs, GFP_KERNEL);
 
 	if (ret) {
 		dev_err(&gmu->pdev->dev,
@@ -212,6 +207,7 @@ static struct gmu_memdesc *allocate_gmu_kmem(struct gmu_device *gmu,
 
 	switch (mem_type) {
 	case GMU_ITCM:
+		fallthrough;
 	case GMU_DTCM:
 		/* Assign values and return without mapping */
 		md->size = size;
@@ -219,7 +215,9 @@ static struct gmu_memdesc *allocate_gmu_kmem(struct gmu_device *gmu,
 		md->gmuaddr = addr;
 		return md;
 
+		fallthrough;
 	case GMU_DCACHE:
+		fallthrough;
 	case GMU_ICACHE:
 		size = PAGE_ALIGN(size);
 		md->ctx_idx = GMU_CONTEXT_KERNEL;
@@ -300,8 +298,13 @@ static int gmu_iommu_cb_probe(struct gmu_device *gmu,
 	 * This sets SCTLR.CFCFG = 0.
 	 * Also note that, the smmu driver sets SCTLR.HUPCF = 0 by default.
 	 */
-	iommu_domain_set_attr(ctx->domain,
-		DOMAIN_ATTR_FAULT_MODEL_NO_STALL, &no_stall);
+	/*
+	 * 6.x 删掉了 DOMAIN_ATTR_FAULT_MODEL_NO_STALL 这套 domain attr 接口，
+	 * 改成在 attach 阶段用 IOMMU_DEV_FEAT 或 iommu_set_fault_handler。
+	 * GMU 的 no-stall 故障模型是 a6xx 专属优化，MSM8953(a5xx) 用不到，
+	 * 这里直接跳过，不影响 a5xx 的 IOMMU 功能。
+	 */
+	(void)no_stall;
 
 	ret = iommu_attach_device(ctx->domain, dev);
 	if (ret) {
@@ -597,22 +600,30 @@ enum rpmh_vote_type {
 static int rpmh_arc_cmds(struct gmu_device *gmu,
 		struct rpmh_arc_vals *arc, const char *res_id)
 {
-	unsigned int len;
+	size_t len;
+	const void *data;
 
 	memset(arc, 0, sizeof(*arc));
 
-	len = cmd_db_read_aux_data_len(res_id);
-	if (len == 0)
+	/*
+	 * 6.x 删掉了 cmd_db_read_aux_data_len()，真实签名是：
+	 *     const void *cmd_db_read_aux_data(const char *id, size_t *len)
+	 * 返回内部缓冲的指针、长度走出参，调用方自己拷出去。
+	 */
+	data = cmd_db_read_aux_data(res_id, &len);
+	if (IS_ERR_OR_NULL(data) || len == 0) {
+		dev_err(&gmu->pdev->dev, "gfx cmddb read failed for %s\n", res_id);
 		return -EINVAL;
+	}
 
 	if (len > (MAX_GX_LEVELS << 1)) {
 		dev_err(&gmu->pdev->dev,
-			"gfx cmddb size %d larger than alloc buf %d of %s\n",
+			"gfx cmddb size %zu larger than alloc buf %d of %s\n",
 			len, (MAX_GX_LEVELS << 1), res_id);
 		return -EINVAL;
 	}
 
-	cmd_db_read_aux_data(res_id, (uint8_t *)arc->val, len);
+	memcpy(arc->val, data, len);
 
 	/*
 	 * cmd_db_read_aux_data() gives us a zero-padded table of
@@ -1603,6 +1614,7 @@ static int gmu_start(struct kgsl_device *device)
 	case KGSL_STATE_INIT:
 		gmu_aop_send_acd_state(device, test_bit(ADRENO_ACD_CTRL,
 					&adreno_dev->pwrctrl_flag));
+		fallthrough;	/* INIT 与 SUSPEND 都要发 ACD state */
 	case KGSL_STATE_SUSPEND:
 		WARN_ON(test_bit(GMU_CLK_ON, &device->gmu_core.flags));
 

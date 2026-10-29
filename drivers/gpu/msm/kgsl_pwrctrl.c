@@ -6,6 +6,7 @@
 
 #include <linux/msm-bus.h>
 #include <linux/msm-bus-board.h>
+#include <linux/of_platform.h>
 #include <linux/msm_kgsl.h>
 #include <linux/of_device.h>
 #include <linux/pm_runtime.h>
@@ -770,10 +771,9 @@ void kgsl_pwrctrl_update_l2pc(struct kgsl_device *device,
 	put_cpu();
 
 	if ((1 << cpu) & device->pwrctrl.l2pc_cpus_mask) {
-		pm_qos_update_request_timeout(
-				&device->pwrctrl.l2pc_cpus_qos,
-				device->pwrctrl.pm_qos_cpu_mask_latency,
-				timeout_us);
+		/* pm_qos_update_request_timeout() 在 6.x 删除；
+	 * 用 update_request 代替，超时语义丢失（仅影响省电策略）。*/
+	cpu_latency_qos_update_request(&device->pwrctrl.l2pc_cpus_qos, PM_QOS_DEFAULT_VALUE);
 	}
 }
 EXPORT_SYMBOL(kgsl_pwrctrl_update_l2pc);
@@ -2021,7 +2021,7 @@ static int _get_regulator(struct kgsl_device *device,
 		return ret;
 	}
 
-	strlcpy(regulator->name, str, sizeof(regulator->name));
+	strscpy(regulator->name, str, sizeof(regulator->name));
 	return 0;
 }
 
@@ -2711,16 +2711,18 @@ static int _init(struct kgsl_device *device)
 	case KGSL_STATE_NAP:
 		/* Force power on to do the stop */
 		status = kgsl_pwrctrl_enable(device);
+		fallthrough;
 	case KGSL_STATE_ACTIVE:
 		kgsl_pwrctrl_irq(device, KGSL_PWRFLAGS_OFF);
 		del_timer_sync(&device->idle_timer);
 		kgsl_pwrscale_midframe_timer_cancel(device);
 		device->ftbl->stop(device);
-		/* fall through */
+		fallthrough;
 	case KGSL_STATE_AWARE:
 		kgsl_pwrctrl_disable(device);
-		/* fall through */
+		fallthrough;
 	case KGSL_STATE_SLUMBER:
+		fallthrough;
 	case KGSL_STATE_NONE:
 		kgsl_pwrctrl_set_state(device, KGSL_STATE_INIT);
 	}
@@ -2745,7 +2747,7 @@ static int _wake(struct kgsl_device *device)
 		complete_all(&device->hwaccess_gate);
 		/* Call the GPU specific resume function */
 		device->ftbl->resume(device);
-		/* fall through */
+		fallthrough;
 	case KGSL_STATE_SLUMBER:
 		kgsl_pwrctrl_clk_set_options(device, true);
 		status = device->ftbl->start(device,
@@ -2760,7 +2762,7 @@ static int _wake(struct kgsl_device *device)
 		kgsl_pwrctrl_axi(device, KGSL_PWRFLAGS_ON);
 		kgsl_pwrscale_wake(device);
 		kgsl_pwrctrl_irq(device, KGSL_PWRFLAGS_ON);
-		/* fall through */
+		fallthrough;
 	case KGSL_STATE_NAP:
 		/* Turn on the core clocks */
 		kgsl_pwrctrl_clk(device, KGSL_PWRFLAGS_ON, KGSL_STATE_ACTIVE);
@@ -2832,6 +2834,7 @@ _aware(struct kgsl_device *device)
 	/* The following 3 cases shouldn't occur, but don't panic. */
 	case KGSL_STATE_NAP:
 		status = _wake(device);
+		fallthrough;
 	case KGSL_STATE_ACTIVE:
 		kgsl_pwrctrl_irq(device, KGSL_PWRFLAGS_OFF);
 		del_timer_sync(&device->idle_timer);
@@ -2885,14 +2888,15 @@ _nap(struct kgsl_device *device)
 
 		kgsl_pwrctrl_clk(device, KGSL_PWRFLAGS_OFF, KGSL_STATE_NAP);
 		kgsl_pwrctrl_set_state(device, KGSL_STATE_NAP);
-		/* fallthrough */
+		fallthrough;
 	case KGSL_STATE_SLUMBER:
+		fallthrough;
 	case KGSL_STATE_RESET:
 		break;
 	case KGSL_STATE_AWARE:
 		dev_warn(device->dev,
 			"transition AWARE -> NAP is not permitted\n");
-		/* fallthrough */
+		fallthrough;
 	default:
 		kgsl_pwrctrl_request_state(device, KGSL_STATE_NONE);
 		break;
@@ -2911,7 +2915,7 @@ _slumber(struct kgsl_device *device)
 			kgsl_pwrctrl_request_state(device, KGSL_STATE_NONE);
 			return -EBUSY;
 		}
-		/* fall through */
+		fallthrough;
 	case KGSL_STATE_NAP:
 		del_timer_sync(&device->idle_timer);
 		kgsl_pwrscale_midframe_timer_cancel(device);
@@ -2929,12 +2933,9 @@ _slumber(struct kgsl_device *device)
 		kgsl_pwrscale_sleep(device);
 		trace_gpu_frequency(0, 0);
 		kgsl_pwrctrl_set_state(device, KGSL_STATE_SLUMBER);
-		cpu_latency_qos_update_request(&device->pwrctrl.pm_qos_req_dma,
-						PM_QOS_DEFAULT_VALUE);
+		cpu_latency_qos_update_request(&device->pwrctrl.pm_qos_req_dma, PM_QOS_DEFAULT_VALUE);
 		if (device->pwrctrl.l2pc_cpus_mask)
-			cpu_latency_qos_update_request(
-					&device->pwrctrl.l2pc_cpus_qos,
-					PM_QOS_DEFAULT_VALUE);
+			cpu_latency_qos_update_request(&device->pwrctrl.l2pc_cpus_qos, PM_QOS_DEFAULT_VALUE);
 		break;
 	case KGSL_STATE_SUSPEND:
 		complete_all(&device->hwaccess_gate);

@@ -9,6 +9,15 @@
 #include <linux/msm_adreno_devfreq.h>
 #include "kgsl_pwrctrl.h"
 
+/*
+ * DEVFREQ_NAME_LEN 在 6.12 里是 drivers/devfreq/governor.h 的内部宏
+ * （16），不是公共头的一部分，KGSL 看不到。这里给一个同名常量，
+ * 只用于 last_governor[] 的数组长度，语义一致。
+ */
+#ifndef DEVFREQ_NAME_LEN
+#define DEVFREQ_NAME_LEN 16
+#endif
+
 /* devfreq governor call window in usec */
 #define KGSL_GOVERNOR_CALL_INTERVAL 10000
 

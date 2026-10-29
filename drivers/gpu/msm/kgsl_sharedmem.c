@@ -6,6 +6,7 @@
 
 #include <asm/cacheflush.h>
 #include <linux/highmem.h>
+#include <linux/vmalloc.h>
 #include <linux/slab.h>
 #include <soc/qcom/scm.h>
 #include <soc/qcom/secure_buffer.h>
@@ -706,18 +707,25 @@ static int kgsl_contiguous_vmfault(struct kgsl_memdesc *memdesc,
 				struct vm_fault *vmf)
 {
 	unsigned long offset, pfn;
-	int ret;
+	vm_fault_t ret;
 
 	offset = ((unsigned long) vmf->address - vma->vm_start) >>
 		PAGE_SHIFT;
 
 	pfn = (memdesc->physaddr >> PAGE_SHIFT) + offset;
-	ret = vm_insert_pfn(vma, (unsigned long) vmf->address, pfn);
 
-	if (ret == -ENOMEM || ret == -EAGAIN)
-		return VM_FAULT_OOM;
-	else if (ret == -EFAULT)
+	/*
+	 * 6.x 起 vm_insert_pfn() 改成 vmf_insert_pfn()，返回类型从
+	 * int（负 errno）变成 vm_fault_t（VM_FAULT_* 位掩码）。
+	 * 所以不再比较 -ENOMEM/-EAGAIN/-EFAULT，直接看 VM_FAULT_* 标志。
+	 */
+	ret = vmf_insert_pfn(vma, (unsigned long)vmf->address, pfn);
+
+	if (ret & VM_FAULT_ERROR) {
+		if (ret & VM_FAULT_OOM)
+			return VM_FAULT_OOM;
 		return VM_FAULT_SIGBUS;
+	}
 
 	return VM_FAULT_NOPAGE;
 }
@@ -1502,9 +1510,9 @@ void kgsl_get_memory_usage(char *name, size_t name_size, uint64_t memflags)
 		KGSL_MEMTYPE_SHIFT);
 
 	if (type == KGSL_MEMTYPE_KERNEL)
-		strlcpy(name, "kernel", name_size);
+		strscpy(name, "kernel", name_size);
 	else if (type < ARRAY_SIZE(memtype_str) && memtype_str[type] != NULL)
-		strlcpy(name, memtype_str[type], name_size);
+		strscpy(name, memtype_str[type], name_size);
 	else
 		snprintf(name, name_size, "VK/others(%3d)", type);
 }
@@ -1654,7 +1662,10 @@ static int kgsl_cma_alloc_secure(struct kgsl_device *device,
 	memdesc->ops = &kgsl_cma_ops;
 	memdesc->dev = iommu->ctx[KGSL_IOMMU_CONTEXT_SECURE].dev;
 
-	memdesc->attrs |= DMA_ATTR_STRONGLY_ORDERED;
+	/*
+	 * DMA_ATTR_STRONGLY_ORDERED 在 6.x 已删除（aarch64 不需要它来保证
+	 * 写顺序，dma_alloc_attrs 的默认属性已经足够）。
+	 */
 
 	memdesc->hostptr = dma_alloc_attrs(memdesc->dev, aligned,
 		&memdesc->physaddr, GFP_KERNEL, memdesc->attrs);
