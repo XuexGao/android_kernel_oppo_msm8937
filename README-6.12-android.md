@@ -258,6 +258,91 @@ fg@4000       qcom,qpnp-fg
 > FIXME：R9s 的电池曲线（BATTERYDATA profile）还没塞进 DTS，
 > 上机后 SOC 可能不准。
 
+## 当前能力清单（截至第 11 轮）
+
+| 子系统 | 状态 | 关键实现 |
+|---|---|---|
+| 显示 MDSS/MDP5/DSI + 14nm PHY | ✅ 全内置 | ACK 的 `drm/msm` |
+| 面板 16017（Samsung EA8064） | ✅ | `panel-oppo-ea8064.c` |
+| 面板 16027（JDI R63452） | ✅ | `panel-oppo-jdi-r63452.c` |
+| 背光 LM3697 | ✅ | `leds-lm3697.c` + `default-on` |
+| 触摸 Synaptics | ✅ | `rmi4` + 两路 gpio 供电 |
+| USB gadget（adb/fastboot） | ✅ 内置 | `USB_CONFIGFS` + `ffs` |
+| 存储 | ✅ | `EROFS_FS` / `F2FS_FS` |
+| 充电器 | ✅ | `qpnp-smbcharger` |
+| 电量计 | ✅ | `oppo_bq27541`（**不是** qpnp-fg） |
+| VOOC 快充 | ✅ | `vooc_charger` + `stm8s-vooc` |
+| 音频 CPU 侧 | ✅ | 上游 `q6afe/q6asm/q6adm` |
+| 耳机 DAC | ✅ | `ak4376` |
+| OPPO 设备信息 | ✅ | `drivers/soc/oppo/` |
+| GPU (KGSL) | ❌ **WIP** | 源码在树里，47 处 API 差异待清，**配置关闭** |
+| 外放 TFA98XX | ❌ | 2.5 万行独立栈，未开始 |
+| 相机 | ❌ | 未开始 |
+
+### 一个重要修正
+
+R9s **不用 PMI8950 内部的电量计**，而是外挂 **TI BQ27541**（i2c_5 0x55），
+快充由 **STM8S 单片机**（i2c_5 0x26）走 VOOC 协议。
+`qpnp_fg` 节点保留作为兜底，实际 SOC 由 bq27541 提供。
+
+---
+
+## 上机验证指南
+
+> **这些全部是未验证的。** 十一轮下来所有功能只到"编译通过 + DTB
+> 反编译正确"，没有任何一项在真机上跑过。下面是按风险排序的检查清单。
+
+### 刷机前
+
+1. **备份原 boot 分区**（TWRP 里 backup boot）
+2. 确认机型：`adb shell getprop ro.product.device`
+   - 16017 → `msm8953-oppo-r9s`
+   - 16027 → `msm8953-oppo-r9sk`（多数机器是这个）
+3. 刷机包会自动读 `/proc/device-tree/qcom,board-id` 选 dtb，
+   读不到时默认 r9sk
+
+### 可能失败的地方（按概率排序）
+
+| # | 现象 | 大概率原因 | 排查手段 |
+|---|---|---|---|
+| 1 | 开机就进 fastboot | DTB 没被识别 / 内核 early panic | 看是否有 `Image.gz-dtb` 末尾的 DTB；换另一机型 dtb 试 |
+| 2 | 黑屏但有振动/背光 | MDSS/DSI 未初始化成功 | 接 USB 看 `dmesg`，找 `msm_drm` / `dsi` 报错 |
+| 3 | 亮屏但触摸无反应 | **S3320 可能不走标准 RMI4 协议**（最大未知数） | `dmesg | grep rmi4`；`cat /sys/bus/i2c/devices/3-0020/name` |
+| 4 | 无电量显示 | bq27541 的 I2C 通信/供电时序 | `dmesg | grep bq27541`；`cat /sys/class/power_supply/battery/capacity` |
+| 5 | 无声音 | AK4376 的 pdn/enable 极性 | `dmesg | grep ak4376`；检查 gpio28/62 电平 |
+| 6 | 不充电 | smbcharger IIO 通道（vchg_sns）没连上 | `dmesg | grep smbchg` |
+| 7 | SD 卡不识别 | mainline `sdhci-msm` 没有 `sdcard_vdd_enable` 属性 | 见下 |
+
+### 关于 SD 卡的一个已知缺口
+
+4.19 的 R9s 有一个 `sdcard_vdd_enable` 电源使能脚（gpio 64），
+但 mainline 的 `sdhci-msm` **没有对应 DT 属性**。如果 SD 卡不工作，
+可能需要在 `sdhci_msm_setup_vreg()` 里自己加 gpio 控制。
+
+### 数据收集方式
+
+```bash
+# 完整 dmesg
+dmesg > /sdcard/dmesg.txt
+
+# 各子系统关键字
+dmesg | grep -iE "msm_drm|dsi|panel"      # 显示
+dmesg | grep -iE "rmi4|synaptics|touch"   # 触摸
+dmesg | grep -iE "bq27541|power_supply"   # 电量
+dmesg | grep -iE "ak4376|q6afe|q6asm"     # 音频
+dmesg | grep -iE "smbchg|qpnp"            # 充电
+
+# 供电状态
+cat /sys/class/power_supply/*/uevent
+```
+
+> 若开机就 panic、拿不到 dmesg，参考 `oppo-r9s-mainline` 仓库里
+> 用 ramoops 抓日志的做法 —— 但**注意本内核的 ramoops 地址
+> （0xef000000）与 Lineage 内核（0xb0000000）不一致**，抓不到上一次
+> 的日志。这是已知问题。
+
+---
+
 ## 还差什么才能跑 Android
 
 ACK 给了 Android **内核接口**，主线给了 MSM8953 **平台**，
