@@ -1019,4 +1019,5 @@ config FUEL_GAUGE_MM8013
 	  capacity, etc.
 
 endif # POWER_SUPPLY
+source "drivers/power/supply/oppo/Kconfig"
 source "drivers/power/supply/qcom/Kconfig"

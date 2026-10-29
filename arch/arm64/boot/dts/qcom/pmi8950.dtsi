@@ -116,25 +116,65 @@
 			status = "okay";
 		};
 
-		qpnp_fg: fg@4000 {
+		/*
+		 * QPNP 电量计。结构必须按 4.19 vendor 的层级来：
+		 * qpnp-fg 驱动在 fg_init_irqs() 里先 of_get_available_child_count()
+		 * 检查子节点（为 0 直接 -ENXIO），再用 for_each_available_child_of_node
+		 * + of_irq_get_byname 从每个子节点按名字取中断。
+		 * 所以不能写成平铺的 interrupts，必须有三个子节点。
+		 */
+		qpnp_fg: qcom,fg {
 			compatible = "qcom,qpnp-fg";
-			reg = <0x4000>;
+			#address-cells = <1>;
+			#size-cells = <1>;
 
-			interrupts = <0x2 0x40 0x0 IRQ_TYPE_EDGE_RISING>,
-				     <0x2 0x40 0x1 IRQ_TYPE_EDGE_RISING>,
-				     <0x2 0x40 0x2 IRQ_TYPE_EDGE_RISING>,
-				     <0x2 0x40 0x3 IRQ_TYPE_EDGE_RISING>;
-			interrupt-names = "soc-update", "soc-ready",
-					  "bsoc-delta", "resume-soc";
+			qcom,resume-soc = <95>;
+			qcom,bcl-lm-threshold-ma = <127>;
+			qcom,bcl-mh-threshold-ma = <405>;
+			qcom,fg-iterm-ma = <150>;
+			qcom,fg-chg-iterm-ma = <100>;
+			qcom,fg-cutoff-voltage-mv = <3500>;
+			qcom,cycle-counter-en;
+			qcom,capacity-learning-on;
 
-			qcom,fg-iterm-ma = <200>;
-			qcom,fg-chg-iterm-ma = <150>;
-			qcom,fg-cutoff-voltage-mv = <3200>;
-			qcom,fg-cc-cv-threshold-mv = <4360>;
-			qcom,fg-batt-capacity-mah = <2820>;
-			qcom,fg-batt-soc;
+			qcom,fg-soc@4000 {
+				status = "okay";
+				reg = <0x4000 0x100>;
+				interrupts = <0x2 0x40 0x0 IRQ_TYPE_NONE>,
+					     <0x2 0x40 0x1 IRQ_TYPE_NONE>,
+					     <0x2 0x40 0x2 IRQ_TYPE_NONE>,
+					     <0x2 0x40 0x3 IRQ_TYPE_NONE>,
+					     <0x2 0x40 0x4 IRQ_TYPE_NONE>,
+					     <0x2 0x40 0x5 IRQ_TYPE_NONE>,
+					     <0x2 0x40 0x6 IRQ_TYPE_NONE>;
+				interrupt-names = "high-soc", "low-soc", "full-soc",
+						  "empty-soc", "delta-soc",
+						  "first-est-done", "update-soc";
+			};
 
-			status = "okay";
+			qcom,fg-batt@4100 {
+				reg = <0x4100 0x100>;
+				interrupts = <0x2 0x41 0x0 IRQ_TYPE_NONE>,
+					     <0x2 0x41 0x1 IRQ_TYPE_NONE>,
+					     <0x2 0x41 0x2 IRQ_TYPE_NONE>,
+					     <0x2 0x41 0x3 IRQ_TYPE_NONE>,
+					     <0x2 0x41 0x4 IRQ_TYPE_NONE>,
+					     <0x2 0x41 0x5 IRQ_TYPE_NONE>,
+					     <0x2 0x41 0x6 IRQ_TYPE_NONE>,
+					     <0x2 0x41 0x7 IRQ_TYPE_NONE>;
+				interrupt-names = "soft-cold", "soft-hot", "vbatt-low",
+						  "batt-ided", "batt-id-req",
+						  "batt-unknown", "batt-missing",
+						  "batt-match";
+			};
+
+			qcom,fg-memif@4400 {
+				status = "okay";
+				reg = <0x4400 0x100>;
+				interrupts = <0x2 0x44 0x0 IRQ_TYPE_NONE>,
+					     <0x2 0x44 0x2 IRQ_TYPE_NONE>;
+				interrupt-names = "mem-avail", "data-rcvry-sug";
+			};
 		};
 
 	};

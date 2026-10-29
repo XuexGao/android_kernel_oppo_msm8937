@@ -1,0 +1,23 @@
+menu "OPPO power supply drivers"
+
+menuconfig BATTERY_GAUGE_OPPO
+	bool "OPPO battery gauge drivers"
+	help
+	  Support for OPPO battery battery gauge drivers.
+
+if BATTERY_GAUGE_OPPO
+
+config BATTERY_GAUGE_OPPO_BQ27541
+	bool "OPPO BQ27541 battery gauge driver"
+	depends on I2C
+	help
+	  Say Y here to enable support for batteries with BQ27541 (I2C) chips.
+
+endif # BATTERY_GAUGE_OPPO
+
+menuconfig CHARGER_OPPO_VOOC
+	bool "OPPO VOOC charging technology"
+	help
+	  Support for OPPO VOOC charging technology.
+
+endmenu

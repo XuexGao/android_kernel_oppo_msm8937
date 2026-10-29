@@ -151,6 +151,12 @@ static const char * const resident_page_types[] = {
 	NAMED_ARRAY_INDEX(MM_ANONPAGES),
 	NAMED_ARRAY_INDEX(MM_SWAPENTS),
 	NAMED_ARRAY_INDEX(MM_SHMEMPAGES),
+	/*
+	 * QCOM 在 enum mm_counter 里加了 MM_UNRECLAIMABLE（见
+	 * include/linux/mm_types_task.h），这里必须同步补一项，
+	 * 否则下面 BUILD_BUG_ON_MSG(ARRAY_SIZE != NR_MM_COUNTERS) 会失败。
+	 */
+	NAMED_ARRAY_INDEX(MM_UNRECLAIMABLE),
 };
 
 DEFINE_PER_CPU(unsigned long, process_counts) = 0;

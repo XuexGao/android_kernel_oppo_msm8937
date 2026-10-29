@@ -1251,6 +1251,11 @@ const char * const vmstat_text[] = {
 	"nr_written",
 	"nr_throttled_written",
 	"nr_kernel_misc_reclaimable",
+	/* QCOM 私有 node stats（见 include/linux/mmzone.h 的追加项）*/
+	"nr_unreclaimable_pages",
+	"nr_ion_heap",
+	"nr_ion_heap_pool",
+	"nr_gpu_heap",
 	"nr_foll_pin_acquired",
 	"nr_foll_pin_released",
 	"nr_kernel_stack",

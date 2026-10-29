@@ -574,3 +574,36 @@
 &i2c_8 {
 	status = "okay";
 };
+
+/*
+ * ---- OPPO 电池计 / VOOC 快充 ----
+ *
+ * 重要：R9s **不用** PMI8950 内部的 qpnp-fg 电量计，而是外挂 TI BQ27541
+ * （i2c_5 0x55），快充由 STM8S 单片机（i2c_5 0x26）经 VOOC 协议控制。
+ * 依据：4.19 的 oppo-msm8953/msm8953-mtp.dtsi:153-172。
+ *
+ * 所以 pmi8950.dtsi 里的 qpnp_fg 只作为兜底（部分批次可能启用），
+ * 真正的 SOC 由 bq27541 提供。
+ */
+&i2c_5 {
+	status = "okay";
+
+	bq27541_battery: bq27541-battery@55 {
+		status = "okay";
+		compatible = "oppo,bq27541-battery";
+		reg = <0x55>;
+		qcom,modify-soc-smooth;
+	};
+
+	stm8s_vooc: stm8s-vooc@26 {
+		status = "okay";
+		compatible = "oppo,stm8s-vooc";
+		reg = <0x26>;
+
+		switch-gpios = <&tlmm 50 GPIO_ACTIVE_HIGH>,
+			       <&tlmm 9  GPIO_ACTIVE_HIGH>;
+		reset-gpios  = <&tlmm 94 GPIO_ACTIVE_HIGH>;
+		clock-gpios  = <&tlmm 89 GPIO_ACTIVE_HIGH>;
+		data-gpios   = <&tlmm 90 GPIO_ACTIVE_HIGH>;
+	};
+};
