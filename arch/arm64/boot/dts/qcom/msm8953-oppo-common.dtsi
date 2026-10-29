@@ -102,13 +102,33 @@
 			no-map;
 		};
 
-		ramoops@ef000000 {
+		/*
+		 * ramoops 地址必须与设备 bootloader 实际保留的区域一致。
+		 *
+		 * 实测（4.9 LineageOS 内核启动日志）：
+		 *     ramoops: attached 0x800000@0xb0000000, ecc: 0/0
+		 * 即基址 0xb0000000、总长 8 MiB。
+		 *
+		 * 我一开始写的 0xef000000 / 0x80000 是错的 —— 那是我按
+		 * msm8953-mainline 的假设填的，设备上根本不在那里。结果是内核
+		 * panic 时 pstore 写到一个没人读的地方，重启后 /sys/fs/pstore
+		 * 永远是空的，等于**没有任何崩溃日志可查**。
+		 *
+		 * 分区布局沿用 4.9 的分配（console 占大头，因为 panic 时最需要
+		 * 的就是 dmesg）：
+		 *     console 0x400000 (4 MiB)
+		 *     pmsg    0x100000 (1 MiB)
+		 *     record  0x300000 (3 MiB)
+		 */
+		 ramoops@b0000000 {
 			compatible = "ramoops";
-			reg = <0x0 0xef000000 0x0 0x80000>;
-			console-size = <0x40000>;
+			reg = <0x0 0xb0000000 0x0 0x800000>;
+			console-size = <0x400000>;
 			ftrace-size = <0>;
-			record-size = <0x3f800>;
-			pmsg-size = <0x800>;
+			record-size = <0x300000>;
+			pmsg-size = <0x100000>;
+			ecc-size = <0>;
+			no-map;
 		};
 	};
 
