@@ -81,7 +81,12 @@ jobs:
           done
 
           echo "--- 充电/电量计（必须 =y）："
-          for sym in QPNP_SMBCHARGER QPNP_FG QPNP_REVID OF_BATTERYDATA; do
+          # OPPO 自己的电量计/VOOC：R9s 不用 qpnp-fg 的 SOC，而是外挂
+          # BQ27541(i2c_5 0x55) + STM8S VOOC(0x26)，这两个必须内置，
+          # 否则 battery/charger 设备起不来（health HAL 会拿不到电量）。
+          for sym in QPNP_SMBCHARGER QPNP_FG QPNP_REVID OF_BATTERYDATA \
+                     BATTERY_GAUGE_OPPO_BQ27541 CHARGER_OPPO_VOOC \
+                     OPPO_DEVICE_INFO; do
             v="$(grep -E "^CONFIG_${sym}=" .config | head -1)"
             case "$v" in
               "CONFIG_${sym}=y") echo "  OK   $v" ;;
