@@ -1786,3 +1786,21 @@ CONFIG_PSTORE_RAM=y
 CONFIG_PSTORE_CONSOLE=y
 CONFIG_PSTORE_PMSG=y
 CONFIG_PSTORE_DEFLATE_COMPRESS=y
+
+# ---- 虚拟地址宽度：Cortex-A53 只支持 39-bit VA ----
+#
+# ACK 默认给 arm64 选的是 ARM64_VA_BITS=52 + PGTABLE_LEVELS=5，
+# 那是给 ARMv8.2+（带 LPA 扩展）的核用的。
+# MSM8953/MSM8937 是 Cortex-A53，属于 ARMv8.0，**最大 39-bit VA**。
+#
+# 用 52-bit 的后果：内核在启动极早期（head.S 建页表阶段）就会
+# 因为用了硬件不认识的页表级别而挂死 —— 表现正是"卡在一屏不动、
+# 连 dmesg 都没有"，和刷机后看到的现象完全一致。
+#
+# 4.9 Lineage 内核的启动日志可以反证这一点：
+#     vmalloc : 0xffffff8008000000 - 0xffffffbebfff0000   (250 GB)
+# 这个结束地址是典型 39-bit VA 布局，不是 48/52-bit。
+#
+# 所以这里必须显式钉死 39-bit / 4 级页表。
+CONFIG_ARM64_VA_BITS_39=y
+CONFIG_PGTABLE_LEVELS=4

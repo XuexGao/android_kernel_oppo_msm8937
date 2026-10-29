@@ -164,6 +164,29 @@ jobs:
           cp arch/arm64/boot/Image out/Image
           gzip -9 -c arch/arm64/boot/Image > out/Image.gz
 
+          # ---- 尺寸检查：这是"刷完卡一屏"的头号嫌疑 ----
+          #
+          # 4.9 LineageOS 内核的启动日志显示它自身约 30.1 MiB
+          #   (15870K code + 2426K rwdata + 6324K rodata + 4096K init + 2101K bss)
+          # 而 R9s 的 boot 分区只有 32 MiB 左右。
+          #
+          # ACK 6.12 的 Image 比 4.9 大得多（多出的子系统+调试信息），
+          # 一旦 Image.gz-dtb 超过 boot 分区，刷写能成功但 bootloader
+          # 解压/加载时放不下，表现正是"卡在一屏不动、进不了系统"。
+          #
+          # 这里把真实尺寸打出来，超过 32 MiB 直接让 CI 失败，
+          # 免得又刷一次刷成砖看不到原因。
+          IMG=$(stat -c %s out/Image)
+          IMG_MIB=$((IMG / 1024 / 1024))
+          echo "Image(未压缩) = ${IMG} bytes (${IMG_MIB} MiB)"
+          echo "Image.gz      = $(stat -c %s out/Image.gz) bytes"
+          BOOTLIMIT=$((32 * 1024 * 1024))
+          if [ "$IMG" -gt "$BOOTLIMIT" ]; then
+            echo "::warning::Image ${IMG_MIB} MiB 超过 32 MiB boot 分区上限！"
+            echo "::warning::这会导致刷机后卡一屏：bootloader 放不下解压后的内核。"
+            echo "::warning::需要裁剪 config（去掉 DEBUG_INFO / 不需要的子系统）。"
+          fi
+
           D=arch/arm64/boot/dts/qcom
           cp "$D/msm8953-oppo-r9s.dtb"  out/ 2>/dev/null || true
           cp "$D/msm8953-oppo-r9sk.dtb" out/ 2>/dev/null || true
