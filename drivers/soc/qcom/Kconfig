@@ -319,3 +319,10 @@ config QCOM_SCM_LEGACY
 	help
 	  The downstream SCM interface (scm_call2 / struct scm_desc) that
 	  6.x's qcom_scm does not provide. Required by KGSL. Ported from 4.19.
+
+config QCOM_QTEE_SHM_BRIDGE
+	bool "QSEE/QTEE shared-memory bridge"
+	depends on ARCH_QCOM
+	help
+	  Shared memory bridge between the kernel and QTEE. Required by
+	  the legacy SCM interface (scm_call2). Ported from 4.19.

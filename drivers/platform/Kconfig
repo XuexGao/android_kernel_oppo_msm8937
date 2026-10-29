@@ -19,3 +19,4 @@ source "drivers/platform/x86/Kconfig"
 
 source "drivers/platform/arm64/Kconfig"
 source "drivers/platform/msm/Kconfig"
+source "drivers/platform/oppo/Kconfig"

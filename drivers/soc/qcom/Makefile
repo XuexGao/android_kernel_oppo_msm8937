@@ -41,3 +41,4 @@ obj-$(CONFIG_QCOM_INLINE_CRYPTO_ENGINE)	+= qcom_ice.o
 obj-$(CONFIG_QCOM_PBS) +=	qcom-pbs.o
 obj-$(CONFIG_QCOM_BUS_SCALING) += msm_bus/
 obj-$(CONFIG_QCOM_SCM_LEGACY) += scm.o
+obj-$(CONFIG_QCOM_QTEE_SHM_BRIDGE) += qtee_shmbridge.o

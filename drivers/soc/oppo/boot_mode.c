@@ -11,6 +11,10 @@
  * GNU General Public License for more details.
  */
 
+/* 6.12 的 asm/setup.h 依赖 __initdata/__ro_after_init，
+ * 所以 <linux/init.h> 必须排在它之前。 */
+#include <linux/init.h>
+#include <linux/cache.h>	/* __ro_after_init */
 #include <asm/setup.h>
 
 #include <linux/export.h>

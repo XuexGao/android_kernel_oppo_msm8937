@@ -103,12 +103,11 @@ static int device_proc_open(struct inode *inode,struct file *file)
 	return ret;
 }
 
-static const struct file_operations device_node_fops = {
-	.read =  seq_read,
-	.llseek = seq_lseek,
-	.release = seq_release,
-	.open = device_proc_open,
-	.owner = THIS_MODULE,
+static const struct proc_ops device_node_fops = {
+	.proc_read =  seq_read,
+	.proc_lseek = seq_lseek,
+	.proc_release = seq_release,
+	.proc_open = device_proc_open,
 };
 
 int register_device_proc(char *name, char *version, char *manufacture)
@@ -651,9 +650,8 @@ static ssize_t mainboard_resource_read_proc(struct file *file, char __user *buf,
 	return (len < count ? len : count);
 }
 
-struct file_operations mainboard_res_proc_fops = {
-	.read = mainboard_resource_read_proc,
-	.write = NULL,
+struct proc_ops mainboard_res_proc_fops = {
+	.proc_read = mainboard_resource_read_proc,
 };
 
 
@@ -696,10 +694,9 @@ static int devinfo_probe(struct platform_device *pdev)
 	pa_verify();
 }
 
-static int devinfo_remove(struct platform_device *dev)
+static void devinfo_remove(struct platform_device *dev)
 {
 	remove_proc_entry(DEVINFO_NAME, NULL);
-	return 0;
 }
 
 static struct platform_driver devinfo_platform_driver = {

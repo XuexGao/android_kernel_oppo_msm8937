@@ -79,8 +79,8 @@ static ssize_t prjVersion_read_proc(struct file *file, char __user *buf,
 	return (len < count ? len : count);
 }
 
-struct file_operations prjVersion_proc_fops = {
-	.read = prjVersion_read_proc,
+struct proc_ops prjVersion_proc_fops = {
+	.proc_read = prjVersion_read_proc,
 };
 
 static ssize_t pcbVersion_read_proc(struct file *file, char __user *buf, 
@@ -102,8 +102,8 @@ static ssize_t pcbVersion_read_proc(struct file *file, char __user *buf,
 	return (len < count ? len : count);
 }
 
-struct file_operations pcbVersion_proc_fops = {
-	.read = pcbVersion_read_proc,
+struct proc_ops pcbVersion_proc_fops = {
+	.proc_read = pcbVersion_read_proc,
 };
 
 static ssize_t operatorName_read_proc(struct file *file, char __user *buf, 
@@ -125,8 +125,8 @@ static ssize_t operatorName_read_proc(struct file *file, char __user *buf,
 	return (len < count ? len : count);
 }
 
-struct file_operations operatorName_proc_fops = {
-	.read = operatorName_read_proc,
+struct proc_ops operatorName_proc_fops = {
+	.proc_read = operatorName_read_proc,
 };
 
 static ssize_t modemType_read_proc(struct file *file, char __user *buf, 
@@ -150,8 +150,8 @@ static ssize_t modemType_read_proc(struct file *file, char __user *buf,
 
 }
 
-struct file_operations modemType_proc_fops = {
-	.read = modemType_read_proc,
+struct proc_ops modemType_proc_fops = {
+	.proc_read = modemType_read_proc,
 };
 
 static ssize_t secureType_read_proc(struct file *file, char __user *buf, 
@@ -182,8 +182,8 @@ static ssize_t secureType_read_proc(struct file *file, char __user *buf,
 }
 
 
-struct file_operations secureType_proc_fops = {
-	.read = secureType_read_proc,
+struct proc_ops secureType_proc_fops = {
+	.proc_read = secureType_read_proc,
 };
 
 #define QFPROM_RAW_SERIAL_NUM 0x000a0128
@@ -210,8 +210,8 @@ static ssize_t serialID_read_proc(struct file *file, char __user *buf,
 	return (len < count ? len : count);
 }
 
-struct file_operations serialID_proc_fops = {
-	.read = serialID_read_proc,
+struct proc_ops serialID_proc_fops = {
+	.proc_read = serialID_read_proc,
 };
 
 char btb_cmdline[32] = {0};
@@ -269,8 +269,8 @@ static ssize_t lbc_read_proc(struct file *file, char __user *buf,
 
 }
 
-struct file_operations lbc_proc_fops = {
-	.read = lbc_read_proc,
+struct proc_ops lbc_proc_fops = {
+	.proc_read = lbc_read_proc,
 };
 
 static int __init oppo_project_init(void)
