@@ -219,6 +219,22 @@ jobs:
           IMG=$(stat -c %s out/Image)
           IMG_MIB=$((IMG / 1024 / 1024))
           echo "Image(未压缩) = ${IMG} bytes (${IMG_MIB} MiB)"
+
+          # ---- Image header 检查 ----
+          #
+          # CAF(ABL/lk) 沿用的是 4.x 的约定：Image 的 text_offset 字段
+          # 应为 0x80000（512KB）。而 mainline 从 v4.2 起把这个字段
+          # 置 0（表示位置无关），实际偏移由链路时的 _text 决定。
+          #
+          # 如果 ABL 硬编码读 text_offset 来决定加载地址，那么 0 会让它
+          # 把内核装到内存起始处，入口点就错位了 —— 表现正是
+          # "卡在 ABL 画的那屏 logo、内核一行日志都没有"。
+          #
+          # 这里把 header 关键字段打出来，用肉眼比对。
+          #
+          # 用一行 python3，避免 YAML 块里多行代码的缩进问题。
+          python3 -c 'import struct;d=open("out/Image","rb").read(64);c0,c1=struct.unpack("<II",d[0:8]);to,isz,fl=struct.unpack("<QQQ",d[8:32]);mg=struct.unpack("<I",d[56:60])[0];print("  header.code0       = 0x%08x"%c0);print("  header.text_offset = 0x%x"%to);print("  header.image_size  = 0x%x (%.1f MiB)"%(isz,isz/1048576));print("  header.flags       = 0x%x"%fl);print("  header.magic       = 0x%08x"%mg)'
+
           echo "Image.gz      = $(stat -c %s out/Image.gz) bytes"
           BOOTLIMIT=$((32 * 1024 * 1024))
           if [ "$IMG" -gt "$BOOTLIMIT" ]; then
