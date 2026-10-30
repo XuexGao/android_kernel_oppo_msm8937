@@ -1,4 +1,4 @@
-name: "6.12 Android OPPO MSM8953"
+name: Build 6.12 Kernel
 
 # 这个 workflow 构建的是 **真正的 Android 内核**：
 #   · 基线：Android Common Kernel (ACK) android16-6.12 —— Linux 6.12.52
@@ -32,6 +32,11 @@ on:
         options:
           - normal
           - diag
+      publish_release:
+        description: '是否发布到 GitHub Releases'
+        required: false
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -44,6 +49,10 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 150
+    outputs:
+      krel: ${{ steps.meta.outputs.krel }}
+      date: ${{ steps.meta.outputs.date }}
+      variant: ${{ steps.meta.outputs.variant }}
 
     steps:
       - name: 检出源码
@@ -59,7 +68,7 @@ jobs:
             build-essential bc bison flex \
             gcc-aarch64-linux-gnu \
             libssl-dev libelf-dev \
-            device-tree-compiler \
+            device-tree-compiler ccache \
             python3 rsync cpio kmod zstd zip
 
       - name: 工具链版本
@@ -67,6 +76,23 @@ jobs:
           set -euo pipefail
           aarch64-linux-gnu-gcc --version | head -1
           make --version | head -1
+          ccache --version | head -1
+
+      # ccache 缓存：内核全量编译很慢，二次构建能省一大半时间。
+      # restore-keys 让不同 commit 之间也能复用大部分目标文件
+      # （只有改动的文件会重编）。
+      #
+      # 注意 key 里带 variant：诊断内核是另一套 config，
+      # 和正常内核的目标文件不能混用，否则 ccache 命中率会误导。
+      - name: CCache 缓存
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: kernel612-${{ inputs.variant || 'normal' }}-${{ github.ref_name }}
+          restore-keys: |
+            kernel612-${{ inputs.variant || 'normal' }}-${{ github.ref_name }}-
+            kernel612-${{ inputs.variant || 'normal' }}-
+            kernel612-
+          max-size: 2G
 
       - name: 配置内核
         run: |
@@ -208,8 +234,19 @@ jobs:
           # 这个报错来自实测 pstore 日志，不是推测。
           #
           # 4.9 / 4.19 分支都用 make Image.gz-dtb，且真机验证可启动。
-          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+          # 用 ccache 包装 gcc：CC="ccache aarch64-linux-gnu-gcc"
+          # 与 CROSS_COMPILE 一起给出，内核的 cc-option 探测才能正常走。
+          export KBUILD_BUILD_USER="XuexGao"
+          export KBUILD_BUILD_HOST="localhost"
+          export KBUILD_BUILD_TIMESTAMP="$(date -u +'%a %d %b %Y %H:%M:%S UTC')"
+          make ARCH=arm64 \
+            CC="ccache aarch64-linux-gnu-gcc" \
+            CROSS_COMPILE=aarch64-linux-gnu- \
             -j"$(nproc)" Image.gz-dtb dtbs 2>&1 | tee build.log
+
+          echo "::group::CCache 统计"
+          ccache -s || true
+          echo "::endgroup::"
 
       # 反编译 dtb 做静态自检：显示链路/面板/偏压必须真的进了 dtb，
       # 否则一旦有人把 status 改回 disabled 或删了面板节点，CI 会直接失败，
@@ -334,6 +371,19 @@ jobs:
           fi
           ci/mkflashable.sh out "r9s-android-6.12${SUF}-${KREL}-$(date +%Y%m%d).zip"
 
+      - name: 输出构建信息
+        id: meta
+        run: |
+          set -euo pipefail
+          KREL="$(make -s ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- kernelrelease)"
+          echo "krel=${KREL}" >> "$GITHUB_OUTPUT"
+          echo "date=$(date +%Y%m%d)" >> "$GITHUB_OUTPUT"
+          if [ "${CFG}" = "msm8953-oppo-diag_defconfig" ]; then
+            echo "variant=diag" >> "$GITHUB_OUTPUT"
+          else
+            echo "variant=normal" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: 上传产物
         uses: actions/upload-artifact@v4
         with:
@@ -348,3 +398,48 @@ jobs:
           name: "android-6.12-buildlog-${{ github.sha }}"
           path: build.log
           if-no-files-found: ignore
+
+  # ---------------------------------------------------------------------------
+  # 发布：手动触发且勾选 publish_release 时才跑
+  #
+  # 标题格式与 4.9 / 4.19 分支保持一致：
+  #     "6.12 Kernel"                       （纯净版）
+  #     "6.12 Kernel SukiSU"                （带 SukiSU）
+  #     "6.12 Kernel BakaSU"                （带 BakaSU）
+  # 本分支目前只有纯净版；diag 变体带后缀以便区分。
+  # ---------------------------------------------------------------------------
+  release:
+    name: Create GitHub Release
+    needs: [build]
+    if: inputs.publish_release && !cancelled()
+    runs-on: ubuntu-latest
+    env:
+      BUILD_DATE: ${{ needs.build.outputs.date }}
+      KREL: ${{ needs.build.outputs.krel }}
+      VARIANT: ${{ needs.build.outputs.variant }}
+    steps:
+      - name: 下载产物
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: 列出产物
+        run: find dist -type f | sort
+
+      - name: 发布 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: 6.12_${{ env.BUILD_DATE }}
+          name: "6.12 Kernel ${{ env.KREL }} ${{ env.BUILD_DATE }}"
+          body: |
+            > **6.12 Kernel**（ACK android16-6.12 基线）
+            >
+            > 分支：`${{ github.ref_name }}`　变体：`${{ env.VARIANT }}`
+            > 内核版本：`${{ env.KREL }}`
+            >
+            > ⚠️ **bring-up 阶段**：显示/触摸/USB/存储/充电/电量计/音频已移植，
+            > 但**尚未在任何真机上验证通过**。GPU(KGSL)、外放(TFA98XX)、相机
+            > 仍未接入。刷机前务必备份 boot 分区。
+          files: dist/**/*.zip
+          fail_on_unmatched_files: false
+          draft: true
