@@ -193,8 +193,23 @@ jobs:
       - name: 编译内核与设备树
         run: |
           set -euo pipefail
+          # 关键：用 Image.gz-dtb，而不是 Image + dtbs 再手工拼。
+          #
+          # CAF 的 ABL/lk 不是从 x0 拿一份 DTB，而是在 Image.gz-dtb
+          # 这个「gzip 流 + 若干 dtb」的拼接体里，按 root 节点的
+          # qcom,msm-id / qcom,board-id 自己挑匹配的那份。
+          #
+          # 之前我用 `cat Image.gz <单个dtb>` 手工拼，ABL 认不出来，
+          # 就退回了它内置的 CAF DTB —— 那是 4.9 时代的节点名
+          # （modem_region@0 / wake-gic@601d4 / venus_region@0），
+          # 和 mainline 6.12 的驱动树完全对不上，于是
+          # arch_timer 拿不到中断、外设全废。
+          #
+          # 这个报错来自实测 pstore 日志，不是推测。
+          #
+          # 4.9 / 4.19 分支都用 make Image.gz-dtb，且真机验证可启动。
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
-            -j"$(nproc)" Image dtbs 2>&1 | tee build.log
+            -j"$(nproc)" Image.gz-dtb dtbs 2>&1 | tee build.log
 
       # 反编译 dtb 做静态自检：显示链路/面板/偏压必须真的进了 dtb，
       # 否则一旦有人把 status 改回 disabled 或删了面板节点，CI 会直接失败，
@@ -284,16 +299,10 @@ jobs:
             echo "::warning::需要裁剪 config（去掉 DEBUG_INFO / 不需要的子系统）。"
           fi
 
-          D=arch/arm64/boot/dts/qcom
-          cp "$D/msm8953-oppo-r9s.dtb"  out/ 2>/dev/null || true
-          cp "$D/msm8953-oppo-r9sk.dtb" out/ 2>/dev/null || true
-
-          # CAF ABL 认 Image.gz + 追加 DTB
-          for dtb in out/msm8953-oppo-*.dtb; do
-            [ -f "$dtb" ] || continue
-            base="$(basename "$dtb" .dtb)"
-            cat out/Image.gz "$dtb" > "out/${base}-Image.gz-dtb"
-          done
+          # 直接用内核 Makefile 产出的 Image.gz-dtb（内含全部 dtb）。
+          # 不要在这里手工 cat —— 见上面「编译内核与设备树」那步的注释。
+          cp arch/arm64/boot/Image.gz-dtb out/Image.gz-dtb
+          echo "Image.gz-dtb  = $(stat -c %s out/Image.gz-dtb) bytes"
 
           KREL="$(make -s ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- kernelrelease)"
           # 变体后缀：诊断内核产物的文件名带 -diag，避免和正常包混淆。

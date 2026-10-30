@@ -1,13 +1,33 @@
 #!/bin/bash
-# 把已编译的 Image.gz + dtb 打成 AnyKernel3 刷机包。
+# 把内核产出的 Image.gz-dtb 打成 AnyKernel3 刷机包。
 #
 # 用法（在仓库根目录）：
-#   ci/mkflashable.sh out/
+#   ci/mkflashable.sh out/ [zip名]
 #
-# 前置：out/ 里要有 Image.gz 与两个 OPPO dtb（由 CI 的「打包产物」步骤生成）。
+# 前置：out/ 里要有 Image.gz-dtb（由 CI 的 make Image.gz-dtb 产出）。
 #
-# 为什么用 AnyKernel3：它只替换 boot 分区里的内核+dtb，不动其它分区，
-# 刷坏了还能从原内核恢复 —— 对 bring-up 阶段风险最低的方案。
+# ---------------------------------------------------------------------------
+# 为什么直接吃 Image.gz-dtb，而不是自己拼 Image.gz + dtb
+# ---------------------------------------------------------------------------
+#
+# Qualcomm 的 bootloader（ABL/lk）不像 mainline 那样从 x0 拿一份 DTB。
+# 它在 Image.gz-dtb 这个「gzip 流 + 若干 dtb」的拼接体里，
+# 按每个 dtb 的 root 节点 qcom,msm-id / qcom,board-id 自己挑匹配的那份。
+#
+# 如果只给一个裸 Image.gz，或者手工 `cat Image.gz <某个dtb>`，
+# ABL 认不出来就退回它内置的 CAF DTB —— 那是 4.9 时代的节点名
+# （modem_region@0 / wake-gic@601d4 / venus_region@0），
+# 与 mainline 6.12 的驱动树完全对不上，实测 pstore 日志里是：
+#     arch_timer: No interrupt available, giving up
+#     Failed to initialize '/soc/timer@b120000': -22
+# 外设全废，最后 VFS 挂不上 rootfs 而 panic。
+#
+# 所以这里严格照 4.9 / 4.19 分支的做法：内核 Makefile 里
+#     $(obj)/Image.gz-dtb: $(obj)/Image.gz $(DTB_OBJS) FORCE
+#             $(call if_changed,cat)
+# 把 dts 目录下**所有** dtb 拼上去，打包脚本只负责搬运。
+# ---------------------------------------------------------------------------
+
 set -euo pipefail
 
 OUT="${1:-out}"
@@ -15,7 +35,11 @@ ZIP_NAME="${2:-}"
 
 # 转成绝对路径：下面会 cd 进 ak3-tpl，相对路径会失效
 OUT="$(cd "$OUT" && pwd)"
-[ -f "$OUT/Image.gz" ] || { echo "缺少 $OUT/Image.gz" >&2; exit 1; }
+[ -f "$OUT/Image.gz-dtb" ] || {
+  echo "缺少 $OUT/Image.gz-dtb" >&2
+  echo "请先 make ARCH=arm64 CROSS_COMPILE=... Image.gz-dtb dtbs" >&2
+  exit 1
+}
 
 # AnyKernel3 模板
 rm -rf ak3-tpl
@@ -24,69 +48,71 @@ cd ak3-tpl
 rm -f boot.img *.zip
 rm -rf .git
 
-# 注意：后面的 sed / cat / zip 全部留在 ak3-tpl 目录里做，
+# 注意：后面的操作全部留在 ak3-tpl 目录里做，
 # 别再 cd 回上层，否则 anykernel.sh 的相对路径会失效（之前踩过）。
-cp "$OUT/Image.gz" Image.gz
-cp "$OUT/msm8953-oppo-r9s.dtb"  . 2>/dev/null || true
-cp "$OUT/msm8953-oppo-r9sk.dtb" . 2>/dev/null || true
+cp "$OUT/Image.gz-dtb" Image.gz-dtb
 
-# 保险：必须已经在 ak3-tpl 里，否则会误改/误生成仓库根的 anykernel.sh
+# 保险：必须已经在 ak3-tpl 里
 [ -f anykernel.sh ] || { echo "不在 ak3-tpl 目录，anykernel.sh 不存在" >&2; exit 1; }
 
-# anykernel.sh：指向 boot 分区，关闭机型校验与模块安装
+# anykernel.sh：指向 boot 分区
+#
+# do.devicecheck=0：刷机时跑的内核（TWRP）里 ro.product.device 可能是
+#   twrp_* 或 lineage_*，跟我们的机型名对不上，开着会误拒。
+# do.modules=0    ：本内核全内置，不装独立模块。
+# do.systemless=0 ：不往 system 里塞东西。
 sed -i 's|^BLOCK=.*|BLOCK=/dev/block/bootdevice/by-name/boot;|' anykernel.sh
 sed -i 's|^do.devicecheck=.*|do.devicecheck=0;|'  anykernel.sh
 sed -i 's|^do.modules=.*|do.modules=0;|'        anykernel.sh
 sed -i 's|^do.systemless=.*|do.systemless=0;|'  anykernel.sh
 sed -i 's|^do.cleanup=.*|do.cleanup=1;|'        anykernel.sh
 
-# 机型选 dtb 的逻辑写成一个独立的 shell 片段，由 anykernel.sh 调用。
-# 不塞进 anykernel.sh 的 heredoc，避免和 CI 的 YAML 打架。
-cat > ak3-oppo-dtb.sh <<'AKD'
-# --- OPPO R9s / R9sk 自动选 dtb ---
-# 从当前运行内核的设备树读 board-id：
-#   <8 0 16017> → 0x3e91 → r9s (EA8064 AMOLED)
-#   <8 0 16027> → 0x3e9b → r9sk (JDI R63452，实机)
-# 读不到就默认 r9sk。
-AK_BOARD_ID="$(cat /proc/device-tree/qcom,board-id 2>/dev/null | tr -d '\0' | od -An -tx1 | tr -d ' \n')"
-case "$AK_BOARD_ID" in
-  *3e91*) AK_DTB=msm8953-oppo-r9s.dtb  ;;
-  *3e9b*) AK_DTB=msm8953-oppo-r9sk.dtb ;;
-  *)      AK_DTB=msm8953-oppo-r9sk.dtb ;;
-esac
-ui_print "  board-id=${AK_BOARD_ID:-unknown} -> $AK_DTB"
-cat Image.gz "$AK_DTB" > Image.gz-dtb
-AKD
+# ---------------------------------------------------------------------------
+# 自检：Image.gz-dtb 里必须真的含有 dtb
+#
+# 现在不再手工拼接，风险点变成了「内核 Makefile 的 cat 规则有没有生效」。
+# 如果没生效，Image.gz-dtb 就只是个 gzip 流，ABL 会退回内置 DTB，
+# 而这种情况**构建不会报错**，只有刷机才发现 —— 所以在这里拦。
+# 做法：扫整份数据找 FDT 魔数（大端 d00dfeed）。
+# ---------------------------------------------------------------------------
+python3 - <<'PYDTB'
+import sys, struct
 
-# 让 anykernel.sh 在 **dump_boot 之前** source 这个片段。
-#
-# 为什么不能简单 append 到文件末尾：AnyKernel3 模板的安装流程是
-#     line 41: dump_boot;
-#     line 59: write_boot;
-# 后续还有一堆 init_boot / vendor_kernel_boot 的**注释掉的**示例分支。
-# 直接把 source 追加到末尾，会落在 write_boot 之后 —— 那时 boot 分区
-# 早就写完了，Image.gz-dtb 根本没被拼出来，刷进去的内核不带 dtb。
-#
-# 正确做法：插到第一处 "dump_boot;" 之前，并把行尾注释去掉，
-# 保证它是**唯一生效**的 dump_boot（模板里其它 dump_boot 都在注释块内）。
-if ! grep -q 'ak3-oppo-dtb.sh' anykernel.sh; then
-  python3 - <<'PYINS'
-import re
-p = 'anykernel.sh'
-s = open(p).read()
-hook = '. ./ak3-oppo-dtb.sh\n'
-# 找到第一个非注释的 dump_boot;
-m = re.search(r'^dump_boot;', s, re.M)
-assert m, 'anykernel.sh 里找不到生效的 dump_boot;'
-s = s[:m.start()] + hook + s[m.start():]
-open(p, 'w').write(s)
-print('  已在 dump_boot 之前插入 source 钩子')
-PYINS
+fn = 'Image.gz-dtb'
+data = open(fn, 'rb').read()
+
+if data[:3] != b'\x1f\x8b\x08':
+    print('自检失败：Image.gz-dtb 开头不是 gzip 流', file=sys.stderr)
+    sys.exit(1)
+
+count = 0
+pos = 0
+offsets = []
+while True:
+    pos = data.find(b'\xd0\x0d\xfe\xed', pos)
+    if pos < 0:
+        break
+    offsets.append(pos)
+    count += 1
+    pos += 4
+
+if count == 0:
+    print('自检失败：Image.gz-dtb 里找不到任何 dtb（FDT 魔数 d00dfeed）', file=sys.stderr)
+    print('         说明内核 Makefile 的 Image.gz-dtb 规则没生效，', file=sys.stderr)
+    print('         或 dtbs 没编出来。刷进去 ABL 会退回它内置的 CAF DTB。', file=sys.stderr)
+    sys.exit(1)
+
+print(f'  自检通过：Image.gz-dtb 内含 {count} 个 dtb')
+for o in offsets:
+    totalsize = struct.unpack('>I', data[o + 4:o + 8])[0]
+    print(f'    dtb @0x{o:x}  totalsize={totalsize}')
+PYDTB
+
+if [ -z "$ZIP_NAME" ]; then
+  ZIP_NAME="r9s-android-6.12-$(date +%Y%m%d).zip"
 fi
 
-# 打包
-[ -n "$ZIP_NAME" ] || ZIP_NAME="r9s-android-6.12-$(date +%Y%m%d).zip"
-# 没有 zip 就退化用 python 打（CI 上装了 zip，本地可能没有）
+# 有 zip 就用，没有就退化用 python（CI 上装了 zip，本地可能没有）
 if command -v zip >/dev/null 2>&1; then
   zip -r9 "$OUT/$ZIP_NAME" . -x '*.git*' >/dev/null
 else
@@ -101,20 +127,6 @@ with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as z:
             z.write(p, os.path.relpath(p, '.'))
 PZ
 fi
-# 自检：包里的 anykernel.sh 必须把 source 钩子放在 dump_boot 之前，
-# 否则 dtb 拼接发生在写分区之后，刷进去的是不带 dtb 的裸内核。
-# 这类错误不会让构建失败，只有刷机才暴露 —— 所以在这里拦。
-HOOK_LINE=$(grep -nF '. ./ak3-oppo-dtb.sh' anykernel.sh | head -1 | cut -d: -f1)
-DUMP_LINE=$(grep -n '^dump_boot;' anykernel.sh | cut -d: -f1)
-if [ -z "$HOOK_LINE" ] || [ -z "$DUMP_LINE" ]; then
-  echo "自检失败：找不到 source 钩子或 dump_boot" >&2; exit 1
-fi
-if [ "$HOOK_LINE" -ge "$DUMP_LINE" ]; then
-  echo "自检失败：source 钩子(第 $HOOK_LINE 行) 不在 dump_boot(第 $DUMP_LINE 行) 之前" >&2
-  echo "        这样 Image.gz-dtb 会在写分区之后才生成，dtb 不会被刷进去" >&2
-  exit 1
-fi
-echo "  自检通过：source(第 $HOOK_LINE 行) 先于 dump_boot(第 $DUMP_LINE 行)"
 
-echo "打包完成: $OUT/$ZIP_NAME"
+echo "  打包完成: $OUT/$ZIP_NAME"
 ls -la "$OUT/$ZIP_NAME"
