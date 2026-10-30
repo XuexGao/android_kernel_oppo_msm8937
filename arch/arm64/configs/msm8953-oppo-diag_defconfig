@@ -71,3 +71,13 @@ CONFIG_EXT4_FS=y
 # CONFIG_WLAN is not set
 # CONFIG_BT is not set
 # CONFIG_EROFS_FS is not set
+
+# ---- Android 核心：binder 是 Android 用户态的基础，诊断内核也要 ----
+CONFIG_ANDROID_BINDER_IPC=y
+CONFIG_ANDROID_BINDERFS=y
+CONFIG_DMABUF_HEAPS=y
+CONFIG_DMABUF_HEAPS_SYSTEM=y
+
+# binder 依赖 NET（Kconfig 里 depends on NET），所以诊断内核也要 NET。
+CONFIG_NET=y
+CONFIG_UNIX=y

@@ -87,7 +87,9 @@ jobs:
           echo "CFG=${CFG}" >> "$GITHUB_ENV"
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- "$CFG"
           echo "--- Android 核心配置："
-          grep -E '^CONFIG_(ANDROID_BINDER_IPC|ANDROID_BINDERFS|ANDROID_VENDOR_HOOKS|DMABUF_HEAPS)=' .config
+          # 加 || true：诊断配置里可能只开部分 Android 项，
+          # 没有匹配时 grep 返回 1，配合 set -e 会直接杀掉 step。
+          grep -E '^CONFIG_(ANDROID_BINDER_IPC|ANDROID_BINDERFS|ANDROID_VENDOR_HOOKS|DMABUF_HEAPS)=' .config || true
 
           # ---- 架构级断言：错了就是"卡一屏、无任何日志" ----
           #
