@@ -30,14 +30,23 @@
 
 set -euo pipefail
 
+# 固定到仓库根目录执行：后面有 `rm -rf ak3-tpl`，
+# 如果在别的目录跑这个脚本，会误删当前目录下同名目录。
+cd "$(git rev-parse --show-toplevel)"
+
 OUT="${1:-out}"
 ZIP_NAME="${2:-}"
+
+if [ ! -d "$OUT" ]; then
+  echo "ERROR: 输出目录 '$OUT' 不存在" >&2
+  exit 1
+fi
 
 # 转成绝对路径：下面会 cd 进 ak3-tpl，相对路径会失效
 OUT="$(cd "$OUT" && pwd)"
 [ -f "$OUT/Image.gz-dtb" ] || {
-  echo "缺少 $OUT/Image.gz-dtb" >&2
-  echo "请先 make ARCH=arm64 CROSS_COMPILE=... Image.gz-dtb dtbs" >&2
+  echo "ERROR: 缺少 $OUT/Image.gz-dtb" >&2
+  echo "       请先 make ARCH=arm64 Image.gz-dtb" >&2
   exit 1
 }
 
@@ -66,6 +75,18 @@ sed -i 's|^do.devicecheck=.*|do.devicecheck=0;|'  anykernel.sh
 sed -i 's|^do.modules=.*|do.modules=0;|'        anykernel.sh
 sed -i 's|^do.systemless=.*|do.systemless=0;|'  anykernel.sh
 sed -i 's|^do.cleanup=.*|do.cleanup=1;|'        anykernel.sh
+
+# 校验：sed 没匹配上时会**静默不改**，包里的 anykernel.sh 就用上游默认值。
+# 上游若改了默认分区名，会刷错分区 —— 这种错只有刷机后才暴露，
+# 所以这里必须显式确认改成功了。
+for pat in 'BLOCK=/dev/block/bootdevice/by-name/boot;' \
+           'do.devicecheck=0;' 'do.modules=0;'; do
+  grep -qF "$pat" anykernel.sh || {
+    echo "ERROR: anykernel.sh 里没找到 '$pat'，sed 可能没匹配上" >&2
+    echo "       （AnyKernel3 上游改了变量格式？）" >&2
+    exit 1
+  }
+done
 
 # ---------------------------------------------------------------------------
 # 自检：Image.gz-dtb 里必须真的含有 dtb

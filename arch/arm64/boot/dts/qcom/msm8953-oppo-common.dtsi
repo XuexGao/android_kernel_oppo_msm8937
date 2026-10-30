@@ -228,14 +228,28 @@
 	status = "okay";
 };
 
-/* 背光：PMI8950 WLED，参数照抄 potter（同 PMIC、同 3 串） */
+/*
+ * PMI8950 WLED：**不启用**。
+ *
+ * R9s/R9sk 的实际背光是独立的 TI LM3697（i2c_2 0x36，见下面的节点），
+ * 两个面板驱动（panel-oppo-ea8064.c / panel-oppo-jdi-r63452.c）都
+ * 不引用 WLED backlight —— 它们的亮度是写死在面板初始化序列的
+ * 0x51/0x53 命令里，不导出 backlight 设备。
+ *
+ * 所以开这个只会白白 probe 一个没有 consumer 的 WLED 设备，
+ * 还会去申请 PMI8950 的 WLED 寄存器和 iommu 资源。
+ * 4.19 分支的 R9s/MTP 设备树里也完全没有 wled 相关配置（grep 为 0）。
+ *
+ * 参数本身是对的（照抄 motorola-potter，同 PMIC/同 3 串），
+ * 保留在这里是为了将来如果要用 PMI8950 的 WLED 做背光时能快速启用。
+ */
 &pmi8950_wled {
 	qcom,current-limit-microamp = <25000>;
 	qcom,num-strings = <3>;
 	qcom,external-pfet;
 	qcom,cabc;
 
-	status = "okay";
+	status = "disabled";
 };
 
 &rpm_requests {

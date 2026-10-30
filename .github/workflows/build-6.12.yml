@@ -303,6 +303,63 @@ jobs:
             fi
           done
 
+          # ---- 关键：断言主 DSI 链路的 status 不是 disabled ----
+          #
+          # 上面那些 check 只 grep compatible 字符串，
+          # 而 status="disabled" 的节点**照样会留在 dtb 里** ——
+          # 所以「DSI PHY 是 disabled」这类启动杀手完全查不出来。
+          # （真的踩过：mdss_dsi0_phy 忘开，dtb 自检 100% 通过，
+          #   刷上去黑屏，因为 of_platform_device_create_pdata() 对
+          #   disabled 节点直接返回 NULL → DSI 永远 probe 不上。）
+          #
+          # 注意必须按**节点路径**判断，不能按 compatible：
+          #   R9s 是单 DSI，phy@1a94400(dsi0) 必须 okay，
+          #   而 phy@1a96400(dsi1) 本来就该是 disabled，不能误报。
+          echo "=== 主 DSI 链路 status 必须为 okay ==="
+          for d in r9s r9sk; do
+            dts_tmp="$(mktemp)"
+            dtc -I dtb -O dts "$D/msm8953-oppo-$d.dtb" 2>/dev/null > "$dts_tmp"
+
+            python3 - "$dts_tmp" "$d" <<'PYSTAT' || fail=1
+          import re, sys
+          path, name = sys.argv[1], sys.argv[2]
+          txt = open(path).read()
+
+          # (节点名, 说明) —— 按 dtb 里的实际节点名匹配
+          must_okay = [
+              ('phy@1a94400',  'DSI0 PHY'),
+              ('dsi@1a94000',  'DSI0 控制器'),
+              ('panel@0',      '面板'),
+              ('display-controller@1a01000', 'MDP5'),
+          ]
+          bad = []
+          for node, label in must_okay:
+              # 抓该节点的完整块（用非贪婪匹配到下一个同级 }）
+              m = re.search(r'\b' + re.escape(node) + r' \{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', txt)
+              if not m:
+                  # 面板等节点可能带别的名字，跳过缺失的不算错
+                  continue
+              if 'status = "disabled"' in m.group(0):
+                  bad.append(label)
+          if bad:
+              print(f'  FAIL {name}: 仍是 disabled -> ' + ', '.join(bad))
+              sys.exit(1)
+          print(f'  OK   {name} 主 DSI 链路已启用')
+          PYSTAT
+
+            rm -f "$dts_tmp"
+          done
+
+          # ---- dtc 编译期 warning：graph 端点不成对 ----
+          echo "=== graph_endpoint 告警检查 ==="
+          for d in r9s r9sk; do
+            if dtc -I dtb -O dts "$D/msm8953-oppo-$d.dtb" 2>&1 >/dev/null | grep -q 'graph_endpoint'; then
+              echo "  FAIL $d 有 graph_endpoint 告警（面板链接不成对）"; fail=1
+            else
+              echo "  OK   $d 无 graph_endpoint 告警"
+            fi
+          done
+
           exit $fail
 
       - name: 打包产物
