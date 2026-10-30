@@ -83,9 +83,29 @@ include $(srctree)/drivers/firmware/efi/libstub/Makefile.zboot
 #
 # 这里照搬，DTB_OBJS 取 dts 目录下所有 .dtb（CAF 会自己按 board-id 选）。
 # -----------------------------------------------------------------------------
-DTB_OBJS := $(shell find $(obj)/dts/ -name \*.dtb 2>/dev/null)
+# 注意：不能用
+#     DTB_OBJS := $(shell find $(obj)/dts/ -name \*.dtb)
+# 因为 $(shell ...) 在 **Makefile 解析时**就求值了，
+# 那时 make 还没开始编 dtbs，目录里一个 .dtb 都没有
+# → DTB_OBJS 为空 → 只 cat 了个 Image.gz，
+# Image.gz-dtb 里一个 dtb 都没有，ABL 退回它内置的 DTB。
+#
+# （这个坑真踩过：CI 里 make Image.gz-dtb 成功退出、文件也生成了，
+#   但打包自检扫不到 FDT 魔数。）
+#
+# 所以改成在 recipe 里、**执行时**再 find，并显式依赖 dtbs 保证顺序。
+CAF_DTB_OBJS = $$(find $(obj)/dts/ -name '*.dtb' 2>/dev/null | sort)
 
 targets += Image.gz-dtb
 
-$(obj)/Image.gz-dtb: $(obj)/Image.gz $(DTB_OBJS) FORCE
-	$(call if_changed,cat)
+$(obj)/Image.gz-dtb: $(obj)/Image.gz dtbs FORCE
+	$(Q)set -e; \
+	cat $(obj)/Image.gz > $@.tmp; \
+	dtbs="$(CAF_DTB_OBJS)"; \
+	if [ -z "$$dtbs" ]; then \
+		echo "ERROR: $(obj)/dts/ 下没有 dtb，Image.gz-dtb 会缺 dtb" >&2; \
+		rm -f $@.tmp; exit 1; \
+	fi; \
+	for d in $$dtbs; do cat $$d >> $@.tmp; done; \
+	mv $@.tmp $@; \
+	echo "  Image.gz-dtb: Image.gz + $$(echo $$dtbs | wc -w) 个 dtb"
