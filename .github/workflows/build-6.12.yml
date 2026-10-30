@@ -131,7 +131,9 @@ jobs:
             *) echo "::error::必须用 4K 页，实际 '${v:-未设置}'"; exit 1 ;;
           esac
           echo "--- MSM8953 平台："
-          grep -E '^CONFIG_(MSM_GCC_8953|PINCTRL_MSM8953|MMC_SDHCI_MSM|USB_DWC3|QCOM_SMD_RPM)=' .config
+          # 同理加 || true：诊断内核没开 USB_DWC3，无匹配时 grep 返回 1，
+          # 配合 set -e 会直接把 step 杀掉。
+          grep -E '^CONFIG_(MSM_GCC_8953|PINCTRL_MSM8953|MMC_SDHCI_MSM|USB_DWC3|QCOM_SMD_RPM)=' .config || true
           # 充电/电量计也要内置：bring-up 阶段没有 init 去 modprobe，
           # 而且 Android 的 health HAL 依赖开机就有 battery/charger 设备。
           # 诊断内核刻意关掉了音频/充电/显示，这些栈断言只在正常配置下跑。
