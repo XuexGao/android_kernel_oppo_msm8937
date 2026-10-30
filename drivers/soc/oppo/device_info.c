@@ -679,12 +679,18 @@ static int devinfo_probe(struct platform_device *pdev)
 
 	pentry = proc_create("mainboard", S_IRUGO, NULL, &mainboard_res_proc_fops);
 	if (!pentry)
-		pr_err("create prjVersion proc failed.\n");
+		pr_err("create mainboard proc failed.\n");
 
-	return ret;
-
+	/*
+	 * 这两段原来写在 `return ret;` **之后**，属于死代码 ——
+	 * parent 目录永远不会创建，pa_verify() 也永远不会被调用。
+	 * （4.19 那份原始代码就是这样，直接继承下来的 bug。）
+	 *
+	 * 这里把它们挪到 return 之前，行为才符合原意：
+	 * 建 devinfo 目录 + 做 PA 校验。
+	 */
 	if (!parent) {
-		parent = proc_mkdir ("devinfo", NULL);
+		parent = proc_mkdir("devinfo", NULL);
 		if (!parent) {
 			pr_err("can't create devinfo proc\n");
 			ret = -ENOENT;
@@ -692,6 +698,8 @@ static int devinfo_probe(struct platform_device *pdev)
 	}
 
 	pa_verify();
+
+	return ret;
 }
 
 static void devinfo_remove(struct platform_device *dev)

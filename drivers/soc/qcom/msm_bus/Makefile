@@ -4,7 +4,7 @@
 #
 obj-y +=  msm_bus_core.o msm_bus_client_api.o
 obj-$(CONFIG_OF) += msm_bus_of.o
-obj-$(CONFIG_MSM_RPM_SMD) += msm_bus_rpm_smd.o
+obj-$(CONFIG_QCOM_SMD_RPM) += msm_bus_rpm_smd.o
 
 ifdef CONFIG_QCOM_BUS_CONFIG_RPMH
 	obj-y += msm_bus_fabric_rpmh.o msm_bus_arb_rpmh.o msm_bus_rules.o \

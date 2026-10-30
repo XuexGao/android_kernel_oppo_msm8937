@@ -17,6 +17,8 @@ endif # BATTERY_GAUGE_OPPO
 
 menuconfig CHARGER_OPPO_VOOC
 	bool "OPPO VOOC charging technology"
+	depends on BATTERY_GAUGE_OPPO
+	depends on I2C
 	help
 	  Support for OPPO VOOC charging technology.
 

@@ -292,7 +292,7 @@ int msm_bus_get_num_fab(void);
 int msm_bus_hw_fab_init(struct msm_bus_fabric_registration *pdata,
 	struct msm_bus_hw_algorithm *hw_algo);
 void msm_bus_board_init(struct msm_bus_fabric_registration *pdata);
-#if defined(CONFIG_MSM_RPM_SMD)
+#if defined(CONFIG_QCOM_SMD_RPM)
 int msm_bus_rpm_hw_init(struct msm_bus_fabric_registration *pdata,
 	struct msm_bus_hw_algorithm *hw_algo);
 int msm_bus_remote_hw_commit(struct msm_bus_fabric_registration

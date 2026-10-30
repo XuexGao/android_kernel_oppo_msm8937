@@ -1251,11 +1251,6 @@ const char * const vmstat_text[] = {
 	"nr_written",
 	"nr_throttled_written",
 	"nr_kernel_misc_reclaimable",
-	/* QCOM 私有 node stats（见 include/linux/mmzone.h 的追加项）*/
-	"nr_unreclaimable_pages",
-	"nr_ion_heap",
-	"nr_ion_heap_pool",
-	"nr_gpu_heap",
 	"nr_foll_pin_acquired",
 	"nr_foll_pin_released",
 	"nr_kernel_stack",
@@ -1277,6 +1272,22 @@ const char * const vmstat_text[] = {
 	"pgdemote_kswapd",
 	"pgdemote_direct",
 	"pgdemote_khugepaged",
+	/*
+	 * QCOM 私有 node stats。
+	 *
+	 * 必须放在**这里**（node_stat 段的最末尾、enum 里
+	 * NR_VM_NODE_STAT_ITEMS 之前），不能插在 Nr_kernel_misc_reclaimable
+	 * 后面 —— vmstat_text[] 是按索引和 enum node_stat_item 一一对应的
+	 * （vmstat_show() 用 vmstat_text[off] 直接取），插在中间会让后面
+	 * 所有字段名整体错位（实测：nr_foll_pin_acquired 会显示成
+	 * nr_unreclaimable_pages）。
+	 *
+	 * 顺序与 include/linux/mmzone.h 的追加顺序严格一致。
+	 */
+	"nr_unreclaimable_pages",
+	"nr_ion_heap",
+	"nr_ion_heap_pool",
+	"nr_gpu_heap",
 	/* system-wide enum vm_stat_item counters */
 	"nr_dirty_threshold",
 	"nr_dirty_background_threshold",

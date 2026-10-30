@@ -1189,8 +1189,22 @@ static void bq27541_driver_remove(struct i2c_client *client)
 		udelay(66);
 		bq27541_cntl_cmd(bq27541_di->cmd_addr.subcmd_disable_it);
 		cancel_delayed_work_sync(&bq27541_di->hw_config);
+
+		/*
+		 * 释放驱动私有数据，并清空全局指针。
+		 *
+		 * 原来这里什么都没做：bq27541_di 和 bq27541_new_client 一直
+		 * 指向已经 devm 释放的内存。而 hw_config 工作队列、sysfs
+		 * 回调、以及 fg_oppo_unregister() 之后仍可能被调到的路径
+		 * 都会解引用这两个全局指针 —— 典型 UAF。
+		 *
+		 * （i2c client 本身是 devm 管理的，不需要 kfree；
+		 *   私有结构 bq27541_di 是 kzalloc 出来的，必须手动释放。）
+		 */
+		kfree(bq27541_di);
+		bq27541_di = NULL;
 	}
-	/* void 函数无返回值（6.11+） */
+	bq27541_new_client = NULL;
 }
 
 /*

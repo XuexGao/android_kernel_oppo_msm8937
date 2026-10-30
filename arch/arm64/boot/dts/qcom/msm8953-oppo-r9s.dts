@@ -48,3 +48,26 @@
 		};
 	};
 };
+
+/*
+ * 面板 graph 必须**双向**连接。
+ *
+ * msm8953.dtsi 里 mdss_dsi0 的 port@1/endpoint 是空的（没有
+ * remote-endpoint），而这里的 panel_in 指向它 —— 单向链接。
+ *
+ * 后果：devm_drm_of_get_bridge() → drm_of_find_panel_or_bridge()
+ * → of_graph_get_remote_node(np, 1, 0) 读不到 remote-endpoint
+ * 就返回 NULL，最终 -ENODEV；dsi_bind() 直接失败 →
+ * component bind 失败 → **DSI 起不来、屏幕不亮**。
+ *
+ * dtc 其实会报 warning：
+ *   Warning (graph_endpoint): graph connection to node
+ *   '.../dsi@1a94000/ports/port@1/endpoint' is not bidirectional
+ *
+ * 上游所有用 panel 的板子都写了双向（对照 msm8916-samsung-a3u-eur.dts）。
+ * R63452 / EA8064 都是 4 lane。
+ */
+&mdss_dsi0_out {
+	remote-endpoint = <&panel_in>;
+	data-lanes = <0 1 2 3>;
+};

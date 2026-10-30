@@ -300,7 +300,14 @@ endmenu
 config QCOM_BUS_SCALING
 	bool "QCOM bus scaling driver"
 	depends on ARCH_QCOM
-	select MSM_RPM_SMD
+	# MSM8953 是 RPM-SMD 平台（不是 RPMh）。这里不能写
+	# `select MSM_RPM_SMD` —— 6.12 树里根本没有这个符号，
+	# 那样 msm_bus_rpm_smd.c 永远编不进去，
+	# msm_bus_rpm_hw_init()/msm_bus_remote_hw_commit()/
+	# msm_bus_rpm_fill_cdata_buffer() 全部退化成 inline 空实现，
+	# 运行时所有 bus scaling 调用都变成空操作（KGSL/display 都受影响）。
+	# 直接复用 6.12 已有的 QCOM_SMD_RPM。
+	select QCOM_SMD_RPM
 	help
 	  Qualcomm bus-scaling framework (msm_bus_scale_* API). Required by
 	  KGSL and several other downstream drivers. Ported from 4.19.

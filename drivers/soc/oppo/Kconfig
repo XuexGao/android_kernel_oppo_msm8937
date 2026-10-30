@@ -1,9 +1,80 @@
-menu "OPPO specific options"
+# ---------------------------------------------------------------------------
+# OPPO 板级与设备信息
+#
+# 6.12 适配说明（与 4.19 的关键差异）：
+#
+#   4.19 的 arch/arm64/Kconfig.platforms 里有 ARCH_MSM8953 / ARCH_MSM8937 /
+#   ARCH_SDM450 这些具体 SoC 符号，所以 MACH_OPPO 可以 depends on 它们。
+#
+#   **6.12 mainline 没有这些符号** —— 它统一用 ARCH_QCOM 覆盖全部高通
+#   平台，各子系统（clk / pinctrl / interconnect / mmc …）都是独立的
+#   Kconfig 符号（MSM_GCC_8953、PINCTRL_MSM8953），不按 SoC 门控。
+#   所以这里把依赖改成 ARCH_QCOM（本仓库只服务 MSM8953/A57，不会误伤）。
+#
+# 关于 MSM8940（A57 / 16061）：它是 MSM8937 的同 die SKU，硬件完全一致，
+# 4.9 的 oppo-msm8937/msm8940.dtsi 也只是覆盖 msm-id(313) 和少量 USB 配置。
+# 所以 16061 直接挂在同一个 MACH_OPPO_MSM8937 下，不单独引入符号。
+#
+# 注意：这些符号原来放在 drivers/platform/oppo/Kconfig，但那个目录
+# **只有 Kconfig 没有 Makefile**，drivers/platform/Makefile 也没有
+# `obj-+=\ oppo/`，等于菜单纯摆设。MACH_* 本质上描述的是"板级/SoC 选型"，
+# 不是"platform driver"，放在 drivers/soc/oppo/ 语义更对，也避免了
+# 一个空壳目录。
+# ---------------------------------------------------------------------------
+
+config MACH_OPPO
+	bool "OPPO device"
+	depends on ARCH_QCOM
+	help
+	  Support for OPPO products.
+
+config MACH_OPPO_MSM8953
+	bool "OPPO MSM8953"
+	depends on ARCH_QCOM
+	select MACH_OPPO
+	help
+	  Support for MSM8953 OPPO variants
+
+config MACH_OPPO_MSM8937
+	bool "OPPO MSM8937/MSM8940"
+	depends on ARCH_QCOM
+	select MACH_OPPO
+	help
+	  Support for MSM8937 / MSM8940 (A57, 16061) OPPO variants
+
+menu "OPPO board selection"
+
+config MACH_16017
+	bool "R9s board"
+	depends on ARCH_QCOM
+	select MACH_OPPO_MSM8953
+	help
+	  Support for R9s variants
+
+config MACH_16027
+	bool "R9sk board"
+	depends on ARCH_QCOM
+	select MACH_OPPO_MSM8953
+	help
+	  Support for R9sk variants
+
+config MACH_16061
+	bool "A57 board"
+	depends on ARCH_QCOM
+	select MACH_OPPO_MSM8937
+	help
+	  Support for A57 (MSM8940 / PMI8950) variants.
+	  板级 DTS 见 arch/arm64/boot/dts/qcom/msm8953-oppo-*.dts
+	  （6.12 分支没有 vendor/qcom 那一套，A57 的 DTS 尚未移植）。
+
+endmenu
 
 config OPPO_DEVICE_INFO
 	bool "OPPO device info driver"
 	default y if MACH_OPPO
 	help
-	  Say Y to enable OPPO device info driver
+	  Say Y to enable OPPO device info driver.
 
-endmenu
+	  Provides register_device_proc() —— oppo_bq27541 等驱动会调用它，
+	  不开的话链接期报 undefined reference。
+	  procfs 接口：/proc/devinfo/{mainboard,prjVersion,pcbVersion,...}

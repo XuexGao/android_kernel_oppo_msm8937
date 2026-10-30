@@ -59,8 +59,15 @@
 	gpio-keys {
 		compatible = "gpio-keys";
 
+		/*
+		 * 注意：msm8953.dtsi 里 gpio_key_default 只配了 gpio85
+		 * （音量上）。音量下是 gpio86，必须单独配一份 pinctrl，
+		 * 否则 gpio86 保持默认状态（可能是 disable/no-pull），
+		 * 按键读不到稳定的电平 —— 表现为音量下键时好时坏
+		 * 或完全没反应。
+		 */
 		pinctrl-names = "default";
-		pinctrl-0 = <&gpio_key_default>;
+		pinctrl-0 = <&gpio_key_default>, <&gpio_key_down_default>;
 
 		key-volume-up {
 			label = "Volume Up";
@@ -442,6 +449,43 @@
 };
 
 /*
+ * DSI PHY 必须显式打开。
+ *
+ * msm8953.dtsi 里 phy@1a94400 默认是 status = "disabled"，
+ * 而 mdss_dsi0 的 phys = <&mdss_dsi0_phy> 指向它。
+ *
+ * 后果链（很隐蔽，因为节点仍在 dtb 里、CI 的 compatible 自检照样通过）：
+ *   1. of_platform_device_create_pdata() 对 status="disabled" 的节点直接返回
+ *      NULL → DSI PHY 的 platform_device 根本不存在
+ *   2. dsi_get_phy() 里 of_find_device_by_node() 拿到 NULL
+ *      → 返回 -EPROBE_DEFER
+ *   3. dsi_dev_probe() 只放行 -ENODEV，-EPROBE_DEFER 原样返回
+ *      → msm_dsi 永远 probe 不上
+ *   4. mdp5 的 component master 等不到 DSI → 整个 DRM 不 probe
+ *      → **屏幕永远不亮**（且本分支已移除 simpledrm，没有兜底）
+ *
+ * 所以这里必须打开。
+ */
+/*
+ * 音量下键（gpio86）的 pinctrl。
+ *
+ * msm8953.dtsi 的 gpio_key_default 只覆盖 gpio85，gpio86 没有配置，
+ * 所以这里补一份。参数与 gpio85 保持一致（drive 2mA / pull-up）。
+ */
+&tlmm {
+	gpio_key_down_default: gpio-key-down-default-state {
+		pins = "gpio86";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-up;
+	};
+};
+
+&mdss_dsi0_phy {
+	status = "okay";
+};
+
+/*
  * 背光：TI LM3697 @ i2c_2 0x36，enable GPIO 46
  *
  * 参数来自本仓库 4.19 的 oppo-msm8953/16027/msm8953-mtp.dtsi：
@@ -511,23 +555,6 @@
 
 / {
 	/*
-	 * 耳机 DAC：AK4376 @ i2c_8 0x10
-	 *
-	 * 参数取自 4.19 的 oppo-msm8953/msm8953-mtp.dtsi:178：
-	 *   ak4376,pdn-gpio = <&tlmm 28>
-	 *   enable-gpio    = <&tlmm 62>
-	 */
-	ak4376: audio-codec@10 {
-		compatible = "akm,ak4376";
-		reg = <0x10>;
-
-		ak4376,pdn-gpio = <&tlmm 28 GPIO_ACTIVE_LOW>;
-		enable-gpios = <&tlmm 62 GPIO_ACTIVE_HIGH>;
-
-		#sound-dai-cells = <0>;
-	};
-
-	/*
 	 * 声卡节点。所有 dai link 都写在这里，machine driver 通过
 	 * qcom_snd_parse_of() 自动解析 —— 加/改链路不需要动 C 代码。
 	 *
@@ -593,6 +620,31 @@
  */
 &i2c_8 {
 	status = "okay";
+
+	/*
+	 * 耳机 DAC：AK4376 @ i2c_8 0x10（BLSP2 QUP4）
+	 *
+	 * 注意：**必须是 i2c_8 的子节点**，不能挂在根节点下。
+	 * 挂根节点的话：
+	 *   · ak4376_i2c_probe() 永远不会被调用（i2c 驱动只 probe 总线上的
+	 *     子节点），声卡的 sound-dai = <&ak4376> 拿不到 component
+	 *     → snd_soc_register_card() 返回 -EPROBE_DEFER → 整张声卡注册失败
+	 *   · 而且根节点 #address-cells/#size-cells 是 <2>/<2>，
+	 *     reg = <0x10> 只有 1 个 cell，dtc 会报 reg_format 长度不匹配
+	 *
+	 * 参数取自 4.19 的 oppo-msm8953/msm8953-mtp.dtsi:178：
+	 *   ak4376,pdn-gpio = <&tlmm 28>
+	 *   enable-gpio    = <&tlmm 62>
+	 */
+	ak4376: audio-codec@10 {
+		compatible = "akm,ak4376";
+		reg = <0x10>;
+
+		ak4376,pdn-gpio = <&tlmm 28 GPIO_ACTIVE_LOW>;
+		enable-gpios = <&tlmm 62 GPIO_ACTIVE_HIGH>;
+
+		#sound-dai-cells = <0>;
+	};
 };
 
 /*

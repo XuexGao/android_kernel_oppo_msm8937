@@ -1,11 +1,23 @@
 # 6.12-test 分支代码审查报告
 
-审查对象：`6.12-test` 分支（HEAD = `899ff4533`）
-审查方式：纯只读 + 静态分析。用 `git archive 6.12-test` 取出一份干净的树到 `/tmp/rev`
-（审查期间工作区被另一个并发任务 `git checkout` 切走了，直接读工作区不可靠），
-再用 `cpp` + `scripts/dtc/dtc` 对 DTS 做了实际编译/反编译，用 `python3` 解析了
-`mmzone.h` / `vmstat.c` / `power_supply.h` 的枚举与数组顺序，用真实
-`scripts/Makefile.build` 复现了 kbuild 规则解析。
+审查对象：`6.12-test` 分支
+- 起点：`899ff4533`（审查开始时的 HEAD）
+- 基准：`4485f2e4a`（审查结束时的 HEAD；期间作者推了 4 个提交）
+- 另核对了工作区**未提交**的修改（见下方「基准与现状」）
+
+> **说明**：本文件在 `c48646b27` 里已被作者提交过一版（那是本报告的草稿）。
+> 你现在看到的是**最终版**，工作区里对它的修改尚未 commit。
+
+审查方式：纯只读 + 静态分析。因工作区被另一个并发任务反复 `git checkout`，
+我用 `git archive` 把树取到 `/tmp/rev`（起点）和 `/tmp/head`（基准）后审查，
+避免读到半切换状态的代码。手段包括：
+
+- `cpp` + `scripts/dtc/dtc` 实际编译 / 反编译两个机型 DTS，手算地址区间
+- `python3` 逐项比对 `mmzone.h` 枚举 ↔ `vmstat.c` 的 `vmstat_text[]`
+- `python3` 重算 `power_supply.h` 枚举 ↔ `power_supply_attrs[]` 的索引覆盖
+- 用**真实** `scripts/Makefile.build` + `arch/arm64/boot/Makefile`
+  在 `/tmp/kbt` 复现 kbuild 规则解析（验证 A-1）
+- `git grep` / `git ls-tree` 对 1826 个 Kconfig、20705 个符号做全量差集
 
 **没有运行 `make`，没有修改任何源码。** 唯一的写入是本文件。
 
@@ -13,92 +25,174 @@
 
 ## 摘要
 
-| 严重程度 | 条目数 | 关键项 |
-|---|---|---|
-| A. 会导致编译/构建失败 | 4 | `Image.gz-dtb` 规则缺 `dtbs` 目标（**已实测复现**）；`select MSM_RPM_SMD` 指向不存在的符号；`drivers/platform/oppo` 未纳入构建 |
-| B. 会导致启动失败 | 5（+1 条「已确认无问题」） | DSI PHY 仍 `disabled`（屏永远不亮）；面板 graph 端点不成对；AK4376 节点挂错总线 |
-| C. 会导致功能异常 | 11 | `PSTORE_DEFLATE_COMPRESS` / `QCOM_RPMCC` / `USB_CONFIGFS_F_ADB` 等符号不存在；`gpio-keys` 缺 down 键 pinctrl；`device_info` 死代码；`bq27541` UAF |
-| D. 代码质量问题 | 16（+1 条「已排除」） | **`power_supply_attrs[]` 越界读致 panic**；**`vmstat_text[]` 顺序错位 4 项**；`ci/targets` 垃圾文件等 |
+| 严重程度 | 条目数 | HEAD 里仍存在的 | 关键项 |
+|---|---|---|---|
+| A. 编译/构建失败 | 4 | 3 | **A-2 `select MSM_RPM_SMD` 只改了 defconfig，根因三处未动**；A-3 `drivers/platform/oppo` 未纳入构建；A-4 `Image.gz-dtb` 未进 `BOOT_TARGETS` |
+| B. 启动失败 | 5（+1 无问题） | 3 | **B-1 DSI PHY `disabled`（屏永远不亮）**；**B-2 graph 端点不成对**；**B-3 AK4376 挂错总线** |
+| C. 功能异常 | 11 | 8 | C-4 `device_info` 死代码；C-6 `oppo_vooc_get_allow_reading()` 恒 true；C-7 `bq27541` remove 后 UAF；C-9 `gpio-keys` 缺 down 键 pinctrl |
+| D. 代码质量 | 17（+1 已排除） | 15 | **D-1 `vmstat_text[]` 错位**；**D-2 `power_supply_attrs[]` 越界读**；D-12b 新引入的重复 defconfig 行；`ci/targets` 垃圾文件 |
 
-**最需要注意的两条**：
+> **「HEAD 里仍存在」这一列的读法**：有些条目在工作区已经被改好，
+> 但**没有 commit**。CI 拉的是 HEAD，所以**这些修复对 CI 无效**。
+> 详见下方「基准与现状」。
 
-1. **A-1**：`arch/arm64/boot/Makefile:101` 的
-   `$(obj)/Image.gz-dtb: $(obj)/Image.gz dtbs FORCE` 在 kbuild 子 make 上下文里
-   `dtbs` **没有对应规则**，会直接 `No rule to make target 'dtbs'`。
-   已用真实 `scripts/Makefile.build` 复现。
+> **基准与现状**：本报告以 `6.12-test` 的 **HEAD `4485f2e4a`** 为基准
+> （审查开始时是 `899ff4533`，期间作者推了 4 个提交，主要是修
+> `Image.gz-dtb` 的 `dtbs` 依赖 —— 见 A-1）。
+>
+> **重要 · 工作区有大量未提交修复**：
+> 审查过程中作者（或另一个并发任务）在工作区改了下列文件，把本报告的
+> **B-1 / B-2 / B-3 / C-1 / C-2 / C-3 / D-1 / D-2 / D-12** 都修了：
+>
+> | 文件 | 修了哪条 |
+> |---|---|
+> | `arch/arm64/boot/dts/qcom/msm8953-oppo-common.dtsi` | B-1（加 `&mdss_dsi0_phy { status = "okay"; }`）、B-3（AK4376 搬进 `&i2c_8`） |
+> | `arch/arm64/boot/dts/qcom/msm8953-oppo-r9s.dts` / `r9sk.dts` | B-2（加 `&mdss_dsi0_out { remote-endpoint = <&panel_in>; data-lanes = <0 1 2 3>; }`） |
+> | `mm/vmstat.c` | D-1（QCOM 4 项挪到 node_stat 段末尾） |
+> | `drivers/power/supply/power_supply_sysfs.c` | D-2（补 147 个属性到 `power_supply_attrs[]`） |
+> | `msm8953-oppo_defconfig` / `diag_defconfig` | C-1（`PSTORE_COMPRESS`）、C-2（`ANDROID_USB_CONFIGFS_UEVENT`）、C-3/D-12（`QCOM_SMD_RPM`） |
+>
+> **但 A-2 只改了一半**：defconfig 改对了，`drivers/soc/qcom/Kconfig`
+> 的 `select MSM_RPM_SMD`、`msm_bus/Makefile` 的
+> `obj-$(CONFIG_MSM_RPM_SMD)`、`msm_bus_core.h` 的
+> `#if defined(CONFIG_MSM_RPM_SMD)` **三处根因一处都没动** ——
+> 所以 `msm_bus_rpm_smd.o` 仍然永远不会被编译，bus scaling 仍然全废。
+>
+> 另外修 D-12 时顺手在 `diag_defconfig:41-42` 引入了
+> **一行重复的 `CONFIG_QCOM_CLK_SMD_RPM=y`**（见新增的 D-12b）。
+>
+> 我都逐一验证过：**这些修复本身是对的**（用 HEAD 源码重新编译 DTB
+> 对比、重新跑枚举/字符串比对脚本、重新算 `power_supply_attrs[]` 索引）。
+>
+> **但这些修改都还没 commit** —— 也就是说**已提交的 HEAD 里，
+> 上述问题全部仍然存在**。请务必 commit + push，否则 CI 跑的还是坏代码。
+>
+> 另外 D-2 的修复还漏了一条 `POWER_SUPPLY_PROP_USBIF_VENDOR_ID`（idx 75），
+> 详见 D-2 正文。
+
+**最需要注意的四条**：
+
+1. **B-1 / B-2 / B-3（三个致命 DTS 问题）**：
+   - B-1：`&mdss_dsi0` 打开了但 **`&mdss_dsi0_phy` 仍是
+     `status = "disabled"`**（`msm8953.dtsi:977`）→ dsi 驱动
+     `of_find_device_by_node()` 拿不到 phy → `-EPROBE_DEFER`
+     → DSI 永不 probe → **屏幕永远不亮**
+   - B-2：面板 `panel_in` 指向 `mdss_dsi0_out`，但后者**没有反向
+     `remote-endpoint`** → `drm_of_find_panel_or_bridge()` 返回
+     `-ENODEV` → `dsi_bind()` 失败 → **同样屏不亮**
+   - B-3：**AK4376 挂在根节点下而不是 `&i2c_8` 下** →
+     `ak4376_i2c_probe()` 永不调用 → 声卡 `-EPROBE_DEFER` → **没声音**
+
+   这三条**工作区里都已经改好了**，但**还没 commit**。
+   另外 CI 的 DTB 自检只 grep compatible，`status="disabled"`
+   的节点照样在 dtb 里，**完全查不出 B-1**。
 2. **D-2**：`power_supply_attrs[]` 只有 78 项，而 `qpnp-smbcharger.c:5672`
    把 `POWER_SUPPLY_PROP_REAL_TYPE`（idx **82**）放进了 `properties[]`
    → `add_prop_uevent()` 数组越界读 → **开机 uevent 就 panic**。
+3. **A-2（只修了一半，最容易漏）**：两个 defconfig 已经从
+   `CONFIG_MSM_RPM_SMD=y` 改成 `CONFIG_QCOM_SMD_RPM=y`，看起来"修了"，
+   但 **`drivers/soc/qcom/Kconfig:303` 的 `select MSM_RPM_SMD`、
+   `msm_bus/Makefile:7` 的 `obj-$(CONFIG_MSM_RPM_SMD)`、
+   `msm_bus_core.h:295` 的 `#if defined(CONFIG_MSM_RPM_SMD)`
+   三处根因一处都没改**。结果 `msm_bus_rpm_smd.o` 依然永远不编译，
+   `msm_bus_rpm_hw_init()` 等仍是空 inline → **bus scaling 依然全废**。
+4. **D-1**：`vmstat_text[]` 从 idx 39 起整体错位 4 项 → `/proc/vmstat`
+   所有数字张冠李戴（不 panic，但排查内存问题时会被彻底误导）。
 
 ---
 
 # A. 会导致编译/构建失败
 
-## A-1【致命】`arch/arm64/boot/Makefile:101` — `dtbs` 依赖在子 make 里无规则
+## A-1【已修复（审查期间）】`arch/arm64/boot/Makefile` — `dtbs` 依赖在子 make 里无规则
 
-**位置**：`arch/arm64/boot/Makefile:96-111`（`CAF_DTB_OBJS` 定义与规则）
+> **状态更新**：这一条在我审查期间被作者自己修掉了
+> （commit `4224b2bc0` "fix(boot): Image.gz-dtb 不能依赖顶层目标 dtbs" →
+> `c48646b27` "去掉不存在的依赖目标，改为显式先 dtbs 再 Image.gz-dtb"）。
+> 保留记录是因为**它验证了本报告 A-1 的判断是对的**，而且修法值得说明。
 
-```
- 96: CAF_DTB_OBJS = $$(find $(obj)/dts/ -name '*.dtb' 2>/dev/null | sort)
- 98: targets += Image.gz-dtb
-100:
+**审查时的状态（commit `899ff4533`）**：
+
+```make
 101: $(obj)/Image.gz-dtb: $(obj)/Image.gz dtbs FORCE
-102: 	$(Q)set -e; \
 ```
 
-**问题**：`arch/arm64/boot/Makefile` 是被 `scripts/Makefile.build` 在**子 make** 里
-`include` 的（`$(Q)$(MAKE) $(build)=$(boot) $(boot)/$@`）。在这个子 make 的上下文里：
+**问题**：`arch/arm64/boot/Makefile` 被 `scripts/Makefile.build` 在**子 make**
+里 `include`（`$(Q)$(MAKE) $(build)=$(boot) $(boot)/$@`）。在这个上下文里：
 
-- `dtbs` 不是 `.PHONY`（`Makefile.build` 的 `PHONY` 只包含 `$(obj)/`、
+- `dtbs` 不是 `.PHONY`（`Makefile.build` 的 `PHONY` 只有 `$(obj)/`、
   `$(subdir-ym)`、`FORCE`、`$(single-subdir-goals)`）；
-- 也没有任何一条规则定义 `dtbs`（`scripts/Makefile.dtbs` 里只有
-  `$(obj)/dtbs-list` / `$(obj)/%.dtb` 等，没有裸 `dtbs`）；
-- 顶层 `Makefile:1462` 的 `dtbs:` 规则只存在于**顶层 make**，不会传到子 make。
+- `scripts/Makefile.dtbs` 里只有 `$(obj)/dtbs-list` / `$(obj)/%.dtb`，
+  **没有裸 `dtbs`**；
+- 顶层 `Makefile:1462` 的 `dtbs:` 只存在于**顶层 make**，不传到子 make。
 
 我用真实的 `scripts/Makefile.build` + 真实的 `arch/arm64/boot/Makefile`
 在 `/tmp/kbt` 里复现了：
 
 ```
-$ make -f .../scripts/Makefile.build ... /tmp/kbt/obj/arch/arm64/boot/Image.gz-dtb
 make: *** No rule to make target 'dtbs', needed by
-        '/tmp/kbt/obj/arch/arm64/boot/Image.gz-dtb'.  Stop.
+        '.../arch/arm64/boot/Image.gz-dtb'.  Stop.
 ```
 
-**这会让 CI 的「编译内核与设备树」这一步直接失败。**
+**为什么会踩**：4.9/4.19 看起来也用 `dtbs`，但 4.19 的
+`Image.gz-dtb: vmlinux scripts dtbs Image.gz` 这条规则写在
+**`arch/arm64/Makefile`（顶层上下文）**里（4.19 的同名文件 :177），
+子 make 只负责最后的 `cat`。本分支把两者合并到 boot/Makefile，
+就丢了 `dtbs` 的上下文。
 
-注意这里有个容易被误判的地方：4.9/4.19 的 `Image.gz-dtb` 规则看起来也是
-`$(obj)/Image.gz $(DTB_OBJS) FORCE`，但 4.19 的 `dtbs` 目标是在
-**`arch/arm64/Makefile`（顶层上下文）** 里定义的，并且
-`Image.gz-dtb: vmlinux scripts dtbs Image.gz` 这条规则也在**顶层**
-（见 4.19 `arch/arm64/Makefile:168-178`），子 make 只负责最后的 `cat`。
-本分支把两者合并到 boot/Makefile 里，就丢了 `dtbs` 的上下文。
+**现在的修法（已生效，且我认为是对的）**：从 prerequisites 去掉 `dtbs`，
+改成在 CI 里**显式分两次 make**：
 
-**建议修法**（任选其一，推荐第 1 种）：
+```yaml
+# .github/workflows/build-6.12.yml:242-260
+# 顺序很重要：**先 dtbs，再 Image.gz-dtb**
+make ... -j"$(nproc)" dtbs
+make ... -j"$(nproc)" Image.gz-dtb
+```
 
-1. **在 boot/Makefile 里显式声明 `dtbs` 为空目标**，让子 make 有规则可用：
-   ```make
-   PHONY += dtbs
-   dtbs:
-   	$(Q)$(MAKE) $(build)=$(obj)/dts need-dtbslist=1
-   ```
-2. **把 `dtbs` 依赖移到顶层 `arch/arm64/Makefile`**，照 4.19 的写法：
-   ```make
-   # arch/arm64/Makefile
-   Image.gz-dtb: vmlinux dtbs Image.gz
-   	$(Q)$(MAKE) $(build)=$(boot) $(boot)/$@
-   ```
-   然后 boot/Makefile 里去掉 `dtbs` 只留 `$(obj)/Image.gz`。
-3. 最省事的兜底：把 `dtbs` 从 prerequisites 删掉，改成在 recipe 里
-   `$(MAKE) -C $(srctree) ARCH=$(ARCH) ... dtbs`（不推荐，容易递归）。
+并在 boot/Makefile 的 recipe 里做**运行时 find + 空列表报错**：
 
-同时 `targets += Image.gz-dtb` 之后，`$(call if_changed,cat)` 用的是
-`.Image.gz-dtb.cmd` 记录命令行；改成裸 shell recipe 后这个 cmd 文件不会更新，
-增量构建时**每次都会重跑**（不算错，但如果想保持 kbuild 风格，应该用
-`$(call if_changed,cat)` + 在 recipe 里先算好 DTB 列表）。
+```make
+DTB_OBJS := $(shell find $(obj)/dts/ -name \*.dtb 2>/dev/null)
+CAF_DTB_OBJS = $$(find $(obj)/dts/ -name '*.dtb' 2>/dev/null | sort)
+$(obj)/Image.gz-dtb: $(obj)/Image.gz $(DTB_OBJS) FORCE
+	$(Q)set -e; \
+	dtbs="$(CAF_DTB_OBJS)"; \
+	if [ -z "$$dtbs" ]; then echo "ERROR: 没有 dtb" >&2; rm -f $@.tmp; exit 1; fi; \
+	...
+```
+
+**这个修法有效的关键**是「先 `make dtbs`，再 `make Image.gz-dtb`」+ 空列表
+硬失败 —— 前者保证 `$(shell find)` 解析期能拿到 dtb，后者兜住
+"忘了先编 dtbs"的情况（不会再静默产出无 dtb 的坏文件）。
+
+**残留的小问题（建议后续处理）**：
+
+1. **`Image.gz-dtb` 没进 `BOOT_TARGETS`**（`arch/arm64/Makefile:171` 是
+   `Image vmlinuz.efi image.fit`），也没进
+   `arch/arm64/boot/.gitignore`（只有 `Image` / `Image.gz`）。
+   所以 `make clean` 不会删它，`git status` 会看到它。见 A-4。
+2. `targets += Image.gz-dtb` 用的是裸 shell recipe 而不是
+   `$(call if_changed,cat)`，`.Image.gz-dtb.cmd` 不会更新 →
+   增量构建时这条规则**每次都会重跑**（每次都重新 cat 一遍，
+   耗时但不影响正确性）。
+3. 依赖「CI 里分两次 make」这个**流程约定**，而不是 Makefile 内部保证。
+   如果有人在本地直接 `make Image.gz-dtb` 而没先 `make dtbs`，
+   会得到那条 `ERROR: ... 没有 dtb` 报错（至少不会静默出错，可以接受）。
 
 ---
 
-## A-2【致命】`drivers/soc/qcom/Kconfig:303` — `select MSM_RPM_SMD` 指向不存在的符号
+## A-2【致命 / 只修了一半】`drivers/soc/qcom/Kconfig:303` — `select MSM_RPM_SMD` 指向不存在的符号
+
+> **状态**：工作区已经把两个 defconfig 里的
+> `CONFIG_MSM_RPM_SMD=y` 改成了 `CONFIG_QCOM_SMD_RPM=y`（这是必要的，
+> 但**不够**）。**根因还在**：`drivers/soc/qcom/Kconfig:303` 的
+> `select MSM_RPM_SMD`、`drivers/soc/qcom/msm_bus/Makefile:7` 的
+> `obj-$(CONFIG_MSM_RPM_SMD)`、`msm_bus_core.h:295` 的
+> `#if defined(CONFIG_MSM_RPM_SMD)` **三处一处都没改**。
+>
+> 后果：`msm_bus_rpm_smd.o` **仍然永远不会被编译**，
+> `msm_bus_rpm_hw_init()` 等三个函数仍是空 inline，
+> bus scaling 依旧全废。这三处必须一起改成 `CONFIG_QCOM_SMD_RPM`。
 
 **位置**：`drivers/soc/qcom/Kconfig:299-310`（`config QCOM_BUS_SCALING`）
 
@@ -230,7 +324,12 @@ BOOT_TARGETS := Image Image.gz-dtb vmlinuz.efi image.fit
 
 # B. 会导致启动失败
 
-## B-1【致命】`msm8953-oppo-common.dtsi:435-442` — DSI PHY 仍为 `disabled`，DSI 无法 probe
+## B-1【致命 / 工作区已有未提交修复】`msm8953-oppo-common.dtsi` — DSI PHY 仍为 `disabled`，DSI 无法 probe
+
+> **状态**：在 **HEAD `4485f2e4a`** 里这个问题**依然存在**（我用 HEAD 的
+> 源码重新编译 DTB 确认：`phy@1a94400 { status = "disabled"; }`）。
+> 但**工作区里有未提交的修改**已经把它修好了（新增
+> `&mdss_dsi0_phy { status = "okay"; }`）。**记得 commit。**
 
 **位置**：`arch/arm64/boot/dts/qcom/msm8953-oppo-common.dtsi:427-442`
 
@@ -296,7 +395,13 @@ phy@1a94400 {
 
 ---
 
-## B-2【致命】`msm8953-oppo-r9s.dts:44-48` / `r9sk.dts:40-44` — 面板 graph 端点不成对
+## B-2【致命 / 工作区已有未提交修复】`msm8953-oppo-r9s.dts` / `r9sk.dts` — 面板 graph 端点不成对
+
+> **状态**：HEAD `4485f2e4a` 里仍然存在（dtc 报
+> `Warning (graph_endpoint): ... is not bidirectional`）。
+> **工作区里已有未提交的修复**：两个机型 dts 都补了
+> `&mdss_dsi0_out { remote-endpoint = <&panel_in>; data-lanes = <0 1 2 3>; };`。
+> **记得 commit。**
 
 **位置**：
 - `arch/arm64/boot/dts/qcom/msm8953-oppo-r9s.dts:44-48`
@@ -379,7 +484,12 @@ R63452 是 4 lane，EA8064 也是 4 lane。）
 
 ---
 
-## B-3【致命】`msm8953-oppo-common.dtsi:512-528` — AK4376 挂在根节点下，不在 i2c_8 上
+## B-3【致命 / 工作区已有未提交修复】`msm8953-oppo-common.dtsi` — AK4376 挂在根节点下，不在 i2c_8 上
+
+> **状态**：HEAD `4485f2e4a` 里仍然存在（dtc 报
+> `reg_format: /audio-codec@10:reg: property has invalid length`，
+> 反编译确认节点在根节点下）。**工作区里已有未提交的修复**：
+> 整个 `ak4376` 节点已搬进 `&i2c_8`。**记得 commit。**
 
 **位置**：`arch/arm64/boot/dts/qcom/msm8953-oppo-common.dtsi:512-528`
 
@@ -589,7 +699,7 @@ record  0x300000 (3 MiB)
 
 # C. 会导致功能异常
 
-## C-1【高】`msm8953-oppo_defconfig:1788` 与 `diag_defconfig:27` — `PSTORE_DEFLATE_COMPRESS` 符号不存在
+## C-1【已修复（工作区）】`msm8953-oppo_defconfig` / `diag_defconfig` — `PSTORE_DEFLATE_COMPRESS` 符号不存在
 
 **位置**：
 - `arch/arm64/configs/msm8953-oppo_defconfig:1788`
@@ -631,7 +741,7 @@ CONFIG_PSTORE_COMPRESS=y
 
 ---
 
-## C-2【高】`msm8953-oppo_defconfig:1712` — `USB_CONFIGFS_UEVENT` 符号不存在
+## C-2【已修复（工作区）】`msm8953-oppo_defconfig` — `USB_CONFIGFS_UEVENT` 符号不存在
 
 **位置**：`arch/arm64/configs/msm8953-oppo_defconfig:1712`
 
@@ -658,7 +768,7 @@ CONFIG_ANDROID_USB_CONFIGFS_UEVENT=y
 
 ---
 
-## C-3【高】`msm8953-oppo_defconfig:1757` — `CONFIG_MSM_RPM_SMD=y` 不存在（见 A-2）
+## C-3【已改（工作区，但不完整）】`msm8953-oppo_defconfig` — `CONFIG_MSM_RPM_SMD=y` 不存在（见 A-2）
 
 **位置**：`arch/arm64/configs/msm8953-oppo_defconfig:1757`
 
@@ -1040,7 +1150,18 @@ defconfig:1699 已开）。
 
 # D. 代码质量问题
 
-## D-1【高】`mm/vmstat.c:1256-1259` — QCOM 私有 node stats 插在 `nr_kernel_misc_reclaimable` 之后，但枚举里它们在**末尾**
+## D-1【高 / 工作区已有未提交修复】`mm/vmstat.c` — QCOM 私有 node stats 位置与枚举不一致
+
+> **状态**：HEAD `4485f2e4a` 里**存在**这个问题（4 个 QCOM 字符串插在
+> `nr_kernel_misc_reclaimable` 之后，导致 idx 39 起整体错位 4 项）。
+> **工作区里已有未提交的修复**：4 个字符串已挪到
+> `pgdemote_khugepaged` 之后、`nr_dirty_threshold` 之前。
+>
+> 我重新跑了一遍枚举/字符串逐项比对脚本，确认修复后：
+> `NR_UNRECLAIMABLE_PAGES(48) / NR_ION_HEAP(49) / NR_ION_HEAP_POOL(50) /
+> NR_GPU_HEAP(51)` 全部落在正确索引，
+> `NR_FOLL_PIN_ACQUIRED(35) / NR_FOLL_PIN_RELEASED(36) /
+> PGDEMOTE_KHUGEPAGED(47)` 也都对上了。**记得 commit。**
 
 **位置**：
 - `include/linux/mmzone.h:253-256`（枚举定义）
@@ -1168,7 +1289,26 @@ defconfig:1699 已开）。
 
 ---
 
-## D-2【高】`include/linux/power_supply.h` — 追加了 148 个私有属性，但 `power_supply_attrs[]` 完全没注册
+## D-2【高 / 工作区已有未提交修复】`power_supply_attrs[]` — 私有属性未注册，导致越界读
+
+> **状态**：HEAD `4485f2e4a` 里**存在**：`power_supply_attrs[]` 只有
+> 76 个条目（覆盖 idx 0..77，其中 74/75/76 是
+> `SERIAL_NUMBER` / `USBIF_VENDOR_ID` / `USBIF_PRODUCT_ID`），
+> 而 `qpnp-smbcharger.c:5672` 用了
+> `POWER_SUPPLY_PROP_REAL_TYPE`（idx **82**）→ 越界。
+>
+> **工作区里已有未提交的修复**：`power_supply_sysfs.c` 新增了 173 行，
+> 把 147 个私有属性补进 `power_supply_attrs[]`。
+> 我重新校验：现在 223 个条目、最大索引 223（`CYCLE_COUNTS`）、
+> `ARRAY_SIZE = 224`，与枚举的 224 项对齐。
+> `REAL_TYPE(82)` 和 `CYCLE_COUNTS(223)` 都已覆盖。
+>
+> **唯一残留**：`POWER_SUPPLY_PROP_USBIF_VENDOR_ID`（idx **75**）
+> **仍然没有**注册 —— 数组里只有 `USBIF_PRODUCT_ID`。
+> 补上 `POWER_SUPPLY_ATTR(USBIF_VENDOR_ID),` 即可（在
+> `USBIF_PRODUCT_ID` 之前）。
+> 这个洞不会导致越界（因为 75 < 223 已被更大索引撑开），
+> 只是这条属性不可见。**记得 commit。**
 
 **位置**：
 - `include/linux/power_supply.h:196-350`（148 个 `POWER_SUPPLY_PROP_*`）
@@ -1479,7 +1619,7 @@ dtbfix-1793363110
 
 ---
 
-## D-9【中】`REVIEW-6.12.md` 里提到的 `FLASH-GUIDE.md` / `README-6.12-android.md` 与代码不一致
+## D-9【中】`README-6.12-android.md` / `FLASH-GUIDE.md` 与代码不一致
 
 **位置**：`README-6.12-android.md`（多个地方）
 
@@ -1778,9 +1918,9 @@ qcom-wled.yaml:49,119` 就是 boolean）。注释说"参数照抄 potter"，
 
 ---
 
-# 附录：D-12 ~ D-17（补充问题）
+# 附录：D-12 ~ D-17（补充问题，含审查尾期新发现）
 
-## D-12【高】`arch/arm64/configs/msm8953-oppo-diag_defconfig:42,91` — `QCOM_RPMCC` 与 `USB_CONFIGFS_F_ADB` 符号不存在
+## D-12【已修复（工作区）】`diag_defconfig` — `QCOM_RPMCC` 与 `USB_CONFIGFS_F_ADB` 符号不存在
 
 **位置**：
 - `arch/arm64/configs/msm8953-oppo-diag_defconfig:42` — `CONFIG_QCOM_RPMCC=y`
@@ -1806,6 +1946,26 @@ qcom-wled.yaml:49,119` 就是 boolean）。注释说"参数照抄 potter"，
 CONFIG_QCOM_CLK_SMD_RPM=y
 CONFIG_USB_CONFIGFS_F_FS=y
 ```
+
+## D-12b【中】`diag_defconfig:41-42` — 修 D-12 时引入了重复行
+
+**位置**：`arch/arm64/configs/msm8953-oppo-diag_defconfig:41-42`
+
+```
+41: CONFIG_QCOM_CLK_SMD_RPM=y
+42: CONFIG_QCOM_CLK_SMD_RPM=y      ← 重复
+```
+
+**问题**：修 D-12（把不存在的 `CONFIG_QCOM_RPMCC=y` 换掉）时，
+替换成了 `CONFIG_QCOM_CLK_SMD_RPM=y`，但**上一行本来就有这一条**，
+于是变成重复。kconfig 对重复项只是后者覆盖前者、不报错，
+所以**功能上无害**，但 `make savedefconfig` 会把它合并掉，
+导致 defconfig 与 `savedefconfig` 输出不一致（以后跑
+`savedefconfig` 会看到莫名 diff）。
+
+**建议修法**：删掉其中一行。
+
+---
 
 ## D-13【中】`drivers/power/supply/oppo/Kconfig` — `CHARGER_OPPO_VOOC` 缺 `depends on I2C`
 
@@ -1917,18 +2077,32 @@ VSP/VSN 都要）。不给的话面板可能能亮但**有闪烁/显示异常**�
 
 # 修复优先级建议
 
-1. **A-1**（`dtbs` 无规则）—— 不修 CI 就编不过。
-2. **A-2**（`MSM_RPM_SMD` 不存在）—— 不修 bus scaling 全废。
-3. **B-1**（DSI PHY disabled）—— 不修屏幕永远不亮。
-4. **B-3**（AK4376 挂错总线）—— 不修声卡注册不上。
-5. **B-2**（graph 端点不成对）—— 不修 DSI bind 失败。
-6. **D-2**（`power_supply_attrs[]` 只有 78 项，`qpnp-smbcharger` 已把
-   `POWER_SUPPLY_PROP_REAL_TYPE`（idx 82）放进 `properties[]`）——
-   不修开机读 uevent 就**数组越界 panic**。
-7. **D-1**（`vmstat_text[]` 顺序错位 4 项）—— 不修 `/proc/vmstat` 名字全错。
-8. **D-12**（诊断内核的 `QCOM_RPMCC` / `USB_CONFIGFS_F_ADB`）——
-   诊断内核拿不到时钟/没 adb，等于白做。
-9. 其余 C/D 类。
+**第 0 步（最重要）**：把工作区里那批**已改好但没 commit** 的修复
+commit + push。涉及：
+`msm8953-oppo-common.dtsi` / `msm8953-oppo-r9s.dts` /
+`msm8953-oppo-r9sk.dts` / `mm/vmstat.c` /
+`drivers/power/supply/power_supply_sysfs.c` /
+`msm8953-oppo_defconfig` / `msm8953-oppo-diag_defconfig`。
+否则下面讨论的都是"HEAD 里的旧代码"。
+
+然后按顺序：
+
+1. **A-2 根因**（`Kconfig:303` / `msm_bus/Makefile:7` /
+   `msm_bus_core.h:295` 三处 `MSM_RPM_SMD` → `QCOM_SMD_RPM`）——
+   defconfig 已经改了，但根因没动，bus scaling 仍然全废。
+2. **B-1**（DSI PHY disabled）—— 工作区已修，确认 commit 后复查。
+3. **B-3**（AK4376 挂错总线）—— 同上。
+4. **B-2**（graph 端点不成对）—— 同上。
+5. **A-3**（`drivers/platform/oppo` 未纳入构建）—— 不修那几个
+   Kconfig 菜单是摆设。
+6. **D-2 残留**（补 `POWER_SUPPLY_PROP_USBIF_VENDOR_ID`，idx 75）。
+7. **D-12b**（`diag_defconfig:41-42` 重复行）—— 一行的事。
+8. **CI 的 DTB 自检加强**：现在只 grep compatible，查不出
+   `status="disabled"`。建议反编译后断言
+   `dsi@1a94000` / `phy@1a94400` / `panel@0` 的 `status != "disabled"`，
+   并且断言 `graph_endpoint` 没有 bidirectional 告警。
+9. 其余 C/D 类（`device_info` 死代码、`bq27541` UAF、
+   `gpio-keys` pinctrl、`ci/targets` 等）。
 
 ---
 
