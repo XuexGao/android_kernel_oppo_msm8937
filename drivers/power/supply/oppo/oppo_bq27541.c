@@ -1193,7 +1193,7 @@ static void bq27541_driver_remove(struct i2c_client *client)
 		/*
 		 * 释放驱动私有数据，并清空全局指针。
 		 *
-		 * 原来这里什么都没做：bq27541_di 和 bq27541_new_client 一直
+		 * 原来这里什么都没做：bq27541_di 和 new_client 一直
 		 * 指向已经 devm 释放的内存。而 hw_config 工作队列、sysfs
 		 * 回调、以及 fg_oppo_unregister() 之后仍可能被调到的路径
 		 * 都会解引用这两个全局指针 —— 典型 UAF。
@@ -1204,7 +1204,7 @@ static void bq27541_driver_remove(struct i2c_client *client)
 		kfree(bq27541_di);
 		bq27541_di = NULL;
 	}
-	bq27541_new_client = NULL;
+	new_client = NULL;
 }
 
 /*
