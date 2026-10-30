@@ -440,6 +440,30 @@ DTB 结构问题。CI 现在会打印：
 `Image.gz-dtb`（约 17.8 MB）能放进 32 MB 的 boot 分区，这一项是安全的。
 若仍进 fastboot，换另一机型的 dtb 再试一次。
 
+### 诊断内核（最小配置，兜底手段）
+
+如果正常内核仍然卡屏、而且 pstore 里拿不到 6.12 的日志，
+用这个诊断内核先证明"内核能起来"，再逐项加回子系统定位。
+
+CI 里手动触发（Actions → 6.12 Android OPPO MSM8953 → Run workflow →
+variant 选 `diag`），产物名为
+`r9s-android-6.12-diag-<ver>-<date>.zip`。
+
+| 项目 | 正常内核 | 诊断内核 |
+|---|---|---|
+| `CONFIG_*=y` 数量 | 3301 | 约 800 |
+| Image 大小 | 55.6 MiB | **10 MiB** |
+| 显示/音频/充电/GPU | 全开 | **全关** |
+| pstore | 全内置 | 全内置 |
+| USB/adb | 开 | 开（便于直接抓 dmesg） |
+
+关掉的都是"卡屏嫌疑人"：`DRM_MSM`、`QCOM_APR`、`SND_SOC_QDSP6`、
+`QPNP_SMBCHARGER`、`QCOM_KGSL`。CI 会反过来断言它们**确实关闭**，
+保证每次出的都是真正的最小集。
+
+如果诊断内核能起、正常内核不能，那就是某一个被关掉的子系统的问题，
+二分几次就能定位。如果诊断内核也卡，问题就在更底层的平台代码。
+
 ### 若 pstore 也拿不到日志时的兜底
 
 内核死得比 pstore 更早（比如 `head.S` 阶段），就只剩两条路：
