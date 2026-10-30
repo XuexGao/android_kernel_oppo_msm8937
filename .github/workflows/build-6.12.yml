@@ -103,7 +103,7 @@ jobs:
           # 且没开 PSTORE_CONSOLE，导致完全抓不到崩溃日志。
           echo "--- 架构与 pstore（错了就卡一屏且无日志）："
           for sym in ARM64_VA_BITS_39 PSTORE PSTORE_RAM PSTORE_CONSOLE PSTORE_PMSG; do
-            v="$(grep -E "^CONFIG_${sym}=" .config | head -1)"
+            v="$(grep -E "^CONFIG_${sym}=" .config | head -1 || true)"
             case "$v" in
               "CONFIG_${sym}=y") echo "  OK   $v" ;;
               *) echo "::error::关键配置缺失: ${sym} 实际为 '${v:-未设置}'"; exit 1 ;;
@@ -111,21 +111,21 @@ jobs:
           done
           # VA_BITS 必须真的是 39（上面的 ARM64_VA_BITS_39=y 只是选了
           # 选项，这里再确认算出来的生效值）。
-          v="$(grep -E '^CONFIG_ARM64_VA_BITS=' .config | head -1)"
+          v="$(grep -E '^CONFIG_ARM64_VA_BITS=' .config | head -1 || true)"
           case "$v" in
             "CONFIG_ARM64_VA_BITS=39") echo "  OK   $v" ;;
             *) echo "::error::VA_BITS 必须为 39（Cortex-A53 限制），实际 '${v:-未设置}'"; exit 1 ;;
           esac
           # 页表级数必须与 39-bit 匹配（3 级）。Kconfig 会自算，
           # 但如果有人手改 .config 或引入异常依赖，这里能兜住。
-          v="$(grep -E '^CONFIG_PGTABLE_LEVELS=' .config | head -1)"
+          v="$(grep -E '^CONFIG_PGTABLE_LEVELS=' .config | head -1 || true)"
           case "$v" in
             "CONFIG_PGTABLE_LEVELS=3") echo "  OK   $v" ;;
             *) echo "::error::PGTABLE_LEVELS 必须为 3（配 39-bit VA），实际 '${v:-未设置}'"; exit 1 ;;
           esac
           # 4K 页是 MSM8953 的既定配置（4.9 也是 4K），
           # 改成 16K/64K 会改变整个内存布局，风险极高。
-          v="$(grep -E '^CONFIG_ARM64_4K_PAGES=' .config | head -1)"
+          v="$(grep -E '^CONFIG_ARM64_4K_PAGES=' .config | head -1 || true)"
           case "$v" in
             "CONFIG_ARM64_4K_PAGES=y") echo "  OK   $v" ;;
             *) echo "::error::必须用 4K 页，实际 '${v:-未设置}'"; exit 1 ;;
@@ -140,7 +140,7 @@ jobs:
           if [ "${CFG}" != "msm8953-oppo-diag_defconfig" ]; then
           echo "--- 音频栈（必须 =y）："
           for sym in QCOM_APR SND_SOC_QDSP6 SND_SOC_QCOM_COMMON SND_SOC_MSM8953_OPPO; do
-            v="$(grep -E "^CONFIG_${sym}=" .config | head -1)"
+            v="$(grep -E "^CONFIG_${sym}=" .config | head -1 || true)"
             case "$v" in
               "CONFIG_${sym}=y") echo "  OK   $v" ;;
               *) echo "::error::音频栈未内置: ${sym} 实际为 '${v:-未设置}'"; exit 1 ;;
@@ -154,7 +154,7 @@ jobs:
           for sym in QPNP_SMBCHARGER QPNP_FG QPNP_REVID OF_BATTERYDATA \
                      BATTERY_GAUGE_OPPO_BQ27541 CHARGER_OPPO_VOOC \
                      OPPO_DEVICE_INFO; do
-            v="$(grep -E "^CONFIG_${sym}=" .config | head -1)"
+            v="$(grep -E "^CONFIG_${sym}=" .config | head -1 || true)"
             case "$v" in
               "CONFIG_${sym}=y") echo "  OK   $v" ;;
               *) echo "::error::充电/电量计未内置: ${sym} 实际为 '${v:-未设置}'"; exit 1 ;;
@@ -169,7 +169,7 @@ jobs:
           echo "--- 显示栈（必须全部 =y）："
           for sym in DRM_MSM DRM_MSM_DSI DRM_MSM_DSI_14NM_PHY DRM_MSM_MDP5 \
                      DRM_PANEL_OPPO_EA8064 DRM_PANEL_JDI_R63452 LEDS_LM3697; do
-            v="$(grep -E "^CONFIG_${sym}=" .config | head -1)"
+            v="$(grep -E "^CONFIG_${sym}=" .config | head -1 || true)"
             case "$v" in
               "CONFIG_${sym}=y") echo "  OK   $v" ;;
               *) echo "::error::显示栈未内置: ${sym} 实际为 '${v:-未设置}'"; exit 1 ;;
@@ -179,7 +179,9 @@ jobs:
             echo "--- 诊断内核：跳过音频/充电/显示栈断言（这些栈被刻意关闭）"
             # 诊断内核反过来断言"它们确实关掉了"，确保是真的最小集。
             for sym in DRM_MSM QCOM_APR SND_SOC_QDSP6 QPNP_SMBCHARGER QCOM_KGSL; do
-              v="$(grep -E "^CONFIG_${sym}=" .config | head -1)"
+              # 这里**故意**让 grep 找不到时返回 1（正是我们要的"已关闭"），
+              # 但外壳在 set -e 下会因此终止，所以要 || true 吃掉返回码。
+              v="$(grep -E "^CONFIG_${sym}=" .config || true)"
               if [ -n "$v" ]; then
                 echo "::error::诊断内核不该启用 ${sym}，实际 '${v}'"; exit 1
               else
