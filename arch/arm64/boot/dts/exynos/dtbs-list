@@ -1,0 +1,8 @@
+arch/arm64/boot/dts/exynos/exynos5433-tm2.dtb
+arch/arm64/boot/dts/exynos/exynos5433-tm2e.dtb
+arch/arm64/boot/dts/exynos/exynos7-espresso.dtb
+arch/arm64/boot/dts/exynos/exynos7885-jackpotlte.dtb
+arch/arm64/boot/dts/exynos/exynos850-e850-96.dtb
+arch/arm64/boot/dts/exynos/exynosautov9-sadk.dtb
+arch/arm64/boot/dts/exynos/exynosautov920-sadk.dtb
+arch/arm64/boot/dts/exynos/google/gs101-oriole.dtb

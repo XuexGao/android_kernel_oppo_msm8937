@@ -28,7 +28,7 @@
 #   4. 只编译 Image.gz-dtb 目标（含 dtbs），不再跑全量 make
 # ==============================================================================
 
-name: Build BakaSU Kernel & Release
+name: Build 4.9 Kernel
 
 on:
   workflow_dispatch:
@@ -638,9 +638,9 @@ jobs:
           echo "KV_FULL=${KV_FULL} | SUSFS_VERSION=${SUSFS_VERSION} | KSU_VERSION=${KSU_VERSION}"
 
           # ---- Release 标题：SUSFS 版本取自源码，标题不写死 ----
-          # 形如 "OPPO Kernel BakaSU + SUSFS 2.3.0"（去掉 v 前缀，不加括号）
+          # 形如 "4.9 Kernel BakaSU + SUSFS 2.3.0"（去掉 v 前缀，不加括号）
           SUSFS_NUM="${SUSFS_VERSION#v}"
-          RELEASE_TITLE="OPPO Kernel BakaSU + SUSFS ${SUSFS_NUM}"
+          RELEASE_TITLE="4.9 Kernel BakaSU + SUSFS ${SUSFS_NUM}"
           echo "RELEASE_TITLE=${RELEASE_TITLE}"
           echo "RELEASE_TITLE=${RELEASE_TITLE}" >> "$GITHUB_ENV"
 

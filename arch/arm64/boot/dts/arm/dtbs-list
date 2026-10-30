@@ -1,0 +1,15 @@
+arch/arm64/boot/dts/arm/foundation-v8.dtb
+arch/arm64/boot/dts/arm/foundation-v8-psci.dtb
+arch/arm64/boot/dts/arm/foundation-v8-gicv3.dtb
+arch/arm64/boot/dts/arm/foundation-v8-gicv3-psci.dtb
+arch/arm64/boot/dts/arm/juno.dtb
+arch/arm64/boot/dts/arm/juno-r1.dtb
+arch/arm64/boot/dts/arm/juno-r2.dtb
+arch/arm64/boot/dts/arm/juno-scmi.dtb
+arch/arm64/boot/dts/arm/juno-r1-scmi.dtb
+arch/arm64/boot/dts/arm/juno-r2-scmi.dtb
+arch/arm64/boot/dts/arm/rtsm_ve-aemv8a.dtb
+arch/arm64/boot/dts/arm/vexpress-v2f-1xv7-ca53x2.dtb
+arch/arm64/boot/dts/arm/fvp-base-revc.dtb
+arch/arm64/boot/dts/arm/corstone1000-fvp.dtb
+arch/arm64/boot/dts/arm/corstone1000-mps3.dtb

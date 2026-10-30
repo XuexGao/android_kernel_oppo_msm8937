@@ -1,0 +1,14 @@
+arch/arm64/boot/dts/apple/t8103-j274.dtb
+arch/arm64/boot/dts/apple/t8103-j293.dtb
+arch/arm64/boot/dts/apple/t8103-j313.dtb
+arch/arm64/boot/dts/apple/t8103-j456.dtb
+arch/arm64/boot/dts/apple/t8103-j457.dtb
+arch/arm64/boot/dts/apple/t6000-j314s.dtb
+arch/arm64/boot/dts/apple/t6001-j314c.dtb
+arch/arm64/boot/dts/apple/t6000-j316s.dtb
+arch/arm64/boot/dts/apple/t6001-j316c.dtb
+arch/arm64/boot/dts/apple/t6001-j375c.dtb
+arch/arm64/boot/dts/apple/t6002-j375d.dtb
+arch/arm64/boot/dts/apple/t8112-j413.dtb
+arch/arm64/boot/dts/apple/t8112-j473.dtb
+arch/arm64/boot/dts/apple/t8112-j493.dtb

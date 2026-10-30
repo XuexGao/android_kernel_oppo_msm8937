@@ -1,0 +1,17 @@
+arch/arm64/boot/dts/nvidia/tegra132-norrin.dtb
+arch/arm64/boot/dts/nvidia/tegra210-p2371-0000.dtb
+arch/arm64/boot/dts/nvidia/tegra210-p2371-2180.dtb
+arch/arm64/boot/dts/nvidia/tegra210-p2571.dtb
+arch/arm64/boot/dts/nvidia/tegra210-p3450-0000.dtb
+arch/arm64/boot/dts/nvidia/tegra210-smaug.dtb
+arch/arm64/boot/dts/nvidia/tegra210-p2894-0050-a08.dtb
+arch/arm64/boot/dts/nvidia/tegra186-p2771-0000.dtb
+arch/arm64/boot/dts/nvidia/tegra186-p3509-0000+p3636-0001.dtb
+arch/arm64/boot/dts/nvidia/tegra194-p2972-0000.dtb
+arch/arm64/boot/dts/nvidia/tegra194-p3509-0000+p3668-0000.dtb
+arch/arm64/boot/dts/nvidia/tegra194-p3509-0000+p3668-0001.dtb
+arch/arm64/boot/dts/nvidia/tegra234-sim-vdk.dtb
+arch/arm64/boot/dts/nvidia/tegra234-p3737-0000+p3701-0000.dtb
+arch/arm64/boot/dts/nvidia/tegra234-p3740-0002+p3701-0008.dtb
+arch/arm64/boot/dts/nvidia/tegra234-p3768-0000+p3767-0000.dtb
+arch/arm64/boot/dts/nvidia/tegra234-p3768-0000+p3767-0005.dtb

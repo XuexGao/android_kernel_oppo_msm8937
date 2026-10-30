@@ -1,0 +1,3 @@
+arch/arm64/boot/dts/nuvoton/ma35d1-iot-512m.dtb
+arch/arm64/boot/dts/nuvoton/ma35d1-som-256m.dtb
+arch/arm64/boot/dts/nuvoton/nuvoton-npcm845-evb.dtb
