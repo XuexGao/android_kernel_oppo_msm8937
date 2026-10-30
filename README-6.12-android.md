@@ -338,6 +338,56 @@ R9s **不用 PMI8950 内部的电量计**，而是外挂 **TI BQ27541**（i2c_5 
 
 ---
 
+#### 4. Image header 的 text_offset 是 0（CAF 要 0x80000）
+
+修完 VA_BITS 之后仍然卡 logo，于是让 CI 把 Image header 打出来测量：
+
+    header.text_offset = 0x0            ← 问题所在
+    header.image_size  = 0x37a0000 (55.6 MiB)
+    header.magic       = 0x644d5241     （正确）
+
+**为什么是 0**：mainline 从 v4.2 起就不支持"指定加载偏移"了，
+`arch/arm64/Makefile` 里的 `TEXT_OFFSET` 整个被删，
+`head.S` 里那一行改成硬编码：
+
+```asm
+.quad 0    // Image load offset from start of RAM
+```
+
+语义变成"位置无关，bootloader 自己决定装哪"。
+
+**但 Qualcomm 的 ABL/lk 不是这么工作的**：它读这个字段，
+把内核装到「RAM 起始 + text_offset」。4.9 的 CAF 内核里这个值
+是 `0x80000`（512KB），ABL 也一直按 512KB 装。
+
+两者对不上时的后果：ABL 按 0 偏移加载 → 内核被搬到 RAM 起始而
+不是起始+512KB → 入口点错位 → 内核在第一条指令就走飞 →
+**死在 head.S 之前**，pstore 的 `postcore_initcall` 根本没机会执行。
+
+这正好解释了同时观察到的两个现象：
+
+| 现象 | 原因 |
+|---|---|
+| 卡在 ABL 画的那屏 logo | 内核从未接管，屏幕还停在 bootloader 画的帧 |
+| ramoops 里始终是 4.9 的旧日志 | 6.12 一行都没写进去 |
+
+修复：`arch/arm64/kernel/head.S` 把那行改回 `.quad 0x80000`。
+只影响 bootloader 怎么装内核，不影响内核自身虚拟地址布局
+（`KIMAGE_VADDR` 在 6.12 和 4.9 都是 `MODULES_END`）。
+
+验证：编译 `head.o` 后反汇编 `.head.text`，偏移 0x08 处为
+`00000800 00000000`（小端序的 0x80000）；CI 实测
+`header.text_offset = 0x80000`。
+
+### 前两个嫌疑的对照表
+
+| 修复 | 错在哪 | 死在哪 |
+|---|---|---|
+| VA_BITS 52 → 39 | Cortex-A53 不支持 52-bit VA | `head.S` 建页表阶段 |
+| text_offset 0 → 0x80000 | CAF ABL 按此字段定位 | 进入内核第一条指令前 |
+
+两个都是"编译完全正常、烧进去必死"的类型。
+
 ### 刷机前
 
 1. **备份原 boot 分区**（TWRP 里 backup boot）—— 卡屏时靠它回滚
