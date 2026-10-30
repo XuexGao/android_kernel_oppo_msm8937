@@ -89,3 +89,11 @@ CONFIG_USB_DWC3=y
 CONFIG_USB_CONFIGFS=y
 CONFIG_USB_CONFIGFS_F_FS=y
 CONFIG_USB_CONFIGFS_F_ADB=y
+
+# binder 在 ACK 里挂了 tracepoint（android_vendor_hooks / binder trace），
+# 需要 tracing 基础设施，否则链接期报 undefined reference：
+#   trace_types_lock / ftrace_events / trace_event_sem ...
+# TRACING/TRACEPOINTS 是不可见符号，只能由可见选项 select。
+# FUNCTION_TRACER -> GENERIC_TRACER -> TRACING -> TRACEPOINTS。
+CONFIG_FUNCTION_TRACER=y
+CONFIG_FTRACE=y
