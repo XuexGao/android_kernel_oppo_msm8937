@@ -123,6 +123,19 @@ if count == 0:
     print('         或 dtbs 没编出来。刷进去 ABL 会退回它内置的 CAF DTB。', file=sys.stderr)
     sys.exit(1)
 
+# 上限检查：只应包含本机型（r9s + r9sk）两个 dtb。
+# mainline 的 dtb-y 有 1193 个条目，如果用
+#     find dts/ -name *.dtb
+# 就会把全部机型都拼进去 —— 体积暴涨，而且 CAF 的 ABL 是按
+# msm-id / board-id **顺序扫描**找第一个匹配的，1193 个里混着别的
+# 机型，有挑错的风险。（真的发生过：产物里 1193 个 dtb。）
+EXPECTED_MAX = 4
+if count > EXPECTED_MAX:
+    print(f'自检失败：Image.gz-dtb 里含 {count} 个 dtb，超过上限 {EXPECTED_MAX}', file=sys.stderr)
+    print('         应该只拼 msm8953-oppo-r9s/r9sk 两个机型。', file=sys.stderr)
+    print('         检查 arch/arm64/boot/Makefile 的 CAF_DTB_NAMES。', file=sys.stderr)
+    sys.exit(1)
+
 print(f'  自检通过：Image.gz-dtb 内含 {count} 个 dtb')
 for o in offsets:
     totalsize = struct.unpack('>I', data[o + 4:o + 8])[0]

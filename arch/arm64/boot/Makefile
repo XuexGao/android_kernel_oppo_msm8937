@@ -78,7 +78,7 @@ include $(srctree)/drivers/firmware/efi/libstub/Makefile.zboot
 #   两者不同 → 证明内核用的是 ABL 内置 DTB，不是我们的。
 #
 # 4.9 和 4.19 分支都有这条规则，且真机验证可用：
-#     $(obj)/Image.gz-dtb: $(obj)/Image.gz $(DTB_OBJS) FORCE
+#     $(obj)/Image.gz-dtb: $(obj)/Image.gz $(CAF_DTB_OBJS) $(obj)/dts/dtbs-list FORCE
 #             $(call if_changed,cat)
 #
 # 这里照搬，DTB_OBJS 取 dts 目录下所有 .dtb（CAF 会自己按 board-id 选）。
@@ -111,20 +111,35 @@ include $(srctree)/drivers/firmware/efi/libstub/Makefile.zboot
 #    所以 recipe 里再做一次运行时 find，并且**空列表直接报错退出**，
 #    绝不允许静默产出无 dtb 的 Image.gz-dtb。
 # -----------------------------------------------------------------------------
-DTB_OBJS := $(shell find $(obj)/dts/ -name \*.dtb 2>/dev/null)
-CAF_DTB_OBJS = $$(find $(obj)/dts/ -name '*.dtb' 2>/dev/null | sort)
+# 只拼**本机型**的 dtb，不能把整棵树的 dtb 全塞进去。
+#
+# mainline 的 arch/arm64/boot/dts/qcom/Makefile 里 dtb-y 有 1193 个条目
+# （覆盖所有 ARM64 高通机型）。如果按 4.19 的写法
+#     DTB_OBJS := $(shell find $(obj)/dts/ -name *.dtb)
+# 就会把全部 1193 个 dtb 都拼到 Image.gz-dtb 后面 ——
+# 实测产物里确实是 1193 个 dtb，问题有两个：
+#   1. 体积暴涨（每个 dtb 几十 KB，加起来好几 MB）
+#   2. CAF 的 ABL 是按 qcom,msm-id / qcom,board-id 在拼接体里**顺序扫描**
+#      找第一个匹配的。1193 个里混着各种机型的 dtb，一旦某个机型的
+#      board-id 恰好与我们相同（或者 msm-id 相同），就有挑错的风险。
+#
+# 4.19 分支没这个问题，因为它的 dtb-y 只有 9 个（全是本平台机型）。
+#
+# 所以这里显式限定为 OPPO 的两个机型 dtb。
+CAF_DTB_NAMES := msm8953-oppo-r9s.dtb msm8953-oppo-r9sk.dtb
+CAF_DTB_OBJS = $(addprefix $(obj)/dts/qcom/, $(CAF_DTB_NAMES))
 
 targets += Image.gz-dtb
 
-$(obj)/Image.gz-dtb: $(obj)/Image.gz $(DTB_OBJS) FORCE
+$(obj)/Image.gz-dtb: $(obj)/Image.gz $(CAF_DTB_OBJS) $(obj)/dts/dtbs-list FORCE
 	$(Q)set -e; \
 	cat $(obj)/Image.gz > $@.tmp; \
-	dtbs="$(CAF_DTB_OBJS)"; \
-	if [ -z "$$dtbs" ]; then \
-		echo "ERROR: $(obj)/dts/ 下没有 dtb，Image.gz-dtb 会缺 dtb。" >&2; \
-		echo "       请先 make dtbs，再 make Image.gz-dtb。" >&2; \
-		rm -f $@.tmp; exit 1; \
-	fi; \
-	for d in $$dtbs; do cat $$d >> $@.tmp; done; \
+	for d in $(CAF_DTB_OBJS); do \
+		if [ ! -f "$$d" ]; then \
+			echo "ERROR: 缺少 $$d，请先 make dtbs" >&2; \
+			rm -f $@.tmp; exit 1; \
+		fi; \
+		cat $$d >> $@.tmp; \
+	done; \
 	mv $@.tmp $@; \
-	echo "  Image.gz-dtb: Image.gz + $$(echo $$dtbs | wc -w) 个 dtb"
+	echo "  Image.gz-dtb: Image.gz + $(words $(CAF_DTB_OBJS)) 个 dtb"
