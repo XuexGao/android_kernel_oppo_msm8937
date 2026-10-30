@@ -137,6 +137,8 @@ int register_device_proc(char *name, char *version, char *manufacture)
 
 	return 0;
 }
+EXPORT_SYMBOL_GPL(register_device_proc);
+
 
 #ifdef CONFIG_MACH_OPPO
 /*
