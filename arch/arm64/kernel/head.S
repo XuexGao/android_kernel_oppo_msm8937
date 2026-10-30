@@ -59,7 +59,26 @@
 	 */
 	efi_signature_nop			// special NOP to identity as PE/COFF executable
 	b	primary_entry			// branch to kernel start, magic
-	.quad	0				// Image load offset from start of RAM, little-endian
+	/*
+	 * Image load offset from start of RAM, little-endian.
+	 *
+	 * mainline 从 v4.2 起把这里硬编码成 0，意思是"位置无关，
+	 * bootloader 自己决定加载地址"。
+	 *
+	 * 但 CAF（Qualcomm ABL/lk）不是这么工作的：它读这个字段来决定
+	 * 把内核装到 RAM 起始 + text_offset。4.9/4.19 的 CAF 内核里
+	 * 这里是 0x80000（arch/arm64/Makefile 的 TEXT_OFFSET）。
+	 *
+	 * 实测本分支产物：header.text_offset = 0x0
+	 * 后果：ABL 按 0 偏移加载 → 入口点错位 → 内核在 head.S 之前
+	 * 就挂死 → 屏幕上只剩 ABL 画的 logo，ramoops 里一行都没有。
+	 * 这与用户反馈的"卡在 1 屏 logo"完全吻合。
+	 *
+	 * 所以这里显式写回 0x80000，与 CAF 约定对齐。
+	 * 注意：这个值只影响 bootloader 的加载决策，不影响内核自身的
+	 * 虚拟地址布局（KIMAGE_VADDR 由 MODULES_END 决定，与 4.9 相同）。
+	 */
+	.quad	0x80000				// Image load offset from start of RAM, little-endian
 	le64sym	_kernel_size_le			// Effective size of kernel image, little-endian
 	le64sym	_kernel_flags_le		// Informative flags, little-endian
 	.quad	0				// reserved
