@@ -93,6 +93,20 @@ jobs:
             "CONFIG_ARM64_VA_BITS=39") echo "  OK   $v" ;;
             *) echo "::error::VA_BITS 必须为 39（Cortex-A53 限制），实际 '${v:-未设置}'"; exit 1 ;;
           esac
+          # 页表级数必须与 39-bit 匹配（3 级）。Kconfig 会自算，
+          # 但如果有人手改 .config 或引入异常依赖，这里能兜住。
+          v="$(grep -E '^CONFIG_PGTABLE_LEVELS=' .config | head -1)"
+          case "$v" in
+            "CONFIG_PGTABLE_LEVELS=3") echo "  OK   $v" ;;
+            *) echo "::error::PGTABLE_LEVELS 必须为 3（配 39-bit VA），实际 '${v:-未设置}'"; exit 1 ;;
+          esac
+          # 4K 页是 MSM8953 的既定配置（4.9 也是 4K），
+          # 改成 16K/64K 会改变整个内存布局，风险极高。
+          v="$(grep -E '^CONFIG_ARM64_4K_PAGES=' .config | head -1)"
+          case "$v" in
+            "CONFIG_ARM64_4K_PAGES=y") echo "  OK   $v" ;;
+            *) echo "::error::必须用 4K 页，实际 '${v:-未设置}'"; exit 1 ;;
+          esac
           echo "--- MSM8953 平台："
           grep -E '^CONFIG_(MSM_GCC_8953|PINCTRL_MSM8953|MMC_SDHCI_MSM|USB_DWC3|QCOM_SMD_RPM)=' .config
           # 充电/电量计也要内置：bring-up 阶段没有 init 去 modprobe，
