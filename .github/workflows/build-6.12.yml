@@ -81,6 +81,10 @@ jobs:
           else
             CFG=msm8953-oppo_defconfig
           fi
+          # 写到 GITHUB_ENV，后面几个 step 才看得到。
+          # （各 step 是独立的 shell，普通变量跨不过去；
+          #   配合 set -u 直接报 "CFG: unbound variable"。）
+          echo "CFG=${CFG}" >> "$GITHUB_ENV"
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- "$CFG"
           echo "--- Android 核心配置："
           grep -E '^CONFIG_(ANDROID_BINDER_IPC|ANDROID_BINDERFS|ANDROID_VENDOR_HOOKS|DMABUF_HEAPS)=' .config
@@ -306,7 +310,9 @@ jobs:
         run: |
           set -euo pipefail
           KREL="$(make -s ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- kernelrelease)"
-          if [ "${VARIANT}" = "-diag" ]; then
+          # CFG 由上一个 step 通过 GITHUB_ENV 传下来；不要在这里读 VARIANT
+          # （那也是别的 step 的局部变量）。
+          if [ "${CFG}" = "msm8953-oppo-diag_defconfig" ]; then
             SUF="-diag"
           else
             SUF=""
