@@ -471,6 +471,12 @@ jobs:
     runs-on: ubuntu-latest
     env:
       BUILD_DATE: ${{ needs.setup.outputs.build_date }}
+      # 标题按分支区分：同一个 workflow 被两个分支共用，
+      # 纯净版和 BakaSU 版必须能从 Release 标题上一眼分清。
+      RELEASE_TITLE: >-
+        ${{ github.ref_name == 'bakasu-k4.19'
+            && format('4.19 Kernel BakaSU {0}', needs.setup.outputs.build_date)
+            || format('4.19 Kernel {0}', needs.setup.outputs.build_date) }}
     steps:
       - name: 下载各目标产物
         uses: actions/download-artifact@v4
@@ -483,8 +489,11 @@ jobs:
       - name: 发布 Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v419_${{ env.BUILD_DATE }}
-          name: "lineage-22.1-k4.19 OPPO Kernel ${{ env.BUILD_DATE }}"
+          tag_name: >-
+            ${{ github.ref_name == 'bakasu-k4.19'
+                && format('v419_bakasu_{0}', env.BUILD_DATE)
+                || format('v419_{0}', env.BUILD_DATE) }}
+          name: ${{ env.RELEASE_TITLE }}
           body: |
             > ⚠️ **实验分支（lineage-22.1-k4.19）**：4.9 → 4.19 移植过程中的构建产物，可能无法开机，仅供测试。
           files: dist/**/v419_*.zip
