@@ -289,57 +289,136 @@ R9s **不用 PMI8950 内部的电量计**，而是外挂 **TI BQ27541**（i2c_5 
 
 ## 上机验证指南
 
-> **这些全部是未验证的。** 十一轮下来所有功能只到"编译通过 + DTB
-> 反编译正确"，没有任何一项在真机上跑过。下面是按风险排序的检查清单。
+### 第 13 轮真机反馈：卡在一屏不动
+
+用户刷了当时最新的包，结果是**卡在一屏、进不了系统**。
+抓 ramoops 出来的却是 4.9 内核的旧日志 —— 说明 6.12 一行 dmesg 都没留下。
+
+顺着这个现象查下去，找出三个"编译完全通过、烧进去必然卡死"的问题。
+这三个都已在第 13 轮修掉：
+
+#### 1. `ARM64_VA_BITS` 是 52，Cortex-A53 只支持 39
+
+**这是卡屏的直接原因。** ACK 的 arm64 默认 defconfig 给的是
+`VA_BITS=52` + 5 级页表，那是 ARMv8.2 的 LPA 扩展，Cortex-A53（ARMv8.0）
+根本没有。内核会在 `head.S` 建页表的阶段就挂死 —— 正好是"卡一屏、
+连 dmesg 都没有"。
+
+设备侧反证（4.9 内核的启动日志）：
+
+    vmalloc : 0xffffff8008000000 - 0xffffffbebfff0000   (250 GB)
+                    ↑ 这个结束地址就是 39-bit VA 布局
+
+修复：`CONFIG_ARM64_VA_BITS_39=y`，生效值 `PGTABLE_LEVELS=3`。
+
+#### 2. ramoops 地址写错
+
+我按 mainline 的假设填了 `0xef000000`，设备 bootloader 实际保留的是
+`0xb0000000`（长 8 MiB）：
+
+    [    0.164432] ramoops: attached 0x800000@0xb0000000, ecc: 0/0
+                    ↑ 设备实测值
+
+位置错了，panic 时 pstore 写到了没人读的地方，
+`/sys/fs/pstore` 永远是空的。
+
+#### 3. pstore 没有真正通电
+
+只改地址还不够。实际配置是：
+
+    CONFIG_PSTORE_RAM=m      ← 模块，panic 时没机会 insmod
+    （PSTORE_CONSOLE 未设置）← 不开就不记普通启动的 dmesg
+
+结果是黑匣子装了但从来没通上电。现在改成全 `=y`：
+
+    CONFIG_PSTORE=y / PSTORE_RAM=y / PSTORE_CONSOLE=y / PSTORE_PMSG=y
+
+**这三项修完之后，下一次刷机如果还卡，就能拿到 6.12 自己的 dmesg，
+而不是继续盲飞。** CI 已加断言，这几个配置再被改坏会直接 fail。
+
+---
 
 ### 刷机前
 
-1. **备份原 boot 分区**（TWRP 里 backup boot）
+1. **备份原 boot 分区**（TWRP 里 backup boot）—— 卡屏时靠它回滚
 2. 确认机型：`adb shell getprop ro.product.device`
+   - 16027 → `msm8953-oppo-r9sk`（用户的机器是这个）
    - 16017 → `msm8953-oppo-r9s`
-   - 16027 → `msm8953-oppo-r9sk`（多数机器是这个）
-3. 刷机包会自动读 `/proc/device-tree/qcom,board-id` 选 dtb，
-   读不到时默认 r9sk
+3. 刷机包会读 `/proc/device-tree/qcom,board-id` 自动选 dtb，
+   读不到默认 r9sk
 
-### 可能失败的地方（按概率排序）
+### 刷完之后的三种结果，分别怎么办
 
-| # | 现象 | 大概率原因 | 排查手段 |
-|---|---|---|---|
-| 1 | 开机就进 fastboot | DTB 没被识别 / 内核 early panic | 看是否有 `Image.gz-dtb` 末尾的 DTB；换另一机型 dtb 试 |
-| 2 | 黑屏但有振动/背光 | MDSS/DSI 未初始化成功 | 接 USB 看 `dmesg`，找 `msm_drm` / `dsi` 报错 |
-| 3 | 亮屏但触摸无反应 | **S3320 可能不走标准 RMI4 协议**（最大未知数） | `dmesg | grep rmi4`；`cat /sys/bus/i2c/devices/3-0020/name` |
-| 4 | 无电量显示 | bq27541 的 I2C 通信/供电时序 | `dmesg | grep bq27541`；`cat /sys/class/power_supply/battery/capacity` |
-| 5 | 无声音 | AK4376 的 pdn/enable 极性 | `dmesg | grep ak4376`；检查 gpio28/62 电平 |
-| 6 | 不充电 | smbcharger IIO 通道（vchg_sns）没连上 | `dmesg | grep smbchg` |
-| 7 | SD 卡不识别 | mainline `sdhci-msm` 没有 `sdcard_vdd_enable` 属性 | 见下 |
+#### A. 正常进系统
 
-### 关于 SD 卡的一个已知缺口
-
-4.19 的 R9s 有一个 `sdcard_vdd_enable` 电源使能脚（gpio 64），
-但 mainline 的 `sdhci-msm` **没有对应 DT 属性**。如果 SD 卡不工作，
-可能需要在 `sdhci_msm_setup_vreg()` 里自己加 gpio 控制。
-
-### 数据收集方式
+那是意外之喜。立刻收集：
 
 ```bash
-# 完整 dmesg
 dmesg > /sdcard/dmesg.txt
-
-# 各子系统关键字
-dmesg | grep -iE "msm_drm|dsi|panel"      # 显示
-dmesg | grep -iE "rmi4|synaptics|touch"   # 触摸
-dmesg | grep -iE "bq27541|power_supply"   # 电量
-dmesg | grep -iE "ak4376|q6afe|q6asm"     # 音频
-dmesg | grep -iE "smbchg|qpnp"            # 充电
-
-# 供电状态
-cat /sys/class/power_supply/*/uevent
+cat /sys/class/power_supply/*/uevent  > /sdcard/power.txt
+cat /proc/device-tree/qcom,board-id | od -An -tx1
 ```
 
-> 若开机就 panic、拿不到 dmesg，参考 `oppo-r9s-mainline` 仓库里
-> 用 ramoops 抓日志的做法 —— 但**注意本内核的 ramoops 地址
-> （0xef000000）与 Lineage 内核（0xb0000000）不一致**，抓不到上一次
-> 的日志。这是已知问题。
+#### B. 卡一屏不动（这次的情况）
+
+**关键：不要立刻重刷。** 先重启一次进 TWRP，把 pstore 抓出来：
+
+```bash
+# TWRP 的终端里
+mount /data
+ls -la /sys/fs/pstore/
+# 有内容就说明 pstore 修好了，直接看：
+cat /sys/fs/pstore/console-ramoops-0
+cat /sys/fs/pstore/pmsg-ramoops-0
+```
+
+把 `console-ramoops-0` 整份发出来 —— 里面有 6.12 的完整 dmesg，
+能直接定位卡在哪个子系统。
+
+> 如果 `/sys/fs/pstore` 还是空的，说明内核连 pstore 初始化都没走到
+> （即死得比 pstore 更早）。那说明还有比 VA_BITS 更早的问题，
+> 需要换手段（见下）。
+
+#### C. 进 fastboot
+
+说明 bootloader 阶段就没过去，大概率是 `Image.gz-dtb` 尺寸或
+DTB 结构问题。CI 现在会打印：
+
+    Image(未压缩) = 57420288 bytes (54 MiB)
+    Image.gz      = 17806276 bytes
+
+`Image.gz-dtb`（约 17.8 MB）能放进 32 MB 的 boot 分区，这一项是安全的。
+若仍进 fastboot，换另一机型的 dtb 再试一次。
+
+### 若 pstore 也拿不到日志时的兜底
+
+内核死得比 pstore 更早（比如 `head.S` 阶段），就只剩两条路：
+
+1. **串口**：R9s 主板有 UART 测试点，需要拆机接线，代价大
+2. **二分法缩小**：先用最小 config（只留 display + serial + pstore）
+   确认能起，再逐项加回来。这个我可以帮你做，但需要你配合刷 2-3 次
+
+### 各子系统的排查关键字
+
+一旦能拿到 dmesg：
+
+```bash
+dmesg | grep -iE "msm_drm|dsi|panel"      # 显示
+dmesg | grep -iE "rmi4|synaptics|touch"   # 触摸
+dmesg | grep -iE "bq27|power_supply"      # 电量（设备实际是 bq27411）
+dmesg | grep -iE "ak4376|q6afe|q6asm"     # 音频
+dmesg | grep -iE "smbchg|qpnp"            # 充电
+```
+
+### 已知但未修的问题
+
+| 问题 | 说明 |
+|---|---|
+| SD 卡电源脚 | 4.19 有 `sdcard_vdd_enable`（gpio 64），mainline 的 `sdhci-msm` 无对应 DT 属性，可能要改驱动 |
+| 触摸 S3320 | 可能不走标准 RMI4 协议，是最大未知数 |
+| GPU (KGSL) | 47 处 API 差异未清，配置关闭中 |
+| 外放 TFA98XX | 2.5 万行独立栈，未开始 |
+| 相机 | 未开始 |
 
 ---
 
