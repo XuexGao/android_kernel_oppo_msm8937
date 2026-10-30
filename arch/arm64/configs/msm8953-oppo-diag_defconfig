@@ -1,0 +1,73 @@
+# ============================================================
+# 最小诊断内核配置（bring-up 兜底用）
+#
+# 目的：当正常配置仍然卡屏、且 pstore 拿不到日志时，
+#       用这份"尽量小"的配置先证明内核能起来，
+#       然后逐项加回子系统来定位到底是哪个模块的问题。
+#
+# 保留：ARM64 核心 + MSM8953 平台最小集 + 串口 + pstore + SD/eMMC
+# 关闭：显示、音频、充电、电量计、GPU、WiFi、蓝牙、相机
+#
+# 用法：
+#   make ARCH=arm64 msm8953-oppo-diag_defconfig
+#
+# 注意：这份配置不追求"能当日常内核用"，只追求"能启动并留下日志"。
+# ============================================================
+
+# ---- ARM64 架构基线（这几项错了必然卡死，见 README）----
+CONFIG_ARM64_VA_BITS_39=y
+CONFIG_ARM64_4K_PAGES=y
+CONFIG_ARM64_PA_BITS_48=y
+
+# ---- pstore：诊断内核的唯一价值所在，必须全内置 ----
+CONFIG_PSTORE=y
+CONFIG_PSTORE_RAM=y
+CONFIG_PSTORE_CONSOLE=y
+CONFIG_PSTORE_PMSG=y
+CONFIG_PSTORE_DEFLATE_COMPRESS=y
+
+# ---- 串口：零售机默认 disabled，诊断时打开能出 earlycon ----
+CONFIG_SERIAL_8250=y
+CONFIG_SERIAL_8250_CONSOLE=y
+CONFIG_SERIAL_MSM=y
+CONFIG_SERIAL_MSM_CONSOLE=y
+CONFIG_SERIAL_EARLYCON=y
+
+# ---- 必要平台驱动：只保留"能启动"的最小集 ----
+CONFIG_ARCH_QCOM=y
+CONFIG_PINCTRL_MSM8953=y
+CONFIG_MSM_GCC_8953=y
+CONFIG_QCOM_SMD_RPM=y
+CONFIG_QCOM_CLK_SMD_RPM=y
+CONFIG_QCOM_RPMCC=y
+CONFIG_REGULATOR=y
+CONFIG_REGULATOR_FIXED_VOLTAGE=y
+CONFIG_REGULATOR_QCOM_SMD_RPM=y
+CONFIG_REGULATOR_QCOM_SPMI=y
+
+# ---- 中断/定时/PSCI：A53 靠这些启动次核 ----
+CONFIG_ARM_GIC_V3=y
+CONFIG_ARM_ARCH_TIMER=y
+CONFIG_ARM_PSCI_FW=y
+
+# ---- 存储：能挂载 /system /data 才有意义 ----
+CONFIG_MMC=y
+CONFIG_MMC_SDHCI=y
+CONFIG_MMC_SDHCI_MSM=y
+CONFIG_EXT4_FS=y
+
+# ---- 明确关闭：这些是"卡屏嫌疑人"，诊断时先排除 ----
+# CONFIG_DRM_MSM is not set
+# CONFIG_QCOM_APR is not set
+# CONFIG_SND_SOC_QDSP6 is not set
+# CONFIG_SND_SOC_MSM8953_OPPO is not set
+# CONFIG_SND_SOC_AK4376 is not set
+# CONFIG_QPNP_SMBCHARGER is not set
+# CONFIG_QPNP_FG is not set
+# CONFIG_BATTERY_GAUGE_OPPO is not set
+# CONFIG_BATTERY_GAUGE_OPPO_BQ27541 is not set
+# CONFIG_CHARGER_OPPO_VOOC is not set
+# CONFIG_QCOM_KGSL is not set
+# CONFIG_WLAN is not set
+# CONFIG_BT is not set
+# CONFIG_EROFS_FS is not set

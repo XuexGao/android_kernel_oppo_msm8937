@@ -23,6 +23,15 @@ on:
     paths:
       - 'ci/**'
   workflow_dispatch:
+    inputs:
+      variant:
+        description: '构建哪种配置'
+        required: false
+        default: 'normal'
+        type: choice
+        options:
+          - normal
+          - diag
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -63,8 +72,16 @@ jobs:
         run: |
           set -euo pipefail
           set -x
-          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
-            msm8953-oppo_defconfig
+          # 诊断内核：只保留 ARM64 核心 + 平台最小集 + 串口 + pstore，
+          # 关掉显示/音频/充电/GPU/WiFi。目的是当正常配置仍卡屏、
+          # 且 pstore 拿不到日志时，先证明"内核能起来"，再逐项加回来定位。
+          if [ "${{ inputs.variant || 'normal' }}" = "diag" ]; then
+            CFG=msm8953-oppo-diag_defconfig
+            echo "=== 诊断内核构建（最小配置）==="
+          else
+            CFG=msm8953-oppo_defconfig
+          fi
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- "$CFG"
           echo "--- Android 核心配置："
           grep -E '^CONFIG_(ANDROID_BINDER_IPC|ANDROID_BINDERFS|ANDROID_VENDOR_HOOKS|DMABUF_HEAPS)=' .config
 
@@ -111,6 +128,8 @@ jobs:
           grep -E '^CONFIG_(MSM_GCC_8953|PINCTRL_MSM8953|MMC_SDHCI_MSM|USB_DWC3|QCOM_SMD_RPM)=' .config
           # 充电/电量计也要内置：bring-up 阶段没有 init 去 modprobe，
           # 而且 Android 的 health HAL 依赖开机就有 battery/charger 设备。
+          # 诊断内核刻意关掉了音频/充电/显示，这些栈断言只在正常配置下跑。
+          if [ "${CFG}" != "msm8953-oppo-diag_defconfig" ]; then
           echo "--- 音频栈（必须 =y）："
           for sym in QCOM_APR SND_SOC_QDSP6 SND_SOC_QCOM_COMMON SND_SOC_MSM8953_OPPO; do
             v="$(grep -E "^CONFIG_${sym}=" .config | head -1)"
@@ -148,6 +167,18 @@ jobs:
               *) echo "::error::显示栈未内置: ${sym} 实际为 '${v:-未设置}'"; exit 1 ;;
             esac
           done
+          else
+            echo "--- 诊断内核：跳过音频/充电/显示栈断言（这些栈被刻意关闭）"
+            # 诊断内核反过来断言"它们确实关掉了"，确保是真的最小集。
+            for sym in DRM_MSM QCOM_APR SND_SOC_QDSP6 QPNP_SMBCHARGER QCOM_KGSL; do
+              v="$(grep -E "^CONFIG_${sym}=" .config | head -1)"
+              if [ -n "$v" ]; then
+                echo "::error::诊断内核不该启用 ${sym}，实际 '${v}'"; exit 1
+              else
+                echo "  OK   ${sym} 已关闭"
+              fi
+            done
+          fi
 
       - name: 编译内核与设备树
         run: |
@@ -255,10 +286,17 @@ jobs:
           done
 
           KREL="$(make -s ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- kernelrelease)"
+          # 变体后缀：诊断内核产物的文件名带 -diag，避免和正常包混淆。
+          if [ "${CFG}" = "msm8953-oppo-diag_defconfig" ]; then
+            VARIANT=-diag
+          else
+            VARIANT=
+          fi
           {
             echo "KERNEL_RELEASE=${KREL}"
             echo "BASE=ACK android16-6.12"
             echo "COMMIT=$(git rev-parse --short HEAD)"
+            echo "VARIANT=${VARIANT}"
           } | tee out/meta.env
 
           ls -la out/
@@ -268,12 +306,17 @@ jobs:
         run: |
           set -euo pipefail
           KREL="$(make -s ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- kernelrelease)"
-          ci/mkflashable.sh out "r9s-android-6.12-${KREL}-$(date +%Y%m%d).zip"
+          if [ "${VARIANT}" = "-diag" ]; then
+            SUF="-diag"
+          else
+            SUF=""
+          fi
+          ci/mkflashable.sh out "r9s-android-6.12${SUF}-${KREL}-$(date +%Y%m%d).zip"
 
       - name: 上传产物
         uses: actions/upload-artifact@v4
         with:
-          name: "android-6.12-msm8953-${{ github.sha }}"
+          name: "android-6.12-msm8953-${{ inputs.variant || 'normal' }}-${{ github.sha }}"
           path: out/*
           if-no-files-found: error
 
