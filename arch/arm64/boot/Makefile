@@ -98,7 +98,12 @@ CAF_DTB_OBJS = $$(find $(obj)/dts/ -name '*.dtb' 2>/dev/null | sort)
 
 targets += Image.gz-dtb
 
-$(obj)/Image.gz-dtb: $(obj)/Image.gz dtbs FORCE
+# 依赖用 $(obj)/dts/dtbs-list 而不是 dtbs：
+# `dtbs` 是**顶层** Makefile 的目标，在 arch/arm64/boot/ 这个子 make
+# 的上下文里不存在，写上会报
+#     make[2]: *** No rule to make target 'dtbs'
+# 而 dtbs-list 是 boot/dts/Makefile 里真实存在的目标（image.fit 也用它）。
+$(obj)/Image.gz-dtb: $(obj)/Image.gz $(obj)/dts/dtbs-list FORCE
 	$(Q)set -e; \
 	cat $(obj)/Image.gz > $@.tmp; \
 	dtbs="$(CAF_DTB_OBJS)"; \

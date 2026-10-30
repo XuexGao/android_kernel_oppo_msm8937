@@ -242,7 +242,7 @@ jobs:
           make ARCH=arm64 \
             CC="ccache aarch64-linux-gnu-gcc" \
             CROSS_COMPILE=aarch64-linux-gnu- \
-            -j"$(nproc)" Image.gz-dtb dtbs 2>&1 | tee build.log
+            -j"$(nproc)" Image.gz-dtb 2>&1 | tee build.log
 
           echo "::group::CCache 统计"
           ccache -s || true
