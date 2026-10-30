@@ -83,32 +83,46 @@ include $(srctree)/drivers/firmware/efi/libstub/Makefile.zboot
 #
 # 这里照搬，DTB_OBJS 取 dts 目录下所有 .dtb（CAF 会自己按 board-id 选）。
 # -----------------------------------------------------------------------------
-# 注意：不能用
+# -----------------------------------------------------------------------------
+# CAF（Qualcomm ABL/lk）专用：Image.gz 后面追加 DTB 列表
+#
+# 为什么需要：Qualcomm 的 bootloader 不在 x0 给 DTB，而是在
+# Image.gz-dtb 这个「gzip 流 + 若干 dtb」的拼接体里，按每个 dtb 的
+# root 节点 qcom,msm-id / qcom,board-id 自己挑匹配的那份。
+# 只给裸 Image.gz 的话它退回内置的 CAF DTB（4.9 时代的节点名），
+# 与 mainline 6.12 驱动树对不上 → arch_timer 拿不到中断、外设全废。
+# 实测证据见 6.12 诊断内核的 pstore 日志。
+#
+# 拼接方式与 4.9 / 4.19 完全一致（那两个分支真机验证可启动）：
 #     DTB_OBJS := $(shell find $(obj)/dts/ -name \*.dtb)
-# 因为 $(shell ...) 在 **Makefile 解析时**就求值了，
-# 那时 make 还没开始编 dtbs，目录里一个 .dtb 都没有
-# → DTB_OBJS 为空 → 只 cat 了个 Image.gz，
-# Image.gz-dtb 里一个 dtb 都没有，ABL 退回它内置的 DTB。
+#     $(obj)/Image.gz-dtb: $(obj)/Image.gz $(DTB_OBJS) FORCE
+#             $(call if_changed,cat)
 #
-# （这个坑真踩过：CI 里 make Image.gz-dtb 成功退出、文件也生成了，
-#   但打包自检扫不到 FDT 魔数。）
+# 注意两个前提，缺一不可：
 #
-# 所以改成在 recipe 里、**执行时**再 find，并显式依赖 dtbs 保证顺序。
+# 1) **必须先编 dtbs**。4.19 是靠 arch/arm64/Makefile 里的
+#        all: $(KBUILD_DTBS) $(KBUILD_TARGET)
+#    先跑 dtbs 再跑内核目标来保证顺序的。6.12 的 arch/arm64/Makefile
+#    没有这一行，所以本项目在顶层 Makefile 的调用处显式先 make dtbs
+#    （见 .github/workflows/build-6.12.yml 的编译步骤）。
+#
+# 2) 因为 $(shell ...) 是解析期求值，如果 dtbs 没先编完，
+#    DTB_OBJS 就是空 → cat 只拼出个 Image.gz。
+#    所以 recipe 里再做一次运行时 find，并且**空列表直接报错退出**，
+#    绝不允许静默产出无 dtb 的 Image.gz-dtb。
+# -----------------------------------------------------------------------------
+DTB_OBJS := $(shell find $(obj)/dts/ -name \*.dtb 2>/dev/null)
 CAF_DTB_OBJS = $$(find $(obj)/dts/ -name '*.dtb' 2>/dev/null | sort)
 
 targets += Image.gz-dtb
 
-# 依赖用 $(obj)/dts/dtbs-list 而不是 dtbs：
-# `dtbs` 是**顶层** Makefile 的目标，在 arch/arm64/boot/ 这个子 make
-# 的上下文里不存在，写上会报
-#     make[2]: *** No rule to make target 'dtbs'
-# 而 dtbs-list 是 boot/dts/Makefile 里真实存在的目标（image.fit 也用它）。
-$(obj)/Image.gz-dtb: $(obj)/Image.gz $(obj)/dts/dtbs-list FORCE
+$(obj)/Image.gz-dtb: $(obj)/Image.gz $(DTB_OBJS) FORCE
 	$(Q)set -e; \
 	cat $(obj)/Image.gz > $@.tmp; \
 	dtbs="$(CAF_DTB_OBJS)"; \
 	if [ -z "$$dtbs" ]; then \
-		echo "ERROR: $(obj)/dts/ 下没有 dtb，Image.gz-dtb 会缺 dtb" >&2; \
+		echo "ERROR: $(obj)/dts/ 下没有 dtb，Image.gz-dtb 会缺 dtb。" >&2; \
+		echo "       请先 make dtbs，再 make Image.gz-dtb。" >&2; \
 		rm -f $@.tmp; exit 1; \
 	fi; \
 	for d in $$dtbs; do cat $$d >> $@.tmp; done; \

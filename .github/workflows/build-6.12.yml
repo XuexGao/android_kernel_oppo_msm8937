@@ -239,10 +239,25 @@ jobs:
           export KBUILD_BUILD_USER="XuexGao"
           export KBUILD_BUILD_HOST="localhost"
           export KBUILD_BUILD_TIMESTAMP="$(date -u +'%a %d %b %Y %H:%M:%S UTC')"
+          # 顺序很重要：**先 dtbs，再 Image.gz-dtb**。
+          #
+          # 4.19 分支靠 arch/arm64/Makefile 里的
+          #     all: $(KBUILD_DTBS) $(KBUILD_TARGET)
+          # 自动保证这个顺序；6.12 没有这一行，所以在这里显式分两步。
+          #
+          # 如果反过来，Image.gz-dtb 规则里的 $(shell find ...)
+          # 拿到的 DTB_OBJS 是空的，cat 只拼出个 Image.gz，
+          # ABL 认不出就退回它内置的 CAF DTB（实测日志见过）。
+          # （recipe 里有兜底自检，空的会报错退出，不会静默产出坏包。）
           make ARCH=arm64 \
             CC="ccache aarch64-linux-gnu-gcc" \
             CROSS_COMPILE=aarch64-linux-gnu- \
-            -j"$(nproc)" Image.gz-dtb 2>&1 | tee build.log
+            -j"$(nproc)" dtbs 2>&1 | tee build.log
+
+          make ARCH=arm64 \
+            CC="ccache aarch64-linux-gnu-gcc" \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            -j"$(nproc)" Image.gz-dtb 2>&1 | tee -a build.log
 
           echo "::group::CCache 统计"
           ccache -s || true
