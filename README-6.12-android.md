@@ -388,6 +388,39 @@ R9s **不用 PMI8950 内部的电量计**，而是外挂 **TI BQ27541**（i2c_5 
 
 两个都是"编译完全正常、烧进去必死"的类型。
 
+#### 5. DSI PHY 没打开 / 面板 graph 不成对 / AK4376 挂错总线
+
+（第 17 轮代码审查发现，都是"屏不亮/没声音"的直接原因）
+
+| # | 问题 | 后果 |
+|---|---|---|
+| B-1 | `mdss_dsi0_phy` 仍是 `status="disabled"` | DSI PHY 的 platform_device 根本没创建 → `-EPROBE_DEFER` → msm_dsi 永不 probe → **屏永远不亮** |
+| B-2 | 面板 graph 端点不成对（`mdss_dsi0_out` 没有 `remote-endpoint`） | `drm_of_find_panel_or_bridge()` 返回 `-ENODEV` → `dsi_bind()` 失败 → 同样黑屏 |
+| B-3 | AK4376 挂在根节点下，不在 `&i2c_8` 上 | i2c probe 永不调用 → 声卡 `-EPROBE_DEFER` → **整张声卡注册失败** |
+
+**B-1 特别隐蔽**：`status="disabled"` 的节点**照样留在 dtb 里**，
+而 CI 的 DTB 自检只 grep compatible 字符串，所以自检 100% 通过。
+这类问题只有刷机上电才会暴露。
+
+现在 CI 已加两组断言：
+- 按**节点名**（`phy@1a94400` / `dsi@1a94000` / `panel@0`）检查 status 必须 okay
+- 反编译时若出现 `graph_endpoint ... is not bidirectional` 告警直接 fail
+
+（注意不能按 compatible 判断：R9s 是单 DSI，`phy@1a96400`（dsi1）
+本来就该 disabled，按 compatible 会误报。）
+
+#### 6. Image.gz-dtb 塞进了 1193 个 dtb
+
+照 4.19 的 `find $(obj)/dts/ -name *.dtb` 写，在 6.12 下行不通：
+4.19 的 `dtb-y` 只有 9 个条目（全是本平台），**6.12 mainline 有 1193 个**
+（覆盖所有 ARM64 高通机型）。find 到多少拼多少 → 全塞进去。
+
+后果：体积暴涨 + **ABL 按 board-id 顺序扫 1193 个 dtb，有挑错的风险**。
+
+修法：显式限定 `msm8953-oppo-r9s.dtb` / `msm8953-oppo-r9sk.dtb` 两个。
+打包脚本的自检也从"至少 1 个"升级为"1..4 个"，
+数量异常直接在 CI 拦下。
+
 ### 刷机前
 
 1. **备份原 boot 分区**（TWRP 里 backup boot）—— 卡屏时靠它回滚
