@@ -408,9 +408,23 @@ jobs:
             echo "::warning::需要裁剪 config（去掉 DEBUG_INFO / 不需要的子系统）。"
           fi
 
-          # 直接用内核 Makefile 产出的 Image.gz-dtb（内含全部 dtb）。
-          # 不要在这里手工 cat —— 见上面「编译内核与设备树」那步的注释。
+          # 直接用内核 Makefile 产出的 Image.gz-dtb。
+          # 注意：这个文件里的 dtb 只对"内核自己扫 dtb"的 bootloader 有用；
+          # CAF 的 ABL 是从 boot.img 的 dt 分区取 DTB 的，
+          # 所以还要把两个机型 dtb 单独放进 out/，由 mkflashable.sh
+          # 在刷机时覆盖原厂 dt（详见 ci/mkflashable.sh 的说明）。
           cp arch/arm64/boot/Image.gz-dtb out/Image.gz-dtb
+          # $D 是上一步（DTB 自检）的局部变量，这里不生效，得重新定义
+          DTB_DIR=arch/arm64/boot/dts/qcom
+          for dtbname in msm8953-oppo-r9s.dtb msm8953-oppo-r9sk.dtb; do
+            if [ -f "$DTB_DIR/$dtbname" ]; then
+              cp "$DTB_DIR/$dtbname" out/
+              echo "  已放入 $dtbname ($(stat -c %s "$DTB_DIR/$dtbname") bytes)"
+            else
+              echo "::error::缺少 $DTB_DIR/$dtbname"
+              exit 1
+            fi
+          done
           echo "Image.gz-dtb  = $(stat -c %s out/Image.gz-dtb) bytes"
 
           KREL="$(make -s ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- kernelrelease)"
