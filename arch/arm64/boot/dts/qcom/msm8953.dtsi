@@ -1797,6 +1797,8 @@
 			#address-cells = <1>;
 			#size-cells = <1>;
 			ranges;
+			/* 同 arch timer：19.2 MHz XO。4.9 里有，mainline 没有。 */
+			clock-frequency = <19200000>;
 
 			frame@b121000 {
 				frame-number = <0>;
@@ -2194,5 +2196,18 @@
 			     <GIC_PPI 3 (GIC_CPU_MASK_SIMPLE(8) | IRQ_TYPE_LEVEL_LOW)>,
 			     <GIC_PPI 4 (GIC_CPU_MASK_SIMPLE(8) | IRQ_TYPE_LEVEL_LOW)>,
 			     <GIC_PPI 1 (GIC_CPU_MASK_SIMPLE(8) | IRQ_TYPE_LEVEL_LOW)>;
+		/*
+		 * MSM8953 的 arch timer 参考时钟是 19.2 MHz（XO）。
+		 * 4.9 的 msm8953.dtsi 里显式写了 clock-frequency = <19200000>，
+		 * mainline 版本没有（它假设 firmware 会通过 CNTFRQ_EL0 设好）。
+		 *
+		 * 但 CAF 的 ABL 并不保证设过 CNTFRQ —— 实测日志里
+		 *   arch_timer: No interrupt available, giving up
+		 *   timer_probe: no matching timers found
+		 * 就是定时器根本没起来，内核只能靠 jiffies 兜底，
+		 * 一旦需要真实延时（DRM/USB/充电初始化）就挂死，
+		 * 而且死在 pstore 初始化之前 → 屏幕停在 logo、无任何日志。
+		 */
+		clock-frequency = <19200000>;
 	};
 };

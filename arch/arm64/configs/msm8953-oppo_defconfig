@@ -1902,3 +1902,30 @@ CONFIG_PGTABLE_LEVELS=4
 # 4.19 的 msm8953-perf_defconfig 里这两个都没开。
 # CONFIG_ACPI is not set
 # CONFIG_EFI is not set
+
+# ============================================================
+# 关闭 NUMA / 内存热插拔 / THP —— "卡logo且无日志"的根因
+#
+# MSM8953 是**单 NUMA 节点**的手机 SoC，设备树里没有任何
+# NUMA 距离描述（grep "distance|numa" arch/.../msm8953.dtsi 为 0）。
+# 开了 CONFIG_NUMA 后内核会走 numa_init() 路径尝试解析 NUMA 拓扑，
+# 拿不到距离信息就会在 start_kernel 的**内存初始化阶段**出问题 ——
+# 那个阶段远早于 pstore 的 postcore_initcall，
+# 所以表现为"卡在 ABL 画的 logo、ramoops 里一个字都没有"。
+#
+# 三条对照证据：
+#   1) 诊断内核（10MiB）能启动，它**没开** NUMA/HOTPLUG/THP
+#   2) 4.19 分支（同机真机可启动）也**没开**这三个
+#   3) 正常内核（39MiB）开了 → 卡屏无日志
+#
+# MEMORY_HOTPLUG 对手机毫无意义（焊死的 eMMC/LPDDR），
+# 而且它会把内存模型改成可插拔版本，初始化的分节逻辑更复杂。
+# TRANSPARENT_HUGEPAGE 同理：A53 + 4K 页 + 小内存，用不上，
+# 还会引入 khugepaged 与额外的内存管理路径。
+# ============================================================
+# CONFIG_NUMA is not set
+# CONFIG_NUMA_BALANCING is not set
+# CONFIG_MEMORY_HOTPLUG is not set
+# CONFIG_MEMORY_HOTREMOVE is not set
+# CONFIG_TRANSPARENT_HUGEPAGE is not set
+# CONFIG_ARCH_ENABLE_THP_MIGRATION is not set
