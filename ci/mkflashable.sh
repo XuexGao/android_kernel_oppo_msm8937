@@ -120,7 +120,22 @@ ui_print "  board-id=${AK_BOARD_ID:-unknown} -> $AK_DTB_NAME"
 if [ -f "$AK_DTB_NAME" ] && [ -d "$SPLITIMG" ]; then
   # 判断原厂 dt 的格式（SPLITIMG/dt 由 split_boot 生成）
   AK_DT_FILE="$SPLITIMG/dt"
-  if [ -f "$AK_DT_FILE" ]; then
+
+  # 情况 A：split_boot 没生成 dt 文件。
+  # 这发生在原厂 boot.img 的 dt **不是** QCDT/ELF 的时候 ——
+  # split_boot 会走 `*)` 分支，把原厂 dt 直接 cat 到 kernel.gz-dtb 尾部，
+  # 不生成独立 dt 文件。此时 flash_boot() 的 $dt 为空，
+  # mkbootimg 不带 --dt，ABL 就去 kernel 尾部找 —— 但 6.12 内核
+  # 不会自己扫，所以也拿不到我们的 dtb。
+  #
+  # 解法：我们自己创建 $SPLITIMG/dt，让 flash_boot 用 --dt 传进去。
+  if [ ! -f "$AK_DT_FILE" ]; then
+    ui_print "  原厂无独立 dt，创建 dt（裸 FDT）"
+    cp -f "$AK_DTB_NAME" "$AK_DT_FILE"
+    AK_DT_FILE=""
+  fi
+
+  if [ -n "$AK_DT_FILE" ]; then
     AK_MAGIC="$(od -An -N4 -tx1 "$AK_DT_FILE" 2>/dev/null | tr -d ' \n')"
     case "$AK_MAGIC" in
       51434454*)   # "QCDT"
@@ -164,8 +179,6 @@ PYQCDT
         ;;
     esac
     ui_print "  已替换 dt"
-  else
-    ui_print "  未生成 SPLITIMG/dt，跳过替换"
   fi
 fi
 AKDT
