@@ -34,14 +34,13 @@ on:
   workflow_dispatch:
     inputs:
       build_ref:
-        description: '要构建的分支（4.9 系列）：lineage-22.1（纯净） / sukisu-susfs-bpf（SukiSU） / bakasu-susfs-bpf（BakaSU）'
+        description: '要构建的分支（4.9 系列）：bakasu-susfs-bpf（BakaSU） / sukisu-susfs-bpf（SukiSU）'
         required: false
         type: choice
         default: bakasu-susfs-bpf
         options:
           - bakasu-susfs-bpf
           - sukisu-susfs-bpf
-          - lineage-22.1
       devices:
         description: '要构建的机型，逗号分隔（留空 = 全部 4 个）：R9s,A57,R9sPlus,R9Plus'
         required: false
@@ -90,10 +89,10 @@ jobs:
           BRANCH="${{ inputs.build_ref }}"
           echo "branch=${BRANCH}"
           case "${BRANCH}" in
-            bakasu-susfs-bpf|sukisu-susfs-bpf|lineage-22.1) ;;
+            bakasu-susfs-bpf|sukisu-susfs-bpf) ;;
             *)
               echo "::warning::当前分支 '${BRANCH}' 不在 4.9 系列内"
-              echo "::warning::有效值：lineage-22.1 / sukisu-susfs-bpf / bakasu-susfs-bpf"
+              echo "::warning::有效值：bakasu-susfs-bpf / sukisu-susfs-bpf"
               ;;
           esac
 
@@ -108,10 +107,8 @@ jobs:
           #      （= 30000 + main @ e5423590 的 4512 个提交 + 700，与 Build Manager
           #      工作流产出的 APK 的 versionCode 一致）。
           #      SukiSU 跟随正式版 v4.2.0（versionCode 40900）。
-          #      lineage-22.1 是纯净内核，不带任何 root 方案。
           case "${BRANCH}" in
             sukisu-susfs-bpf) KSU_VERSION="40900" ;;
-            lineage-22.1)     KSU_VERSION="none" ;;
             *)                KSU_VERSION="35212" ;;
           esac
 
@@ -176,15 +173,12 @@ jobs:
       # throne_tracker.* 等为编译所必需），本仓库采用 vendored 方式，不从上游拉取。
       # 包名不含系统版本：同一个包通刷 LOS21 / 22.0 / 22.1。
       # ZIP 前缀按实际构建的分支：
-      #   lineage-22.1      -> LOS221_
       #   sukisu-susfs-bpf  -> SukiSU_
       #   bakasu-susfs-bpf  -> BakaSU_
       ZIP_NAME: >-
-        ${{ (inputs.build_ref) == 'lineage-22.1'
-            && format('LOS221_{0}_{1}.zip', matrix.device, needs.setup.outputs.build_date)
-            || ((inputs.build_ref) == 'sukisu-susfs-bpf'
-                && format('SukiSU_{0}_{1}.zip', matrix.device, needs.setup.outputs.build_date)
-                || format('BakaSU_{0}_{1}.zip', matrix.device, needs.setup.outputs.build_date)) }}
+        ${{ (inputs.build_ref) == 'sukisu-susfs-bpf'
+            && format('SukiSU_{0}_{1}.zip', matrix.device, needs.setup.outputs.build_date)
+            || format('BakaSU_{0}_{1}.zip', matrix.device, needs.setup.outputs.build_date) }}
       # ccache 调优：压缩存储；忽略 __DATE__/__TIME__ 展开（KBUILD_BUILD_TIMESTAMP
       # 每次构建都不同，不设这个会让几乎所有目标文件缓存未命中——这是最大的提速点）。
       # 注意不要用 compilercheck=content：那会在每次调用时哈希整个 clang 二进制，
@@ -212,14 +206,6 @@ jobs:
         working-directory: kernel
         run: |
           set -euo pipefail
-          # lineage-22.1 是纯净内核（无 KernelSU），跳过这个校验。
-          if [ "${{ inputs.build_ref }}" = "lineage-22.1" ]; then
-            echo "纯净内核分支，跳过 KernelSU 校验"
-            if [ -d KernelSU/kernel ]; then
-              echo "::error::lineage-22.1 不应包含 KernelSU 源码"; exit 1
-            fi
-            exit 0
-          fi
           REQUIRED=(
             KernelSU/kernel/manager/apk_sign.c
             KernelSU/kernel/manager/apk_sign.h
@@ -359,14 +345,6 @@ jobs:
         working-directory: kernel
         run: |
           set -euo pipefail
-          # lineage-22.1 是纯净内核（不带任何 root 方案），这三组断言要跳过
-          BRANCH_USED="${{ inputs.build_ref }}"
-          if [ "${BRANCH_USED}" = "lineage-22.1" ]; then
-            if grep -q '^CONFIG_KSU=y' out/.config; then
-              echo "::error::lineage-22.1 是纯净内核，不应带 CONFIG_KSU=y"; exit 1
-            fi
-            echo "✅ 纯净内核确认：无 KernelSU"
-          else
             if [ -f out/.config ] && grep -q '^CONFIG_KSU=y' out/.config; then
               echo "✅ CONFIG_KSU=y 已确认"
             else
@@ -404,23 +382,15 @@ jobs:
                 | awk '{print $3}' | paste -sd.)"
           KV_FULL="${KV}$(grep -E '^EXTRAVERSION' Makefile | awk '{print $3}')"
 
-          # lineage-22.1 是纯净内核：没有 include/linux/susfs.h，
-          # 也没有 KernelSU/kernel/Kbuild。原来无条件 sed/grep 会直接失败
-          # （sed: can't read include/linux/susfs.h）。
-          if [ "${{ inputs.build_ref }}" = "lineage-22.1" ]; then
-            SUSFS_VERSION="none"
-            KSU_REL="none"
-          else
-            [ -f include/linux/susfs.h ] && \
-              SUSFS_VERSION="$(sed -n 's/^#define SUSFS_VERSION "\{0,1\}\(v[0-9.]*\)"\{0,1\}/\1/p' include/linux/susfs.h | head -1)" || \
-              SUSFS_VERSION=""
-            [ -n "${SUSFS_VERSION}" ] || SUSFS_VERSION="unknown"
-            # root 方案的版本钉在 Kbuild 里（上游的 KSU_RELEASE 变量已不存在）。
-            [ -f KernelSU/kernel/Kbuild ] && \
-              KSU_REL="$(grep -E '^KSU_VERSION[[:space:]]*:=' KernelSU/kernel/Kbuild | grep -oE '[0-9]+' | head -1)" || \
-              KSU_REL=""
-            [ -n "${KSU_REL}" ] || KSU_REL="${KSU_VERSION}"
-          fi
+          [ -f include/linux/susfs.h ] && \
+            SUSFS_VERSION="$(sed -n 's/^#define SUSFS_VERSION "\{0,1\}\(v[0-9.]*\)"\{0,1\}/\1/p' include/linux/susfs.h | head -1)" || \
+            SUSFS_VERSION=""
+          [ -n "${SUSFS_VERSION}" ] || SUSFS_VERSION="unknown"
+          # root 方案的版本钉在 Kbuild 里（上游的 KSU_RELEASE 变量已不存在）。
+          [ -f KernelSU/kernel/Kbuild ] && \
+            KSU_REL="$(grep -E '^KSU_VERSION[[:space:]]*:=' KernelSU/kernel/Kbuild | grep -oE '[0-9]+' | head -1)" || \
+            KSU_REL=""
+          [ -n "${KSU_REL}" ] || KSU_REL="${KSU_VERSION}"
           echo "内核版本: ${KV_FULL} | SUSFS: ${SUSFS_VERSION} | root方案: ${KSU_REL}"
           {
             echo "KV_FULL=${KV_FULL}"
@@ -432,14 +402,6 @@ jobs:
         working-directory: kernel
         run: |
           set -euo pipefail
-          # lineage-22.1 是纯净内核，没有 SUSFS，跳过整段校验。
-          if [ "${{ inputs.build_ref }}" = "lineage-22.1" ]; then
-            echo "纯净内核分支，跳过 SUSFS 版本校验"
-            if [ -f include/linux/susfs.h ]; then
-              echo "::error::lineage-22.1 不应包含 include/linux/susfs.h"; exit 1
-            fi
-            exit 0
-          fi
           DECL="$(sed -n 's/^#define SUSFS_VERSION "\(v[0-9.]*\)"/\1/p' include/linux/susfs.h | head -1)"
           echo "include/linux/susfs.h: SUSFS_VERSION=${DECL}"
           [ "${DECL}" = "v2.3.0" ] || { echo "::error::SUSFS 版本应为 v2.3.0，实际 '${DECL}'"; exit 1; }
@@ -471,15 +433,6 @@ jobs:
         working-directory: kernel
         run: |
           set -euo pipefail
-          # lineage-22.1 是纯净内核，跳过所有 KernelSU/SUSFS 相关的隐藏项校验
-          # （这段检查 BakaSU 版本横幅 / KSU_VERSION 钉死值 / Kbuild 不依赖 git 等，
-          #   纯净内核没有这些，读 KernelSU/kernel/Kbuild 会直接失败）。
-          if [ "${{ inputs.build_ref }}" = "lineage-22.1" ]; then
-            echo "纯净内核，跳过 KSU/SUSFS 校验（只保留 dmesg 限制检查）"
-            grep -q '^CONFIG_SECURITY_DMESG_RESTRICT=y$' out/.config \
-              || { echo "::error::缺少 CONFIG_SECURITY_DMESG_RESTRICT=y"; exit 1; }
-            exit 0
-          fi
           FAIL=0
           # 只读构建已经生成好的文件，不再调用 make：这一步跑在
           # `set -e -o pipefail` 下，任何 make 调用（缺 CC=clang 等参数时）都会
@@ -698,11 +651,9 @@ jobs:
       #    同日构建会直接覆盖并清空已有的 SukiSU Release（例如 SukiSU_20261005）
       #    及其全部产物。不同前缀可保证两套 Release 完全隔离。
       TAG_NAME: >-
-        ${{ (inputs.build_ref) == 'lineage-22.1'
-            && format('LOS221_{0}', needs.setup.outputs.build_date)
-            || ((inputs.build_ref) == 'sukisu-susfs-bpf'
-                && format('SukiSU_{0}', needs.setup.outputs.build_date)
-                || format('BakaSU_{0}', needs.setup.outputs.build_date)) }}
+        ${{ (inputs.build_ref) == 'sukisu-susfs-bpf'
+            && format('SukiSU_{0}', needs.setup.outputs.build_date)
+            || format('BakaSU_{0}', needs.setup.outputs.build_date) }}
     steps:
       - name: 检出源码（用于生成 Changes）
         uses: actions/checkout@v4
@@ -740,9 +691,8 @@ jobs:
           # 标题按实际构建的分支区分（一个 action 覆盖 3 个 4.9 分支）
           BRANCH_USED="${{ inputs.build_ref }}"
           case "${BRANCH_USED}" in
-            lineage-22.1)      RELEASE_TITLE="4.9 Kernel ${BUILD_DATE}" ;; 
-            sukisu-susfs-bpf)  RELEASE_TITLE="4.9 Kernel SukiSU + SUSFS ${SUSFS_NUM}" ;; 
-            *)                 RELEASE_TITLE="4.9 Kernel BakaSU + SUSFS ${SUSFS_NUM}" ;; 
+            sukisu-susfs-bpf)  RELEASE_TITLE="4.9 Kernel SukiSU + SUSFS ${SUSFS_NUM}" ;;
+            *)                 RELEASE_TITLE="4.9 Kernel BakaSU + SUSFS ${SUSFS_NUM}" ;;
           esac
           echo "RELEASE_TITLE=${RELEASE_TITLE}"
           echo "RELEASE_TITLE=${RELEASE_TITLE}" >> "$GITHUB_ENV"
