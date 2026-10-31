@@ -25,6 +25,14 @@ on:
   # 这样无需改动默认分支就能手动控制构建。
   workflow_dispatch:
     inputs:
+      build_ref:
+        description: '要构建的分支（4.19 系列）：lineage-22.1-k4.19（纯净） / bakasu-k4.19（BakaSU）'
+        required: false
+        type: choice
+        default: lineage-22.1-k4.19
+        options:
+          - lineage-22.1-k4.19
+          - bakasu-k4.19
       targets:
         description: '要构建的目标，逗号分隔（留空 = 全部）：base,R9s'
         required: false
@@ -34,7 +42,7 @@ on:
         description: '是否发布到 GitHub Releases'
         required: false
         type: boolean
-        default: false
+        default: true
   push:
     branches:
       - lineage-22.1-k4.19
@@ -71,10 +79,15 @@ jobs:
         if: github.event_name == 'push'
         uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.build_ref || github.ref_name }}
           fetch-depth: 1
 
       - name: Generate matrix
         id: gen
+        env:
+          # workflow 文件在默认分支上，从默认分支页触发时 GITHUB_REF_NAME
+          # 是默认分支名而不是目标分支，所以分支判断必须用 inputs.build_ref。
+          BUILD_REF: ${{ inputs.build_ref || github.ref_name }}
         run: |
           set -euo pipefail
 
@@ -122,7 +135,7 @@ jobs:
           # 每个分支只构建自己的产物：lineage-22.1-k4.19 出纯净内核，
           # bakasu-k4.19 出 BakaSU + SUSFS。靠下面的 branch 字段过滤，
           # ci/targets 只是在**本分支的目标里**再选子集（可留空）。
-          BRANCH = os.environ.get("GITHUB_REF_NAME", "")
+          BRANCH = os.environ.get("BUILD_REF", "")
           targets = [
             {
               "target": "base", "label": "4.19 base smoke",
@@ -223,6 +236,8 @@ jobs:
       - name: 检出源码
         uses: actions/checkout@v4
         with:
+          # 实际编译哪个分支由 build_ref 决定（workflow 文件本身在默认分支）
+          ref: ${{ inputs.build_ref || github.ref_name }}
           path: kernel
 
       - name: 安装编译依赖
@@ -452,7 +467,7 @@ jobs:
       # 标题按分支区分：同一个 workflow 被两个分支共用，
       # 纯净版和 BakaSU 版必须能从 Release 标题上一眼分清。
       RELEASE_TITLE: >-
-        ${{ github.ref_name == 'bakasu-k4.19'
+        ${{ (inputs.build_ref || github.ref_name) == 'bakasu-k4.19'
             && format('4.19 Kernel BakaSU {0}', needs.setup.outputs.build_date)
             || format('4.19 Kernel {0}', needs.setup.outputs.build_date) }}
     steps:
@@ -468,7 +483,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: >-
-            ${{ github.ref_name == 'bakasu-k4.19'
+            ${{ (inputs.build_ref || github.ref_name) == 'bakasu-k4.19'
                 && format('v419_bakasu_{0}', env.BUILD_DATE)
                 || format('v419_{0}', env.BUILD_DATE) }}
           name: ${{ env.RELEASE_TITLE }}

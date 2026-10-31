@@ -1,0 +1,551 @@
+name: Build 6.12 Kernel
+
+# 这个 workflow 构建的是 **真正的 Android 内核**：
+#   · 基线：Android Common Kernel (ACK) android16-6.12 —— Linux 6.12.52
+#     + Google 的 Android 补丁（binder / dmabuf heaps / vendor hooks）
+#   · 平台：ACK 继承自主线的 MSM8953 支持（clk / pinctrl / interconnect /
+#     sdhci / usb phy / remoteproc 一应俱全）
+#   · 板级：本项目新增的 OPPO R9s(16017) / R9sk(16027) 设备树
+#
+# 与 4.19 分支（lineage-22.1-k4.19 / bakasu-k4.19）的区别：
+#   4.19 是 CAF downstream，能跑完整 LineageOS；
+#   本分支是 ACK + 主线平台层，缺少高通 vendor 栈
+#   （KGSL / ION / camera / Q6 音频路由 / qpnp 充电电量计），
+#   所以 **还不能跑起 Android 用户态**，属于 bring-up 阶段。
+#
+# 工具链用 GCC：ACK 的 GKI 配置面向 clang，但我们走自定义 defconfig，
+# 不用 LTO/CFI 那些 clang-only 特性，GCC 够用且 CI 上现成。
+
+on:
+  push:
+    branches:
+      - 6.12-test
+    paths:
+      - 'ci/**'
+  workflow_dispatch:
+    inputs:
+      build_ref:
+        description: '要构建的分支（6.12 系列）'
+        required: false
+        type: choice
+        default: 6.12-test
+        options:
+          - 6.12-test
+      device:
+        description: '要构建的机型'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - r9s
+          - r9sk
+      variant:
+        description: '构建哪种配置'
+        required: false
+        default: 'normal'
+        type: choice
+        options:
+          - normal
+          - diag
+      publish_release:
+        description: '是否发布到 GitHub Releases'
+        required: false
+        type: boolean
+        default: true
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    outputs:
+      krel: ${{ steps.meta.outputs.krel }}
+      date: ${{ steps.meta.outputs.date }}
+      variant: ${{ steps.meta.outputs.variant }}
+
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v4
+        with:
+          # workflow 文件在默认分支，实际编译 6.12-test 的源码
+          ref: ${{ inputs.build_ref || '6.12-test' }}
+          fetch-depth: 1
+
+      - name: 安装编译依赖
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            build-essential bc bison flex \
+            gcc-aarch64-linux-gnu \
+            libssl-dev libelf-dev \
+            device-tree-compiler ccache \
+            python3 rsync cpio kmod zstd zip
+
+      - name: 工具链版本
+        run: |
+          set -euo pipefail
+          aarch64-linux-gnu-gcc --version | head -1
+          make --version | head -1
+          ccache --version | head -1
+
+      # ccache 缓存：内核全量编译很慢，二次构建能省一大半时间。
+      # restore-keys 让不同 commit 之间也能复用大部分目标文件
+      # （只有改动的文件会重编）。
+      #
+      # 注意 key 里带 variant：诊断内核是另一套 config，
+      # 和正常内核的目标文件不能混用，否则 ccache 命中率会误导。
+      - name: CCache 缓存
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: kernel612-${{ inputs.variant || 'normal' }}-${{ github.ref_name }}
+          restore-keys: |
+            kernel612-${{ inputs.variant || 'normal' }}-${{ github.ref_name }}-
+            kernel612-${{ inputs.variant || 'normal' }}-
+            kernel612-
+          max-size: 2G
+
+      - name: 配置内核
+        run: |
+          set -euo pipefail
+          set -x
+          # 诊断内核：只保留 ARM64 核心 + 平台最小集 + 串口 + pstore，
+          # 关掉显示/音频/充电/GPU/WiFi。目的是当正常配置仍卡屏、
+          # 且 pstore 拿不到日志时，先证明"内核能起来"，再逐项加回来定位。
+          if [ "${{ inputs.variant || 'normal' }}" = "diag" ]; then
+            CFG=msm8953-oppo-diag_defconfig
+            echo "=== 诊断内核构建（最小配置）==="
+          else
+            CFG=msm8953-oppo_defconfig
+          fi
+          # 写到 GITHUB_ENV，后面几个 step 才看得到。
+          # （各 step 是独立的 shell，普通变量跨不过去；
+          #   配合 set -u 直接报 "CFG: unbound variable"。）
+          echo "CFG=${CFG}" >> "$GITHUB_ENV"
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- "$CFG"
+          echo "--- Android 核心配置："
+          # 加 || true：诊断配置里可能只开部分 Android 项，
+          # 没有匹配时 grep 返回 1，配合 set -e 会直接杀掉 step。
+          grep -E '^CONFIG_(ANDROID_BINDER_IPC|ANDROID_BINDERFS|ANDROID_VENDOR_HOOKS|DMABUF_HEAPS)=' .config || true
+
+          # ---- 架构级断言：错了就是"卡一屏、无任何日志" ----
+          #
+          # MSM8953/MSM8937 是 Cortex-A53（ARMv8.0），只支持 39-bit VA。
+          # ACK 默认给的是 52-bit + 5 级页表，那是 ARMv8.2 的 LPA 扩展，
+          # A53 没有。用 52-bit 会在 head.S 建页表时就挂死，
+          # 现象正是刷机后卡一屏、连 dmesg 都拿不到。
+          #
+          # pstore 也必须全内置：bring-up 阶段没有 init 去 modprobe，
+          # 而卡屏/painc 时唯一的线索就是它。曾经因为 PSTORE_RAM=m
+          # 且没开 PSTORE_CONSOLE，导致完全抓不到崩溃日志。
+          echo "--- 架构与 pstore（错了就卡一屏且无日志）："
+          for sym in ARM64_VA_BITS_39 PSTORE PSTORE_RAM PSTORE_CONSOLE PSTORE_PMSG; do
+            v="$(grep -E "^CONFIG_${sym}=" .config | head -1 || true)"
+            case "$v" in
+              "CONFIG_${sym}=y") echo "  OK   $v" ;;
+              *) echo "::error::关键配置缺失: ${sym} 实际为 '${v:-未设置}'"; exit 1 ;;
+            esac
+          done
+          # VA_BITS 必须真的是 39（上面的 ARM64_VA_BITS_39=y 只是选了
+          # 选项，这里再确认算出来的生效值）。
+          v="$(grep -E '^CONFIG_ARM64_VA_BITS=' .config | head -1 || true)"
+          case "$v" in
+            "CONFIG_ARM64_VA_BITS=39") echo "  OK   $v" ;;
+            *) echo "::error::VA_BITS 必须为 39（Cortex-A53 限制），实际 '${v:-未设置}'"; exit 1 ;;
+          esac
+          # 页表级数必须与 39-bit 匹配（3 级）。Kconfig 会自算，
+          # 但如果有人手改 .config 或引入异常依赖，这里能兜住。
+          v="$(grep -E '^CONFIG_PGTABLE_LEVELS=' .config | head -1 || true)"
+          case "$v" in
+            "CONFIG_PGTABLE_LEVELS=3") echo "  OK   $v" ;;
+            *) echo "::error::PGTABLE_LEVELS 必须为 3（配 39-bit VA），实际 '${v:-未设置}'"; exit 1 ;;
+          esac
+          # 4K 页是 MSM8953 的既定配置（4.9 也是 4K），
+          # 改成 16K/64K 会改变整个内存布局，风险极高。
+          v="$(grep -E '^CONFIG_ARM64_4K_PAGES=' .config | head -1 || true)"
+          case "$v" in
+            "CONFIG_ARM64_4K_PAGES=y") echo "  OK   $v" ;;
+            *) echo "::error::必须用 4K 页，实际 '${v:-未设置}'"; exit 1 ;;
+          esac
+          echo "--- MSM8953 平台："
+          # 同理加 || true：诊断内核没开 USB_DWC3，无匹配时 grep 返回 1，
+          # 配合 set -e 会直接把 step 杀掉。
+          grep -E '^CONFIG_(MSM_GCC_8953|PINCTRL_MSM8953|MMC_SDHCI_MSM|USB_DWC3|QCOM_SMD_RPM)=' .config || true
+          # 充电/电量计也要内置：bring-up 阶段没有 init 去 modprobe，
+          # 而且 Android 的 health HAL 依赖开机就有 battery/charger 设备。
+          # 诊断内核刻意关掉了音频/充电/显示，这些栈断言只在正常配置下跑。
+          if [ "${CFG}" != "msm8953-oppo-diag_defconfig" ]; then
+          echo "--- 音频栈（必须 =y）："
+          for sym in QCOM_APR SND_SOC_QDSP6 SND_SOC_QCOM_COMMON SND_SOC_MSM8953_OPPO; do
+            v="$(grep -E "^CONFIG_${sym}=" .config | head -1 || true)"
+            case "$v" in
+              "CONFIG_${sym}=y") echo "  OK   $v" ;;
+              *) echo "::error::音频栈未内置: ${sym} 实际为 '${v:-未设置}'"; exit 1 ;;
+            esac
+          done
+
+          echo "--- 充电/电量计（必须 =y）："
+          # OPPO 自己的电量计/VOOC：R9s 不用 qpnp-fg 的 SOC，而是外挂
+          # BQ27541(i2c_5 0x55) + STM8S VOOC(0x26)，这两个必须内置，
+          # 否则 battery/charger 设备起不来（health HAL 会拿不到电量）。
+          for sym in QPNP_SMBCHARGER QPNP_FG QPNP_REVID OF_BATTERYDATA \
+                     BATTERY_GAUGE_OPPO_BQ27541 CHARGER_OPPO_VOOC \
+                     OPPO_DEVICE_INFO; do
+            v="$(grep -E "^CONFIG_${sym}=" .config | head -1 || true)"
+            case "$v" in
+              "CONFIG_${sym}=y") echo "  OK   $v" ;;
+              *) echo "::error::充电/电量计未内置: ${sym} 实际为 '${v:-未设置}'"; exit 1 ;;
+            esac
+          done
+          # 显示栈必须全内置：面板驱动是 =y，父驱动若为 =m 则开机时
+          # 不存在，屏幕永远不亮（bring-up 没有 init 去 modprobe）。
+          #
+          # 注意这里**不查 BACKLIGHT_LED**：两个 OPPO 面板驱动都把亮度
+          # 写死在初始化序列的 0x51/0x53 里，不导出 backlight 设备；
+          # 背光是独立的 LM3697 LED 驱动（default-on）负责。
+          echo "--- 显示栈（必须全部 =y）："
+          for sym in DRM_MSM DRM_MSM_DSI DRM_MSM_DSI_14NM_PHY DRM_MSM_MDP5 \
+                     DRM_PANEL_OPPO_EA8064 DRM_PANEL_JDI_R63452 LEDS_LM3697; do
+            v="$(grep -E "^CONFIG_${sym}=" .config | head -1 || true)"
+            case "$v" in
+              "CONFIG_${sym}=y") echo "  OK   $v" ;;
+              *) echo "::error::显示栈未内置: ${sym} 实际为 '${v:-未设置}'"; exit 1 ;;
+            esac
+          done
+          else
+            echo "--- 诊断内核：跳过音频/充电/显示栈断言（这些栈被刻意关闭）"
+            # 诊断内核反过来断言"它们确实关掉了"，确保是真的最小集。
+            for sym in DRM_MSM QCOM_APR SND_SOC_QDSP6 QPNP_SMBCHARGER QCOM_KGSL; do
+              # 这里**故意**让 grep 找不到时返回 1（正是我们要的"已关闭"），
+              # 但外壳在 set -e 下会因此终止，所以要 || true 吃掉返回码。
+              v="$(grep -E "^CONFIG_${sym}=" .config || true)"
+              if [ -n "$v" ]; then
+                echo "::error::诊断内核不该启用 ${sym}，实际 '${v}'"; exit 1
+              else
+                echo "  OK   ${sym} 已关闭"
+              fi
+            done
+          fi
+
+      - name: 编译内核与设备树
+        run: |
+          set -euo pipefail
+          # 关键：用 Image.gz-dtb，而不是 Image + dtbs 再手工拼。
+          #
+          # CAF 的 ABL/lk 不是从 x0 拿一份 DTB，而是在 Image.gz-dtb
+          # 这个「gzip 流 + 若干 dtb」的拼接体里，按 root 节点的
+          # qcom,msm-id / qcom,board-id 自己挑匹配的那份。
+          #
+          # 之前我用 `cat Image.gz <单个dtb>` 手工拼，ABL 认不出来，
+          # 就退回了它内置的 CAF DTB —— 那是 4.9 时代的节点名
+          # （modem_region@0 / wake-gic@601d4 / venus_region@0），
+          # 和 mainline 6.12 的驱动树完全对不上，于是
+          # arch_timer 拿不到中断、外设全废。
+          #
+          # 这个报错来自实测 pstore 日志，不是推测。
+          #
+          # 4.9 / 4.19 分支都用 make Image.gz-dtb，且真机验证可启动。
+          # 用 ccache 包装 gcc：CC="ccache aarch64-linux-gnu-gcc"
+          # 与 CROSS_COMPILE 一起给出，内核的 cc-option 探测才能正常走。
+          export KBUILD_BUILD_USER="XuexGao"
+          export KBUILD_BUILD_HOST="localhost"
+          export KBUILD_BUILD_TIMESTAMP="$(date -u +'%a %d %b %Y %H:%M:%S UTC')"
+          # 顺序很重要：**先 dtbs，再 Image.gz-dtb**。
+          #
+          # 4.19 分支靠 arch/arm64/Makefile 里的
+          #     all: $(KBUILD_DTBS) $(KBUILD_TARGET)
+          # 自动保证这个顺序；6.12 没有这一行，所以在这里显式分两步。
+          #
+          # 如果反过来，Image.gz-dtb 规则里的 $(shell find ...)
+          # 拿到的 DTB_OBJS 是空的，cat 只拼出个 Image.gz，
+          # ABL 认不出就退回它内置的 CAF DTB（实测日志见过）。
+          # （recipe 里有兜底自检，空的会报错退出，不会静默产出坏包。）
+          # ---- 机型选择 ----
+          # device=all    -> 两个 dtb 都拼（一个包通刷 16017/16027）
+          # device=r9s    -> 只拼 r9s (16017, EA8064 AMOLED)
+          # device=r9sk   -> 只拼 r9sk (16027, JDI R63452)
+          #
+          # 通过 make 变量 CAF_DTB_NAMES 覆盖 Makefile 里的默认值
+          # （arch/arm64/boot/Makefile 用的是 ?= 语义的可覆盖变量）。
+          case "${{ inputs.device || 'all' }}" in
+            r9s)  DTB_NAMES="msm8953-oppo-r9s.dtb" ;;
+            r9sk) DTB_NAMES="msm8953-oppo-r9sk.dtb" ;;
+            *)    DTB_NAMES="msm8953-oppo-r9s.dtb msm8953-oppo-r9sk.dtb" ;;
+          esac
+          echo "机型选择: ${{ inputs.device || 'all' }} -> dtb: ${DTB_NAMES}"
+          echo "DTB_NAMES=${DTB_NAMES}" >> "$GITHUB_ENV"
+
+          make ARCH=arm64 \
+            CC="ccache aarch64-linux-gnu-gcc" \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            -j"$(nproc)" dtbs 2>&1 | tee build.log
+
+          make ARCH=arm64 \
+            CC="ccache aarch64-linux-gnu-gcc" \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CAF_DTB_NAMES="${DTB_NAMES}" \
+            -j"$(nproc)" Image.gz-dtb 2>&1 | tee -a build.log
+
+          echo "::group::CCache 统计"
+          ccache -s || true
+          echo "::endgroup::"
+
+      # 反编译 dtb 做静态自检：显示链路/面板/偏压必须真的进了 dtb，
+      # 否则一旦有人把 status 改回 disabled 或删了面板节点，CI 会直接失败，
+      # 而不是等到刷机才发现屏不亮。
+      # 反编译 dtb 做静态自检：显示链路/面板/偏压必须真的进了 dtb。
+      # 一旦有人把 status 改回 disabled、删了面板节点，或把 simpledrm 加回来，
+      # CI 直接失败，而不是等刷机才发现屏不亮。
+      - name: DTB 自检（显示链路）
+        run: |
+          set -euo pipefail
+          D=arch/arm64/boot/dts/qcom
+          fail=0
+
+          check() {
+            local dtb="$1" pat="$2" desc="$3"
+            if dtc -I dtb -O dts "$dtb" 2>/dev/null | grep -q "$pat"; then
+              echo "  OK   $desc"
+            else
+              echo "  FAIL $desc  (未在 $(basename "$dtb") 里找到 '$pat')"
+              fail=1
+            fi
+          }
+
+          echo "=== r9sk (16027, 实机) ==="
+          check "$D/msm8953-oppo-r9sk.dtb" 'oppo,r63452-cmd'       'JDI R63452 面板节点'
+          check "$D/msm8953-oppo-r9sk.dtb" 'qcom,pmi8998-lab-ibb'  'LAB/IBB 偏压'
+          check "$D/msm8953-oppo-r9sk.dtb" 'qcom,msm8953-dsi-ctrl' 'DSI 控制器'
+
+          echo "=== r9s (16017) ==="
+          check "$D/msm8953-oppo-r9s.dtb" 'oppo,ea8064-cmd'        'Samsung EA8064 面板节点'
+          check "$D/msm8953-oppo-r9s.dtb" 'qcom,msm8953-dsi-ctrl'  'DSI 控制器'
+
+          echo "=== simpledrm 必须移除（否则和 mdss 抢屏 → 花屏）==="
+          for d in r9s r9sk; do
+            if dtc -I dtb -O dts "$D/msm8953-oppo-$d.dtb" 2>/dev/null | grep -q 'simple-framebuffer'; then
+              echo "  FAIL $d 仍含 simple-framebuffer"; fail=1
+            else
+              echo "  OK   $d 已移除 simpledrm 节点"
+            fi
+          done
+
+          # ---- 关键：断言主 DSI 链路的 status 不是 disabled ----
+          #
+          # 上面那些 check 只 grep compatible 字符串，
+          # 而 status="disabled" 的节点**照样会留在 dtb 里** ——
+          # 所以「DSI PHY 是 disabled」这类启动杀手完全查不出来。
+          # （真的踩过：mdss_dsi0_phy 忘开，dtb 自检 100% 通过，
+          #   刷上去黑屏，因为 of_platform_device_create_pdata() 对
+          #   disabled 节点直接返回 NULL → DSI 永远 probe 不上。）
+          #
+          # 注意必须按**节点路径**判断，不能按 compatible：
+          #   R9s 是单 DSI，phy@1a94400(dsi0) 必须 okay，
+          #   而 phy@1a96400(dsi1) 本来就该是 disabled，不能误报。
+          echo "=== 主 DSI 链路 status 必须为 okay ==="
+          for d in r9s r9sk; do
+            dts_tmp="$(mktemp)"
+            dtc -I dtb -O dts "$D/msm8953-oppo-$d.dtb" 2>/dev/null > "$dts_tmp"
+
+            python3 - "$dts_tmp" "$d" <<'PYSTAT' || fail=1
+          import re, sys
+          path, name = sys.argv[1], sys.argv[2]
+          txt = open(path).read()
+
+          # (节点名, 说明) —— 按 dtb 里的实际节点名匹配
+          must_okay = [
+              ('phy@1a94400',  'DSI0 PHY'),
+              ('dsi@1a94000',  'DSI0 控制器'),
+              ('panel@0',      '面板'),
+              ('display-controller@1a01000', 'MDP5'),
+          ]
+          bad = []
+          for node, label in must_okay:
+              # 抓该节点的完整块（用非贪婪匹配到下一个同级 }）
+              m = re.search(r'\b' + re.escape(node) + r' \{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', txt)
+              if not m:
+                  # 面板等节点可能带别的名字，跳过缺失的不算错
+                  continue
+              if 'status = "disabled"' in m.group(0):
+                  bad.append(label)
+          if bad:
+              print(f'  FAIL {name}: 仍是 disabled -> ' + ', '.join(bad))
+              sys.exit(1)
+          print(f'  OK   {name} 主 DSI 链路已启用')
+          PYSTAT
+
+            rm -f "$dts_tmp"
+          done
+
+          # ---- dtc 编译期 warning：graph 端点不成对 ----
+          echo "=== graph_endpoint 告警检查 ==="
+          for d in r9s r9sk; do
+            if dtc -I dtb -O dts "$D/msm8953-oppo-$d.dtb" 2>&1 >/dev/null | grep -q 'graph_endpoint'; then
+              echo "  FAIL $d 有 graph_endpoint 告警（面板链接不成对）"; fail=1
+            else
+              echo "  OK   $d 无 graph_endpoint 告警"
+            fi
+          done
+
+          exit $fail
+
+      - name: 打包产物
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          cp arch/arm64/boot/Image out/Image
+          gzip -9 -c arch/arm64/boot/Image > out/Image.gz
+
+          # ---- 尺寸检查：这是"刷完卡一屏"的头号嫌疑 ----
+          #
+          # 4.9 LineageOS 内核的启动日志显示它自身约 30.1 MiB
+          #   (15870K code + 2426K rwdata + 6324K rodata + 4096K init + 2101K bss)
+          # 而 R9s 的 boot 分区只有 32 MiB 左右。
+          #
+          # ACK 6.12 的 Image 比 4.9 大得多（多出的子系统+调试信息），
+          # 一旦 Image.gz-dtb 超过 boot 分区，刷写能成功但 bootloader
+          # 解压/加载时放不下，表现正是"卡在一屏不动、进不了系统"。
+          #
+          # 这里把真实尺寸打出来，超过 32 MiB 直接让 CI 失败，
+          # 免得又刷一次刷成砖看不到原因。
+          IMG=$(stat -c %s out/Image)
+          IMG_MIB=$((IMG / 1024 / 1024))
+          echo "Image(未压缩) = ${IMG} bytes (${IMG_MIB} MiB)"
+
+          # ---- Image header 检查 ----
+          #
+          # CAF(ABL/lk) 沿用的是 4.x 的约定：Image 的 text_offset 字段
+          # 应为 0x80000（512KB）。而 mainline 从 v4.2 起把这个字段
+          # 置 0（表示位置无关），实际偏移由链路时的 _text 决定。
+          #
+          # 如果 ABL 硬编码读 text_offset 来决定加载地址，那么 0 会让它
+          # 把内核装到内存起始处，入口点就错位了 —— 表现正是
+          # "卡在 ABL 画的那屏 logo、内核一行日志都没有"。
+          #
+          # 这里把 header 关键字段打出来，用肉眼比对。
+          #
+          # 用一行 python3，避免 YAML 块里多行代码的缩进问题。
+          python3 -c 'import struct;d=open("out/Image","rb").read(64);c0,c1=struct.unpack("<II",d[0:8]);to,isz,fl=struct.unpack("<QQQ",d[8:32]);mg=struct.unpack("<I",d[56:60])[0];print("  header.code0       = 0x%08x"%c0);print("  header.text_offset = 0x%x"%to);print("  header.image_size  = 0x%x (%.1f MiB)"%(isz,isz/1048576));print("  header.flags       = 0x%x"%fl);print("  header.magic       = 0x%08x"%mg)'
+
+          echo "Image.gz      = $(stat -c %s out/Image.gz) bytes"
+          BOOTLIMIT=$((32 * 1024 * 1024))
+          if [ "$IMG" -gt "$BOOTLIMIT" ]; then
+            echo "::warning::Image ${IMG_MIB} MiB 超过 32 MiB boot 分区上限！"
+            echo "::warning::这会导致刷机后卡一屏：bootloader 放不下解压后的内核。"
+            echo "::warning::需要裁剪 config（去掉 DEBUG_INFO / 不需要的子系统）。"
+          fi
+
+          # 直接用内核 Makefile 产出的 Image.gz-dtb（内含全部 dtb）。
+          # 不要在这里手工 cat —— 见上面「编译内核与设备树」那步的注释。
+          cp arch/arm64/boot/Image.gz-dtb out/Image.gz-dtb
+          echo "Image.gz-dtb  = $(stat -c %s out/Image.gz-dtb) bytes"
+
+          KREL="$(make -s ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- kernelrelease)"
+          # 变体后缀：诊断内核产物的文件名带 -diag，避免和正常包混淆。
+          if [ "${CFG}" = "msm8953-oppo-diag_defconfig" ]; then
+            VARIANT=-diag
+          else
+            VARIANT=
+          fi
+          {
+            echo "KERNEL_RELEASE=${KREL}"
+            echo "BASE=ACK android16-6.12"
+            echo "COMMIT=$(git rev-parse --short HEAD)"
+            echo "VARIANT=${VARIANT}"
+          } | tee out/meta.env
+
+          ls -la out/
+          chmod +x ci/mkflashable.sh
+
+      - name: 打包 AnyKernel3 刷机包
+        run: |
+          set -euo pipefail
+          KREL="$(make -s ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- kernelrelease)"
+          # CFG 由上一个 step 通过 GITHUB_ENV 传下来；不要在这里读 VARIANT
+          # （那也是别的 step 的局部变量）。
+          if [ "${CFG}" = "msm8953-oppo-diag_defconfig" ]; then
+            SUF="-diag"
+          else
+            SUF=""
+          fi
+          ci/mkflashable.sh out "r9s-android-6.12${SUF}-${KREL}-$(date +%Y%m%d).zip"
+
+      - name: 输出构建信息
+        id: meta
+        run: |
+          set -euo pipefail
+          KREL="$(make -s ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- kernelrelease)"
+          echo "krel=${KREL}" >> "$GITHUB_OUTPUT"
+          echo "date=$(date +%Y%m%d)" >> "$GITHUB_OUTPUT"
+          if [ "${CFG}" = "msm8953-oppo-diag_defconfig" ]; then
+            echo "variant=diag" >> "$GITHUB_OUTPUT"
+          else
+            echo "variant=normal" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: "android-6.12-msm8953-${{ inputs.variant || 'normal' }}-${{ github.sha }}"
+          path: out/*
+          if-no-files-found: error
+
+      - name: 失败时上传构建日志
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: "android-6.12-buildlog-${{ github.sha }}"
+          path: build.log
+          if-no-files-found: ignore
+
+  # ---------------------------------------------------------------------------
+  # 发布：手动触发且勾选 publish_release 时才跑
+  #
+  # 标题格式与 4.9 / 4.19 分支保持一致：
+  #     "6.12 Kernel"                       （纯净版）
+  #     "6.12 Kernel SukiSU"                （带 SukiSU）
+  #     "6.12 Kernel BakaSU"                （带 BakaSU）
+  # 本分支目前只有纯净版；diag 变体带后缀以便区分。
+  # ---------------------------------------------------------------------------
+  release:
+    name: Create GitHub Release
+    needs: [build]
+    if: inputs.publish_release && !cancelled()
+    runs-on: ubuntu-latest
+    env:
+      BUILD_DATE: ${{ needs.build.outputs.date }}
+      KREL: ${{ needs.build.outputs.krel }}
+      VARIANT: ${{ needs.build.outputs.variant }}
+    steps:
+      - name: 下载产物
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: 列出产物
+        run: find dist -type f | sort
+
+      - name: 发布 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: 6.12_${{ env.BUILD_DATE }}
+          name: "6.12 Kernel ${{ env.KREL }} ${{ env.BUILD_DATE }}"
+          body: |
+            > **6.12 Kernel**（ACK android16-6.12 基线）
+            >
+            > 分支：`${{ github.ref_name }}`　变体：`${{ env.VARIANT }}`
+            > 内核版本：`${{ env.KREL }}`
+            >
+            > ⚠️ **bring-up 阶段**：显示/触摸/USB/存储/充电/电量计/音频已移植，
+            > 但**尚未在任何真机上验证通过**。GPU(KGSL)、外放(TFA98XX)、相机
+            > 仍未接入。刷机前务必备份 boot 分区。
+          files: dist/**/*.zip
+          fail_on_unmatched_files: false
+          draft: true
