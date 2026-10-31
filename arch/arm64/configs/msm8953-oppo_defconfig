@@ -1929,3 +1929,25 @@ CONFIG_PGTABLE_LEVELS=4
 # CONFIG_MEMORY_HOTREMOVE is not set
 # CONFIG_TRANSPARENT_HUGEPAGE is not set
 # CONFIG_ARCH_ENABLE_THP_MIGRATION is not set
+
+# ============================================================
+# MAILBOX 必须开 —— 否则整条 SMD/RPM 链被 Kconfig 静默丢弃
+#
+# MSM8953 的 RPM/modem/adsp/wcnss 通信全靠 shared memory + mailbox。
+# 下面这几个符号在 defconfig 里写了，但都 depends on MAILBOX：
+#     RPMSG_QCOM_SMD    depends on MAILBOX
+#     QCOM_SMP2P        depends on MAILBOX
+#     QCOM_SMSM         depends on MAILBOX
+# Kconfig 遇到依赖不满足时**不会报错**，只是把符号丢掉。
+#
+# 实测（本提交之前）：
+#     .config: # CONFIG_MAILBOX is not set
+#     defconfig 写了 CONFIG_RPMSG_QCOM_SMD=y / QCOM_SMP2P=y / QCOM_SMSM=y
+#     结果 .config 里一个都不存在
+#
+# 而 CONFIG_QCOM_SMD_RPM=y 恰好**不依赖** MAILBOX，
+# 所以 CI 的现有断言全绿，但运行时功能全废：
+#   rpmcc 拿不到 XO → gcc-msm8953 时钟不注册
+#   → DRM / sdhci / USB 全部 -EPROBE_DEFER
+# ============================================================
+CONFIG_MAILBOX=y

@@ -75,6 +75,8 @@ cp "$OUT/Image.gz-dtb" Image.gz-dtb
 for d in msm8953-oppo-r9s.dtb msm8953-oppo-r9sk.dtb; do
   [ -f "$OUT/$d" ] && cp "$OUT/$d" "./$d"
 done
+# msm_id/board_id 由构建阶段用 dtc 提取好，刷机时直接读，避免在设备上解析 FDT
+[ -f "$OUT/msm8953-oppo-dtb-ids.txt" ] && cp "$OUT/msm8953-oppo-dtb-ids.txt" .
 
 # 保险：必须已经在 ak3-tpl 里
 [ -f anykernel.sh ] || { echo "不在 ak3-tpl 目录，anykernel.sh 不存在" >&2; exit 1; }
@@ -140,32 +142,48 @@ if [ -f "$AK_DTB_NAME" ] && [ -d "$SPLITIMG" ]; then
     case "$AK_MAGIC" in
       51434454*)   # "QCDT"
         ui_print "  原厂 dt 是 QCDT 格式，生成新的 QCDT"
+        # msm_id / board_id 由构建阶段写进 msm8953-oppo-dtb-ids.txt
+        # （格式：机型文件名 msm_id board_id，每行一条）。
+        # 刷机时直接读这个文本，不再在设备上解析 FDT 二进制 ——
+        # 手写 FDT 解析器太容易出错（对齐、NOP、END_NODE 的细节），
+        # 而构建阶段有 dtc 可用，可靠性高得多。
         python3 - "$AK_DT_FILE" "$AK_DTB_NAME" <<'PYQCDT'
-import struct, sys
+import struct, sys, os
+
 out_path, dtb_path = sys.argv[1], sys.argv[2]
 dtb = open(dtb_path, 'rb').read()
-# 从 dtb 根节点读 qcom,msm-id / qcom,board-id（简化：用已知值）
-# MSM8953 = 293, R9s=16017 / R9sk=16027
-import re
-def read_prop(name):
-    # 粗略从 dtb 结构块里找，失败就用默认
-    return None
-# 本仓库 msm8953-oppo-r9s/r9sk 的已知标识
-if 'r9s' in dtb_path and 'r9sk' not in dtb_path:
-    msm_id, board_id = 293, 16017
-else:
-    msm_id, board_id = 293, 16027
-# QCDT: magic(4) version(4) num_entries(4) 然后每条 20 字节
-# QCDT 布局：magic(4) + version(4) + num_entries(4) + entry[20]
-# entry = platform_id(msm_id) + variant_id + soc_rev + offset + size
-# offset 是相对文件头的数据偏移 = 12 + 20*n
-hdr_len = 12
-entry_len = 20
-data_off = hdr_len + entry_len   # 单条目时 = 32
-hdr = b'QCDT' + struct.pack('<II', 1, 1)
-entry = struct.pack('<IIIII', msm_id, 0, 0, data_off, len(dtb))
-open(out_path, 'wb').write(hdr + entry + dtb)
-print(f"    QCDT: msm_id={msm_id} board_id={board_id} dtb={len(dtb)}B")
+base = os.path.basename(dtb_path)
+
+msm_id = board_id = None
+ids_file = 'msm8953-oppo-dtb-ids.txt'
+if os.path.exists(ids_file):
+    for line in open(ids_file):
+        parts = line.split()
+        if len(parts) == 3 and parts[0] == base:
+            msm_id, board_id = int(parts[1]), int(parts[2])
+            break
+
+if msm_id is None or board_id is None:
+    # 兜底：按机型名硬编码（本仓库只有这两个机型）
+    if 'r9sk' in base:
+        msm_id, board_id = 293, 16027
+    elif 'r9s' in base:
+        msm_id, board_id = 293, 16017
+    else:
+        msm_id, board_id = 293, 16027
+
+# QCDT: magic 'QCDT'(4) + version=1(4) + num_entries=1(4)
+#       + entry[20] = platform_id/variant_id/soc_rev/offset/size
+#       + dtb（按 4096 对齐）
+hdr_len, entry_len = 12, 20
+data_start = hdr_len + entry_len
+pad = (-len(dtb)) % 4096
+out = b'QCDT' + struct.pack('<II', 1, 1)
+out += struct.pack('<IIIII', msm_id, board_id, 0, data_start, len(dtb))
+out += dtb + b'\x00' * pad
+open(out_path, 'wb').write(out)
+print(f"    QCDT: msm_id={msm_id} board_id={board_id} "
+      f"dtb={len(dtb)}B pad={pad}B total={len(out)}B")
 PYQCDT
         ;;
       d00dfeed*)

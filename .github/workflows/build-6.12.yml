@@ -420,6 +420,20 @@ jobs:
             if [ -f "$DTB_DIR/$dtbname" ]; then
               cp "$DTB_DIR/$dtbname" out/
               echo "  已放入 $dtbname ($(stat -c %s "$DTB_DIR/$dtbname") bytes)"
+              # 用 dtc 反编译，从根节点读 qcom,msm-id / qcom,board-id，
+              # 写进 ids 文本供刷机时重建 QCDT 用。
+              # （在设备上用 shell/python 解析 FDT 二进制极易出错，
+              #   构建阶段有 dtc 就没必要冒那个险。）
+              DTXT="$(mktemp)"
+              dtc -I dtb -O dts "$DTB_DIR/$dtbname" 2>/dev/null > "$DTXT"
+              # msm-id 取第一个 0x；board-id 取最后一个 0x（格式是 <8 0 16027>）
+              MSM_ID="$(grep -m1 'qcom,msm-id' "$DTXT" | grep -oE '0x[0-9a-f]+' | head -1)"
+              BRD_ID="$(grep -m1 'qcom,board-id' "$DTXT" | grep -oE '0x[0-9a-f]+' | tail -1)"
+              rm -f "$DTXT"
+              MSM_D=$((MSM_ID))
+              BRD_D=$((BRD_ID))
+              echo "$dtbname $MSM_D $BRD_D" >> out/msm8953-oppo-dtb-ids.txt
+              echo "    ids: msm_id=$MSM_D board_id=$BRD_D"
             else
               echo "::error::缺少 $DTB_DIR/$dtbname"
               exit 1
