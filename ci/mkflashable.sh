@@ -7,25 +7,34 @@
 # 前置：out/ 里要有 Image.gz-dtb（由 CI 的 make Image.gz-dtb 产出）。
 #
 # ---------------------------------------------------------------------------
-# 为什么直接吃 Image.gz-dtb，而不是自己拼 Image.gz + dtb
+# 关于 DTB：ABL **不读 kernel 尾部**，必须放进 boot.img 的 dt 区
 # ---------------------------------------------------------------------------
 #
-# Qualcomm 的 bootloader（ABL/lk）不像 mainline 那样从 x0 拿一份 DTB。
-# 它在 Image.gz-dtb 这个「gzip 流 + 若干 dtb」的拼接体里，
-# 按每个 dtb 的 root 节点 qcom,msm-id / qcom,board-id 自己挑匹配的那份。
+# 历史教训：我一开始以为 CAF 的 ABL 会在 Image.gz-dtb 这个
+# 「gzip 流 + 若干 dtb」的拼接体里按 msm-id/board-id 挑 dtb。
+# **这是错的。**
 #
-# 如果只给一个裸 Image.gz，或者手工 `cat Image.gz <某个dtb>`，
-# ABL 认不出来就退回它内置的 CAF DTB —— 那是 4.9 时代的节点名
-# （modem_region@0 / wake-gic@601d4 / venus_region@0），
-# 与 mainline 6.12 的驱动树完全对不上，实测 pstore 日志里是：
-#     arch_timer: No interrupt available, giving up
-#     Failed to initialize '/soc/timer@b120000': -22
-# 外设全废，最后 VFS 挂不上 rootfs 而 panic。
+# 实际情况（逐行读 AnyKernel3 的 tools/ak3-core.sh 确认）：
 #
-# 所以这里严格照 4.9 / 4.19 分支的做法：内核 Makefile 里
-#     $(obj)/Image.gz-dtb: $(obj)/Image.gz $(DTB_OBJS) FORCE
-#             $(call if_changed,cat)
-# 把 dts 目录下**所有** dtb 拼上去，打包脚本只负责搬运。
+#   split_boot():101-104
+#       原厂 boot.img 的 dt 若是 QCDT → 存成 $SPLITIMG/dt（**原厂的**）
+#       若是裸 FDT → cat 进 kernel.gz-dtb 尾部（没有任何东西会读它）
+#
+#   flash_boot():349-356  找 $dt，命中 $SPLITIMG/dt
+#   flash_boot():381      mkbootimg ... --dt $SPLITIMG/dt
+#                         ↑ 原厂 QCDT 原样写回
+#
+#   ABL 从 boot.img 的 dt 区取 DTB → 内核拿到的一直是 CAF 的原厂 DTB
+#
+# 所以正确做法是：把我们的 dtb 做成 boot.img 的 dt 区。
+# 本脚本的 ak3-oppo-replace-dt.sh 就是在 dump_boot 之后、
+# write_boot 之前把 $SPLITIMG/dt 换成我们的（QCDT/裸FDT 都处理）。
+#
+# Image.gz-dtb 仍然保留（无害），但**不要指望它能让 ABL 用上我们的 DTB**。
+#
+# 判据：刷机后 pstore 里 `Machine model` 应该是 "OPPO R9sk"，
+# 而不是 "Qualcomm Technologies, Inc. MSM8953 + PMI8950 MTP"。
+#
 # ---------------------------------------------------------------------------
 
 set -euo pipefail

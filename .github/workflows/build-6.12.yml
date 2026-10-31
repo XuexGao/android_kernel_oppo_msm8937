@@ -128,7 +128,12 @@ jobs:
           # 而卡屏/painc 时唯一的线索就是它。曾经因为 PSTORE_RAM=m
           # 且没开 PSTORE_CONSOLE，导致完全抓不到崩溃日志。
           echo "--- 架构与 pstore（错了就卡一屏且无日志）："
-          for sym in ARM64_VA_BITS_39 PSTORE PSTORE_RAM PSTORE_CONSOLE PSTORE_PMSG; do
+          # MAILBOX 是 SMD/RPM 链的根依赖：它不开，下面这些符号会被
+          # Kconfig **静默丢弃**（不报错），导致 rpmcc 拿不到 XO、
+          # 时钟不注册、DRM/sdhci/USB 全部 -EPROBE_DEFER。
+          # 这个坑真的踩过：CI 断言全绿但功能全废。
+          for sym in ARM64_VA_BITS_39 PSTORE PSTORE_RAM PSTORE_CONSOLE PSTORE_PMSG \
+                     MAILBOX RPMSG_QCOM_SMD QCOM_SMP2P QCOM_SMSM QCOM_APCS_IPC; do
             v="$(grep -E "^CONFIG_${sym}=" .config | head -1 || true)"
             case "$v" in
               "CONFIG_${sym}=y") echo "  OK   $v" ;;
