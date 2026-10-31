@@ -345,25 +345,23 @@ jobs:
         working-directory: kernel
         run: |
           set -euo pipefail
-            if [ -f out/.config ] && grep -q '^CONFIG_KSU=y' out/.config; then
-              echo "✅ CONFIG_KSU=y 已确认"
-            else
-              echo "::error::CONFIG_KSU=y 未设置，未编译进 root 方案（分支 ${BRANCH_USED}）"
-              exit 1
-            fi
-            # hook 模式必须落在 SUSFS inline；若退回 TRACEPOINT 会在 Kbuild 直接 $(error)，
-            # 但真到了产物阶段还发现 TP hook 就说明选择逻辑被改坏了。
-            grep -q '^CONFIG_KSU_SUSFS=y' out/.config \
-              || { echo "::error::CONFIG_KSU_SUSFS=y 未生效（SUSFS inline 模式是既定选择）"; exit 1; }
-            if grep -q '^CONFIG_KSU_TRACEPOINT_HOOK=y' out/.config; then
-              echo "::error::CONFIG_KSU_TRACEPOINT_HOOK=y 在 non-GKI 4.9 上不可用"; exit 1
-            fi
-            if grep -q '^CONFIG_KSU_MANUAL_HOOK=y' out/.config; then
-              echo "::error::CONFIG_KSU_MANUAL_HOOK=y 会与 KSU_SUSFS 互斥（同为 choice 项）"; exit 1
-            fi
-            echo "✅ hook 模式确认：SUSFS inline（非 TP / 非 manual）"
+          if [ -f out/.config ] && grep -q '^CONFIG_KSU=y' out/.config; then
+            echo "✅ CONFIG_KSU=y 已确认"
+          else
+            echo "::error::CONFIG_KSU=y 未设置，未编译进 root 方案"
+            exit 1
           fi
-
+          # hook 模式必须落在 SUSFS inline；若退回 TRACEPOINT 会在 Kbuild 直接 $(error)，
+          # 但真到了产物阶段还发现 TP hook 就说明选择逻辑被改坏了。
+          grep -q '^CONFIG_KSU_SUSFS=y' out/.config \
+            || { echo "::error::CONFIG_KSU_SUSFS=y 未生效（SUSFS inline 模式是既定选择）"; exit 1; }
+          if grep -q '^CONFIG_KSU_TRACEPOINT_HOOK=y' out/.config; then
+            echo "::error::CONFIG_KSU_TRACEPOINT_HOOK=y 在 non-GKI 4.9 上不可用"; exit 1
+          fi
+          if grep -q '^CONFIG_KSU_MANUAL_HOOK=y' out/.config; then
+            echo "::error::CONFIG_KSU_MANUAL_HOOK=y 会与 KSU_SUSFS 互斥（同为 choice 项）"; exit 1
+          fi
+          echo "✅ hook 模式确认：SUSFS inline（非 TP / 非 manual）"
       - name: 收集内核模块（若有 .ko）
         working-directory: kernel
         run: |
