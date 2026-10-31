@@ -432,6 +432,14 @@ jobs:
         working-directory: kernel
         run: |
           set -euo pipefail
+          # lineage-22.1 是纯净内核，没有 SUSFS，跳过整段校验。
+          if [ "${{ inputs.build_ref }}" = "lineage-22.1" ]; then
+            echo "纯净内核分支，跳过 SUSFS 版本校验"
+            if [ -f include/linux/susfs.h ]; then
+              echo "::error::lineage-22.1 不应包含 include/linux/susfs.h"; exit 1
+            fi
+            exit 0
+          fi
           DECL="$(sed -n 's/^#define SUSFS_VERSION "\(v[0-9.]*\)"/\1/p' include/linux/susfs.h | head -1)"
           echo "include/linux/susfs.h: SUSFS_VERSION=${DECL}"
           [ "${DECL}" = "v2.3.0" ] || { echo "::error::SUSFS 版本应为 v2.3.0，实际 '${DECL}'"; exit 1; }
