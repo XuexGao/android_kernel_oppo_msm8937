@@ -218,10 +218,18 @@ p = 'anykernel.sh'
 s = open(p).read()
 m = re.search(r'^dump_boot;', s, re.M)
 assert m, 'anykernel.sh 里找不到 dump_boot;'
-# 插在 dump_boot; 这一行之后（dump 完才有 SPLITIMG/dt）
-s = s[:m.end()] + '\n. ./ak3-oppo-replace-dt.sh\n' + s[m.end():]
+# 1) dump_boot → split_boot
+#    AnyKernel3 官方注释：带 dtb 的 CAF 设备应跳过 ramdisk 解包/重打包
+#    （hdr v4 + vendor_kernel_boot 场景用 split_boot；我们的设备 ramdisk
+#     不需要改，跳过更安全，也不会碰 vendor_dlkm / dtbo 那些不存在的分区）
+s = s[:m.start()] + 'split_boot;' + s[m.end():]
+# 2) 在 split_boot 之后插入 dt 替换钩子（此时 $SPLITIMG 已生成）
+m2 = re.search(r'^split_boot;', s, re.M)
+s = s[:m2.end()] + '\n. ./ak3-oppo-replace-dt.sh\n' + s[m2.end():]
+# 3) write_boot → flash_boot（与 split_boot 配套）
+s = s.replace('write_boot;', 'flash_boot;', 1)
 open(p, 'w').write(s)
-print('  已在 dump_boot 之后插入 dt 替换钩子')
+print('  dump_boot→split_boot, write_boot→flash_boot, 已插入 dt 替换钩子')
 PYINS
 fi
 
