@@ -575,6 +575,18 @@ jobs:
         run: |
           set -euo pipefail
 
+          # ---- 确保 AnyKernel3 模板存在 ----
+          # 各分支上不一定提交了 AnyKernel3/ 目录（它是个模板，
+          # 体积不小且随时可能更新）。没有就现场克隆一份。
+          if [ ! -d AnyKernel3 ]; then
+            echo "AnyKernel3/ 不存在，从上游克隆"
+            git clone --depth 1 https://github.com/osm0sis/AnyKernel3.git AnyKernel3
+            rm -rf AnyKernel3/.git
+          fi
+          [ -f AnyKernel3/tools/ak3-core.sh ] || {
+            echo "::error::AnyKernel3 模板不完整（缺 tools/ak3-core.sh）"; exit 1
+          }
+
           # ---- 清理仓库内遗留产物（boot.img 为示例，一并移除）----
           rm -f AnyKernel3/boot.img AnyKernel3/*.zip
 
