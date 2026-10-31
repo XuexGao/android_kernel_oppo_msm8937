@@ -403,12 +403,25 @@ jobs:
           KV="$(grep -E '^(VERSION|PATCHLEVEL|SUBLEVEL) =' Makefile \
                 | awk '{print $3}' | paste -sd.)"
           KV_FULL="${KV}$(grep -E '^EXTRAVERSION' Makefile | awk '{print $3}')"
-          SUSFS_VERSION="$(sed -n 's/^#define SUSFS_VERSION "\{0,1\}\(v[0-9.]*\)"\{0,1\}/\1/p' include/linux/susfs.h | head -1)"
-          [ -n "${SUSFS_VERSION}" ] || SUSFS_VERSION="unknown"
-          # BakaSU 的版本钉在 Kbuild 里（上游的 KSU_RELEASE 变量已不存在）。
-          KSU_REL="$(grep -E '^KSU_VERSION[[:space:]]*:=' KernelSU/kernel/Kbuild | grep -oE '[0-9]+' | head -1)"
-          [ -n "${KSU_REL}" ] || KSU_REL="${KSU_VERSION}"
-          echo "内核版本: ${KV_FULL} | SUSFS: ${SUSFS_VERSION} | BakaSU: ${KSU_REL}"
+
+          # lineage-22.1 是纯净内核：没有 include/linux/susfs.h，
+          # 也没有 KernelSU/kernel/Kbuild。原来无条件 sed/grep 会直接失败
+          # （sed: can't read include/linux/susfs.h）。
+          if [ "${{ inputs.build_ref }}" = "lineage-22.1" ]; then
+            SUSFS_VERSION="none"
+            KSU_REL="none"
+          else
+            [ -f include/linux/susfs.h ] && \
+              SUSFS_VERSION="$(sed -n 's/^#define SUSFS_VERSION "\{0,1\}\(v[0-9.]*\)"\{0,1\}/\1/p' include/linux/susfs.h | head -1)" || \
+              SUSFS_VERSION=""
+            [ -n "${SUSFS_VERSION}" ] || SUSFS_VERSION="unknown"
+            # root 方案的版本钉在 Kbuild 里（上游的 KSU_RELEASE 变量已不存在）。
+            [ -f KernelSU/kernel/Kbuild ] && \
+              KSU_REL="$(grep -E '^KSU_VERSION[[:space:]]*:=' KernelSU/kernel/Kbuild | grep -oE '[0-9]+' | head -1)" || \
+              KSU_REL=""
+            [ -n "${KSU_REL}" ] || KSU_REL="${KSU_VERSION}"
+          fi
+          echo "内核版本: ${KV_FULL} | SUSFS: ${SUSFS_VERSION} | root方案: ${KSU_REL}"
           {
             echo "KV_FULL=${KV_FULL}"
             echo "SUSFS_VERSION=${SUSFS_VERSION}"
