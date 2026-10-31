@@ -456,6 +456,57 @@ MSM8953 的 bootloader 要把内核解压到低端内存的连续区域，
 > 但 boot 分区只决定**刷写**能否成功，
 > **解压后 54.8 MiB 才是真正要放进 RAM 的数字** —— 那才是瓶颈。
 
+#### 8. **DTB 从来没有生效过**（最根本的一条）
+
+前面几轮一直在改 `msm8953-oppo-common.dtsi`，但改了多少次现象都不变。
+原因：**ABL 根本不用我们追加在 `Image.gz-dtb` 尾部的 dtb。**
+
+CAF 的 ABL 从 **boot.img 的 dt 分区**里按 `msm-id` / `board-id`
+挑一个 dtb，然后把地址放进 `x0` 传给内核。
+而 AnyKernel3 的 `flash_boot()` 是这么做的：
+
+```sh
+for fdt in dt recovery_dtbo dtb; do
+  for i in $AKHOME/$fdt $AKHOME/$fdt.img $SPLITIMG/$fdt; do
+    if [ -f $i ]; then eval local $fdt=$i; break; fi
+...
+[ "$dt" ] && dt="--dt $dt";
+mkbootimg --kernel $kernel ... $dt ...
+```
+
+`split_boot()` 解包原厂 boot.img 时会把原厂的 dt 存成 `$SPLITIMG/dt`，
+于是 `flash_boot()` 拿**原厂的 dt** 传给 mkbootimg。
+**我们追加在 kernel 尾部的 dtb 完全被忽略。**
+
+铁证（诊断内核的日志）：
+
+```
+Machine model: Qualcomm Technologies, Inc. MSM8953 + PMI8950 MTP
+                ↑ 这是 CAF DTS 的 model，我们的 DTB 里写的是 "OPPO R9sk"
+OF: reserved mem: node venus_region@0 ...
+/soc/wake-gic@601d4: ...
+                ↑ 这些节点名只在 CAF DTS 里存在，我们的 DTB 里没有
+```
+
+这解释了全部现象：
+- 改 DTB 无效
+- `arch_timer: No interrupt available`（CAF DTB 的 timer 节点配不上 mainline 驱动）
+- 4.19 能启动（CAF 内核 + CAF DTB 本来就配套）
+- 6.12 不能启动（mainline 驱动树 + CAF DTB 不匹配）
+
+**修复**：`ci/mkflashable.sh` 新增 `ak3-oppo-replace-dt.sh`，
+在 `dump_boot` 之后（`SPLITIMG/dt` 已解出）、`write_boot` 之前执行，
+按 board-id 选机型并把我们的 dtb 覆盖进去。三种情况都处理：
+
+| 原厂 dt 格式 | 处理 |
+|---|---|
+| `QCDT`（`51434454`） | 用 Python 重新生成只含我们 dtb 的 QCDT 表 |
+| 裸 FDT（`d00dfeed`） | 直接 `cp` 覆盖 |
+| 没有独立 dt | 自己创建（裸 FDT） |
+
+**验证方法**：刷机后看日志里的 `Machine model`。
+如果出现 `OPPO R9sk` 就说明 DTB 终于生效了；如果还是 CAF 的 MTP，就说明替换没成功。
+
 ### 刷机前
 
 1. **备份原 boot 分区**（TWRP 里 backup boot）—— 卡屏时靠它回滚
