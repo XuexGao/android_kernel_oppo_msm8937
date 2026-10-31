@@ -1804,3 +1804,101 @@ CONFIG_PSTORE_COMPRESS=y
 # 所以这里必须显式钉死 39-bit / 4 级页表。
 CONFIG_ARM64_VA_BITS_39=y
 CONFIG_PGTABLE_LEVELS=4
+
+# ============================================================
+# 只保留 MSM8953（Snapdragon 625）平台，关闭全部其它 ARM64 SoC
+#
+# 背景：本 defconfig 继承自 mainline 的 arch/arm64/configs/defconfig，
+# 那份配置把**几乎所有 ARM64 平台**都启用了（ACTIONS/AIROHA/SUNXI/
+# APPLE/BCM/EXYNOS/MEDIATEK/TEGRA/RENESAS/ROCKCHIP… 共 71 个），
+# 连带把这些平台的所有驱动都编进内核。
+#
+# 实测代价：
+#   mine  (71 个平台): Image 54.8 MiB
+#   4.19  ( 3 个平台): Image 36.2 MiB   ← 真机验证可启动
+#   4.9   (CAF)      : Image ~30 MiB
+#
+# 而 MSM8953 的 bootloader 把内核解压到低端内存的连续区域，
+# 54.8 MiB 超出可用范围 → ABL 加载失败 → 卡 logo 且无任何日志。
+#
+# 4.19 分支只开 ARCH_QCOM / ARCH_MSM8953 / ARCH_SDM450 三个，
+# 这就是它能跑起来的关键差别之一。
+# ============================================================
+
+# CONFIG_ARCH_ACTIONS is not set
+# CONFIG_ARCH_AIROHA is not set
+# CONFIG_ARCH_ALPINE is not set
+# CONFIG_ARCH_APPLE is not set
+# CONFIG_ARCH_BCM is not set
+# CONFIG_ARCH_BCM2835 is not set
+# CONFIG_ARCH_BCMBCA is not set
+# CONFIG_ARCH_BCM_IPROC is not set
+# CONFIG_ARCH_BERLIN is not set
+# CONFIG_ARCH_BRCMSTB is not set
+# CONFIG_ARCH_EXYNOS is not set
+# CONFIG_ARCH_HISI is not set
+# CONFIG_ARCH_INTEL_SOCFPGA is not set
+# CONFIG_ARCH_K3 is not set
+# CONFIG_ARCH_KEEMBAY is not set
+# CONFIG_ARCH_LAYERSCAPE is not set
+# CONFIG_ARCH_LG1K is not set
+# CONFIG_ARCH_MA35 is not set
+# CONFIG_ARCH_MEDIATEK is not set
+# CONFIG_ARCH_MESON is not set
+# CONFIG_ARCH_MVEBU is not set
+# CONFIG_ARCH_MXC is not set
+# CONFIG_ARCH_NPCM is not set
+# CONFIG_ARCH_NXP is not set
+# CONFIG_ARCH_R8A774A1 is not set
+# CONFIG_ARCH_R8A774B1 is not set
+# CONFIG_ARCH_R8A774C0 is not set
+# CONFIG_ARCH_R8A774E1 is not set
+# CONFIG_ARCH_R8A77951 is not set
+# CONFIG_ARCH_R8A77960 is not set
+# CONFIG_ARCH_R8A77961 is not set
+# CONFIG_ARCH_R8A77965 is not set
+# CONFIG_ARCH_R8A77970 is not set
+# CONFIG_ARCH_R8A77980 is not set
+# CONFIG_ARCH_R8A77990 is not set
+# CONFIG_ARCH_R8A77995 is not set
+# CONFIG_ARCH_R8A779A0 is not set
+# CONFIG_ARCH_R8A779F0 is not set
+# CONFIG_ARCH_R8A779G0 is not set
+# CONFIG_ARCH_R8A779H0 is not set
+# CONFIG_ARCH_R9A07G043 is not set
+# CONFIG_ARCH_R9A07G044 is not set
+# CONFIG_ARCH_R9A07G054 is not set
+# CONFIG_ARCH_R9A08G045 is not set
+# CONFIG_ARCH_R9A09G011 is not set
+# CONFIG_ARCH_R9A09G057 is not set
+# CONFIG_ARCH_REALTEK is not set
+# CONFIG_ARCH_RENESAS is not set
+# CONFIG_ARCH_ROCKCHIP is not set
+# CONFIG_ARCH_S32 is not set
+# CONFIG_ARCH_SEATTLE is not set
+# CONFIG_ARCH_SPARX5 is not set
+# CONFIG_ARCH_SPRD is not set
+# CONFIG_ARCH_STM32 is not set
+# CONFIG_ARCH_SUNXI is not set
+# CONFIG_ARCH_SYNQUACER is not set
+# CONFIG_ARCH_TEGRA is not set
+# CONFIG_ARCH_TEGRA_132_SOC is not set
+# CONFIG_ARCH_TEGRA_186_SOC is not set
+# CONFIG_ARCH_TEGRA_194_SOC is not set
+# CONFIG_ARCH_TEGRA_210_SOC is not set
+# CONFIG_ARCH_TEGRA_234_SOC is not set
+# CONFIG_ARCH_TESLA_FSD is not set
+# CONFIG_ARCH_THUNDER is not set
+# CONFIG_ARCH_THUNDER2 is not set
+# CONFIG_ARCH_UNIPHIER is not set
+# CONFIG_ARCH_VEXPRESS is not set
+# CONFIG_ARCH_VISCONTI is not set
+# CONFIG_ARCH_XGENE is not set
+# CONFIG_ARCH_ZYNQMP is not set
+
+# MSM8953 用 Device Tree 启动，不走 ACPI/EFI。
+# mainline defconfig 默认开这两个，会带入整套 ACPI 解释器
+# （drivers/acpi/acpica 约 1.5 MB）和 EFI stub。
+# 4.19 的 msm8953-perf_defconfig 里这两个都没开。
+# CONFIG_ACPI is not set
+# CONFIG_EFI is not set
