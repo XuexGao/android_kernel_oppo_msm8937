@@ -33,6 +33,15 @@ name: Build 4.9 Kernel
 on:
   workflow_dispatch:
     inputs:
+      build_ref:
+        description: '要构建的分支（4.9 系列）：lineage-22.1（纯净） / sukisu-susfs-bpf（SukiSU） / bakasu-susfs-bpf（BakaSU）'
+        required: false
+        type: choice
+        default: bakasu-susfs-bpf
+        options:
+          - bakasu-susfs-bpf
+          - sukisu-susfs-bpf
+          - lineage-22.1
       devices:
         description: '要构建的机型，逗号分隔（留空 = 全部 4 个）：R9s,A57,R9sPlus,R9Plus'
         required: false
@@ -78,12 +87,15 @@ jobs:
           set -euo pipefail
 
           # ---- 0. 分支说明：通用内核，开发分支为 bakasu-susfs-bpf ----
-          BRANCH="${GITHUB_REF_NAME}"
+          BRANCH="${{ inputs.build_ref || github.ref_name }}"
           echo "branch=${BRANCH}"
-          if [[ "${BRANCH}" != "bakasu-susfs-bpf" ]]; then
-            echo "::warning::当前分支 '${BRANCH}' 不是 bakasu-susfs-bpf。"
-            echo "::warning::通用内核以 bakasu-susfs-bpf 为开发分支，一份产物通刷 LOS21/22.0/22.1。"
-          fi
+          case "${BRANCH}" in
+            bakasu-susfs-bpf|sukisu-susfs-bpf|lineage-22.1) ;;
+            *)
+              echo "::warning::当前分支 '${BRANCH}' 不在 4.9 系列内"
+              echo "::warning::有效值：lineage-22.1 / sukisu-susfs-bpf / bakasu-susfs-bpf"
+              ;;
+          esac
 
           # ---- 1. 编译日期（8 位）----
           BUILD_DATE="$(date +'%Y%m%d')"
@@ -95,7 +107,13 @@ jobs:
           #      BakaSU 的 KSU_VERSION 已在 KernelSU/kernel/Kbuild 里钉死为 35212
           #      （= 30000 + main @ e5423590 的 4512 个提交 + 700，与 Build Manager
           #      工作流产出的 APK 的 versionCode 一致）。
-          KSU_VERSION="35212"
+          #      SukiSU 跟随正式版 v4.2.0（versionCode 40900）。
+          #      lineage-22.1 是纯净内核，不带任何 root 方案。
+          case "${BRANCH}" in
+            sukisu-susfs-bpf) KSU_VERSION="40900" ;;
+            lineage-22.1)     KSU_VERSION="none" ;;
+            *)                KSU_VERSION="35212" ;;
+          esac
 
           # ---- 3. 机型矩阵（device / label / defconfig / 设备名 / 平台 / SoC 商用名）----
           python3 - "${{ inputs.devices }}" <<'PYEOF' > matrix.json
@@ -157,7 +175,16 @@ jobs:
       # 说明：BakaSU 的 manager/ 目录必须随仓库一起提交（apk_sign.c/h、manager_sign.h、
       # throne_tracker.* 等为编译所必需），本仓库采用 vendored 方式，不从上游拉取。
       # 包名不含系统版本：同一个包通刷 LOS21 / 22.0 / 22.1。
-      ZIP_NAME: BakaSU_${{ matrix.device }}_${{ needs.setup.outputs.build_date }}.zip
+      # ZIP 前缀按实际构建的分支：
+      #   lineage-22.1      -> LOS221_
+      #   sukisu-susfs-bpf  -> SukiSU_
+      #   bakasu-susfs-bpf  -> BakaSU_
+      ZIP_NAME: >-
+        ${{ (inputs.build_ref || github.ref_name) == 'lineage-22.1'
+            && format('LOS221_{0}_{1}.zip', matrix.device, needs.setup.outputs.build_date)
+            || ((inputs.build_ref || github.ref_name) == 'sukisu-susfs-bpf'
+                && format('SukiSU_{0}_{1}.zip', matrix.device, needs.setup.outputs.build_date)
+                || format('BakaSU_{0}_{1}.zip', matrix.device, needs.setup.outputs.build_date)) }}
       # ccache 调优：压缩存储；忽略 __DATE__/__TIME__ 展开（KBUILD_BUILD_TIMESTAMP
       # 每次构建都不同，不设这个会让几乎所有目标文件缓存未命中——这是最大的提速点）。
       # 注意不要用 compilercheck=content：那会在每次调用时哈希整个 clang 二进制，
@@ -174,6 +201,7 @@ jobs:
       - name: 检出源码
         uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.build_ref || github.ref_name }}
           fetch-depth: 50          # 拉取最近提交，供 Release 底部的 Changes 使用
           path: kernel
 
@@ -319,23 +347,32 @@ jobs:
         working-directory: kernel
         run: |
           set -euo pipefail
-          if [ -f out/.config ] && grep -q '^CONFIG_KSU=y' out/.config; then
-            echo "✅ CONFIG_KSU=y 已确认，BakaSU 内核"
+          # lineage-22.1 是纯净内核（不带任何 root 方案），这三组断言要跳过
+          BRANCH_USED="${{ inputs.build_ref || github.ref_name }}"
+          if [ "${BRANCH_USED}" = "lineage-22.1" ]; then
+            if grep -q '^CONFIG_KSU=y' out/.config; then
+              echo "::error::lineage-22.1 是纯净内核，不应带 CONFIG_KSU=y"; exit 1
+            fi
+            echo "✅ 纯净内核确认：无 KernelSU"
           else
-            echo "::error::CONFIG_KSU=y 未设置，未编译进 BakaSU"
-            exit 1
+            if [ -f out/.config ] && grep -q '^CONFIG_KSU=y' out/.config; then
+              echo "✅ CONFIG_KSU=y 已确认"
+            else
+              echo "::error::CONFIG_KSU=y 未设置，未编译进 root 方案（分支 ${BRANCH_USED}）"
+              exit 1
+            fi
+            # hook 模式必须落在 SUSFS inline；若退回 TRACEPOINT 会在 Kbuild 直接 $(error)，
+            # 但真到了产物阶段还发现 TP hook 就说明选择逻辑被改坏了。
+            grep -q '^CONFIG_KSU_SUSFS=y' out/.config \
+              || { echo "::error::CONFIG_KSU_SUSFS=y 未生效（SUSFS inline 模式是既定选择）"; exit 1; }
+            if grep -q '^CONFIG_KSU_TRACEPOINT_HOOK=y' out/.config; then
+              echo "::error::CONFIG_KSU_TRACEPOINT_HOOK=y 在 non-GKI 4.9 上不可用"; exit 1
+            fi
+            if grep -q '^CONFIG_KSU_MANUAL_HOOK=y' out/.config; then
+              echo "::error::CONFIG_KSU_MANUAL_HOOK=y 会与 KSU_SUSFS 互斥（同为 choice 项）"; exit 1
+            fi
+            echo "✅ hook 模式确认：SUSFS inline（非 TP / 非 manual）"
           fi
-          # hook 模式必须落在 SUSFS inline；若退回 TRACEPOINT 会在 Kbuild 直接 $(error)，
-          # 但真到了产物阶段还发现 TP hook 就说明选择逻辑被改坏了。
-          grep -q '^CONFIG_KSU_SUSFS=y' out/.config \
-            || { echo "::error::CONFIG_KSU_SUSFS=y 未生效（SUSFS inline 模式是本次集成的既定选择）"; exit 1; }
-          if grep -q '^CONFIG_KSU_TRACEPOINT_HOOK=y' out/.config; then
-            echo "::error::CONFIG_KSU_TRACEPOINT_HOOK=y 在 non-GKI 4.9 上不可用"; exit 1
-          fi
-          if grep -q '^CONFIG_KSU_MANUAL_HOOK=y' out/.config; then
-            echo "::error::CONFIG_KSU_MANUAL_HOOK=y 会与 KSU_SUSFS 互斥（同为 choice 项）"; exit 1
-          fi
-          echo "✅ hook 模式确认：SUSFS inline（非 TP / 非 manual）"
 
       - name: 收集内核模块（若有 .ko）
         working-directory: kernel
@@ -596,7 +633,7 @@ jobs:
     env:
       BUILD_DATE: ${{ needs.setup.outputs.build_date }}
       KSU_VERSION: ${{ needs.setup.outputs.ksu_version }}
-      BRANCH: ${{ github.ref_name }}
+      BRANCH: ${{ inputs.build_ref || github.ref_name }}
       DEVICES_JSON: ${{ needs.setup.outputs.devices_json }}
       DEVICE_LIST: ${{ needs.setup.outputs.device_list }}
       # 通用内核：标题/标签都不带系统版本号
@@ -606,11 +643,17 @@ jobs:
       #    allowUpdates: true + removeArtifacts: true，若沿用 SukiSU_<date>，
       #    同日构建会直接覆盖并清空已有的 SukiSU Release（例如 SukiSU_20261005）
       #    及其全部产物。不同前缀可保证两套 Release 完全隔离。
-      TAG_NAME: BakaSU_${{ needs.setup.outputs.build_date }}
+      TAG_NAME: >-
+        ${{ (inputs.build_ref || github.ref_name) == 'lineage-22.1'
+            && format('LOS221_{0}', needs.setup.outputs.build_date)
+            || ((inputs.build_ref || github.ref_name) == 'sukisu-susfs-bpf'
+                && format('SukiSU_{0}', needs.setup.outputs.build_date)
+                || format('BakaSU_{0}', needs.setup.outputs.build_date)) }}
     steps:
       - name: 检出源码（用于生成 Changes）
         uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.build_ref || github.ref_name }}
           fetch-depth: 50
           path: kernel
 
@@ -640,7 +683,13 @@ jobs:
           # ---- Release 标题：SUSFS 版本取自源码，标题不写死 ----
           # 形如 "4.9 Kernel BakaSU + SUSFS 2.3.0"（去掉 v 前缀，不加括号）
           SUSFS_NUM="${SUSFS_VERSION#v}"
-          RELEASE_TITLE="4.9 Kernel BakaSU + SUSFS ${SUSFS_NUM}"
+          # 标题按实际构建的分支区分（一个 action 覆盖 3 个 4.9 分支）
+          BRANCH_USED="${{ inputs.build_ref || github.ref_name }}"
+          case "${BRANCH_USED}" in
+            lineage-22.1)      RELEASE_TITLE="4.9 Kernel ${BUILD_DATE}" ;; 
+            sukisu-susfs-bpf)  RELEASE_TITLE="4.9 Kernel SukiSU + SUSFS ${SUSFS_NUM}" ;; 
+            *)                 RELEASE_TITLE="4.9 Kernel BakaSU + SUSFS ${SUSFS_NUM}" ;; 
+          esac
           echo "RELEASE_TITLE=${RELEASE_TITLE}"
           echo "RELEASE_TITLE=${RELEASE_TITLE}" >> "$GITHUB_ENV"
 
