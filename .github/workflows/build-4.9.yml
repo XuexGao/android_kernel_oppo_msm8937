@@ -212,6 +212,14 @@ jobs:
         working-directory: kernel
         run: |
           set -euo pipefail
+          # lineage-22.1 是纯净内核（无 KernelSU），跳过这个校验。
+          if [ "${{ inputs.build_ref }}" = "lineage-22.1" ]; then
+            echo "纯净内核分支，跳过 KernelSU 校验"
+            if [ -d KernelSU/kernel ]; then
+              echo "::error::lineage-22.1 不应包含 KernelSU 源码"; exit 1
+            fi
+            exit 0
+          fi
           REQUIRED=(
             KernelSU/kernel/manager/apk_sign.c
             KernelSU/kernel/manager/apk_sign.h
@@ -442,6 +450,15 @@ jobs:
         working-directory: kernel
         run: |
           set -euo pipefail
+          # lineage-22.1 是纯净内核，跳过所有 KernelSU/SUSFS 相关的隐藏项校验
+          # （这段检查 BakaSU 版本横幅 / KSU_VERSION 钉死值 / Kbuild 不依赖 git 等，
+          #   纯净内核没有这些，读 KernelSU/kernel/Kbuild 会直接失败）。
+          if [ "${{ inputs.build_ref }}" = "lineage-22.1" ]; then
+            echo "纯净内核，跳过 KSU/SUSFS 校验（只保留 dmesg 限制检查）"
+            grep -q '^CONFIG_SECURITY_DMESG_RESTRICT=y$' out/.config \
+              || { echo "::error::缺少 CONFIG_SECURITY_DMESG_RESTRICT=y"; exit 1; }
+            exit 0
+          fi
           FAIL=0
           # 只读构建已经生成好的文件，不再调用 make：这一步跑在
           # `set -e -o pipefail` 下，任何 make 调用（缺 CC=clang 等参数时）都会
