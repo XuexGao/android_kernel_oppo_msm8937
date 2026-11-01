@@ -127,6 +127,14 @@
 		 *     pmsg    0x100000 (1 MiB)
 		 *     record  0x300000 (3 MiB)
 		 */
+		/*
+		 * 主 ramoops@b0000000 —— 与 4.9/TWRP 共用同一块 8 MiB。
+		 *
+		 * 问题：TWRP 跑的是 4.9 内核，它的 ramoops 也在这个地址。
+		 * 每次进 TWRP 导出日志，4.9 都会把这块区域整个覆盖，
+		 * 6.12 留下的东西全没了。这就是"刷完重启失败 → 只能进 TWRP
+		 * 导日志 → 导出来的却是 4.9 的日志"的根源。
+		 */
 		 ramoops@b0000000 {
 			compatible = "ramoops";
 			reg = <0x0 0xb0000000 0x0 0x800000>;
@@ -134,6 +142,47 @@
 			ftrace-size = <0>;
 			record-size = <0x300000>;
 			pmsg-size = <0x100000>;
+			ecc-size = <0>;
+			no-map;
+			/*
+			 * 禁用：这块区与 4.9/TWRP 的 ramoops 完全重叠。
+			 * pstore 不允许两个同名后端注册，且两者会互相覆盖。
+			 * 6.12 只用下面的 ramoops@b0800000（TWRP 不碰）。
+			 */
+			status = "disabled";
+		};
+
+		/*
+		 * 第二块 ramoops@b0800000 —— **6.12 专用**，TWRP/4.9 不碰。
+		 *
+		 * 地址紧跟 4.9 的 ramoops 之后（0xb0000000 + 8MiB = 0xb0800000），
+		 * 已核对过 4.9 的保留区清单，它只占 0xb0000000..0xb07fffff，
+		 * 从 0xb0800000 起是空闲的；顶部到 0xb1800000 也不与任何
+		 * 保留区（最高是 0xf2e7ffff 的 rmtfs，中间还有 0xeefe4000）
+		 * 重叠。
+		 *
+		 * 4.9 内核的 ramoops 节点只有一份，不会去写这里，
+		 * 所以这份日志在进 TWRP 之后**仍然保留**。
+		 *
+		 * 抓取方式（TWRP 终端里）：
+		 *     ls  /sys/fs/pstore/
+		 *     cat /sys/fs/pstore/console-ramoops-1
+		 *   （ramoops 的索引会在设备名后缀 -0 / -1 上体现；
+		 *     也可以直接 `cat /proc/pstore` 看两份都在不在）
+		 *
+		 * 分区：
+		 *     console  8 MiB —— 完整启动 dmesg（最重要）
+		 *     pmsg     2 MiB —— userspace 日志
+		 *     record   1 MiB —— oops/panic 记录
+		 *     = 11 MiB，留 5 MiB 余量
+		 */
+		 ramoops_b0800000: ramoops@b0800000 {
+			compatible = "ramoops";
+			reg = <0x0 0xb0800000 0x0 0x1000000>;
+			console-size = <0x800000>;
+			ftrace-size = <0>;
+			record-size = <0x100000>;
+			pmsg-size = <0x200000>;
 			ecc-size = <0>;
 			no-map;
 		};
