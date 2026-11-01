@@ -4,6 +4,7 @@
  */
 #include <linux/errno.h>
 #include <linux/module.h>
+#include <linux/of.h>
 #include <linux/devfreq.h>
 #include <linux/math64.h>
 #include <linux/spinlock.h>
@@ -258,8 +259,13 @@ static int tz_init_ca(struct devfreq_msm_adreno_tz_data *priv)
 	memcpy(tz_buf, tz_ca_data, sizeof(tz_ca_data));
 	/* Ensure memcpy completes execution */
 	mb();
-	dmac_flush_range(tz_buf,
-		tz_buf + PAGE_ALIGN(sizeof(tz_ca_data)));
+	/*
+	 * dmac_flush_range() 是 ARM32 的 cache 维护 API，arm64 没有。
+	 * 6.12 里对一片内核内存做 dcache 写回+无效化用
+	 * dcache_clean_inval_parea(start, end)。
+	 */
+	dcache_clean_inval_poc((unsigned long)tz_buf,
+		(unsigned long)tz_buf + PAGE_ALIGN(sizeof(tz_ca_data)));
 
 	desc.args[1] = sizeof(tz_ca_data);
 	desc.arginfo = SCM_ARGS(2, SCM_RW, SCM_VAL);
@@ -268,7 +274,7 @@ static int tz_init_ca(struct devfreq_msm_adreno_tz_data *priv)
 			TZ_V2_INIT_CA_ID_64),
 			&desc);
 	if (!qtee_shmbridge_is_enabled())
-		kzfree(tz_buf);
+		kfree_sensitive(tz_buf);
 	else
 		qtee_shmbridge_free_shm(&shm);
 
@@ -306,7 +312,8 @@ static int tz_init(struct devfreq_msm_adreno_tz_data *priv,
 		memcpy(tz_buf, tz_pwrlevels, size_pwrlevels);
 		/* Ensure memcpy completes execution */
 		mb();
-		dmac_flush_range(tz_buf, tz_buf + PAGE_ALIGN(size_pwrlevels));
+		dcache_clean_inval_poc((unsigned long)tz_buf,
+			(unsigned long)tz_buf + PAGE_ALIGN(size_pwrlevels));
 
 		desc.args[1] = size_pwrlevels;
 		desc.arginfo = SCM_ARGS(2, SCM_RW, SCM_VAL);
@@ -317,7 +324,7 @@ static int tz_init(struct devfreq_msm_adreno_tz_data *priv,
 		if (!ret)
 			priv->is_64 = true;
 		if (!qtee_shmbridge_is_enabled())
-			kzfree(tz_buf);
+			kfree_sensitive(tz_buf);
 		else
 			qtee_shmbridge_free_shm(&shm);
 	} else
@@ -603,9 +610,11 @@ static int tz_handler(struct devfreq *devfreq, unsigned int event, void *data)
 		/* Reset the suspend_start when gpu resumes */
 		suspend_start = 0;
 		spin_unlock(&suspend_lock);
-		/* fallthrough */
-	case DEVFREQ_GOV_INTERVAL:
-		/* fallthrough, this governor doesn't use polling */
+		/*
+		 * 6.12 删除了 DEVFREQ_GOV_INTERVAL（polling governor 相关），
+		 * 这里去掉那个 case，保留 fallthrough 到 default。
+		 */
+		fallthrough;
 	default:
 		result = 0;
 		break;

@@ -7,10 +7,15 @@
 #include <linux/devfreq.h>
 #include <linux/module.h>
 #include <linux/msm_adreno_devfreq.h>
+#include <linux/of.h>
 #include <linux/of_platform.h>
 #include <linux/slab.h>
 
-#include "devfreq_trace.h"
+/*
+ * 4.9 里有 devfreq_trace.h（定义 TRACE_EVENT(devfreq_msg)），
+ * 6.12 的 devfreq 没有这个文件。本文件实际并未调用任何 trace_* 函数，
+ * 所以直接去掉这行 include。
+ */
 #include "governor.h"
 
 #define MIN_BUSY                1000
@@ -56,7 +61,8 @@ static ssize_t cur_ab_show(struct device *dev,
 					struct msm_busmon_extended_profile,
 					profile);
 
-	return scnprintf(buf, PAGE_SIZE, "%llu\n", bus_profile->ab_mbytes);
+	/* ab_mbytes 在 6.12 里是 unsigned long，用 %lu 而不是 %llu */
+	return scnprintf(buf, PAGE_SIZE, "%lu\n", bus_profile->ab_mbytes);
 }
 
 static ssize_t sampling_interval_show(struct device *dev,
