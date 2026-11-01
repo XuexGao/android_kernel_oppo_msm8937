@@ -1154,6 +1154,71 @@
 
 			#cooling-cells = <2>;
 
+			/*
+			 * gpu_opp_table 保留给 mainline DRM MSM 路径和其他机型
+			 * （sdm450.dtsi 会 &gpu_opp_table 覆盖它，删掉会导致
+			 *  sdm450-lenovo-tbx605f / motorola-ali 的 DTB 编译失败）。
+			 *
+			 * KGSL 自己**不读**这个表 —— 它读下面的 qcom,gpu-pwrlevels。
+			 * 两套并存：KGSL probe 时只取 qcom,gpu-pwrlevels，
+			 * opp 表由 DRM（如果将来启用）或 rpmpd 使用。
+			 */
+			gpu_opp_table: opp-table {
+				compatible = "operating-points-v2";
+
+				opp-19200000 {
+					opp-hz = /bits/ 64 <19200000>;
+					opp-supported-hw = <0xff>;
+					required-opps = <&rpmpd_opp_min_svs>;
+				};
+
+				opp-133300000 {
+					opp-hz = /bits/ 64 <133300000>;
+					opp-supported-hw = <0xff>;
+					required-opps = <&rpmpd_opp_min_svs>;
+				};
+
+				opp-216000000 {
+					opp-hz = /bits/ 64 <216000000>;
+					opp-supported-hw = <0xff>;
+					required-opps = <&rpmpd_opp_low_svs>;
+				};
+
+				opp-320000000 {
+					opp-hz = /bits/ 64 <320000000>;
+					opp-supported-hw = <0xff>;
+					required-opps = <&rpmpd_opp_svs>;
+				};
+
+				opp-400000000 {
+					opp-hz = /bits/ 64 <400000000>;
+					opp-supported-hw = <0xff>;
+					required-opps = <&rpmpd_opp_svs_plus>;
+				};
+
+				opp-510000000 {
+					opp-hz = /bits/ 64 <510000000>;
+					opp-supported-hw = <0xff>;
+					required-opps = <&rpmpd_opp_nom>;
+				};
+
+				opp-560000000 {
+					opp-hz = /bits/ 64 <560000000>;
+					opp-supported-hw = <0xff>;
+					required-opps = <&rpmpd_opp_nom_plus>;
+				};
+
+				/*
+				 * This opp is only available on msm8953 and
+				 * sdm632, the max for sdm450 is 600MHz.
+				 */
+				opp-650000000 {
+					opp-hz = /bits/ 64 <650000000>;
+					opp-supported-hw = <0xff>;
+					required-opps = <&rpmpd_opp_turbo>;
+				};
+			};
+
 			qcom,gpu-pwrlevels {
 				#address-cells = <1>;
 				#size-cells = <0>;
