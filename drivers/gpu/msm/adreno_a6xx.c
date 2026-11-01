@@ -959,7 +959,7 @@ bool a6xx_sptprac_is_on(struct adreno_device *adreno_dev)
 	if (!adreno_has_sptprac_gdsc(adreno_dev))
 		return true;
 
-	return a6xx_gmu_sptprac_is_on(adreno_dev);
+	return kgsl_a6xx_gmu_sptprac_is_on(adreno_dev);
 }
 
 unsigned int a6xx_set_marker(
