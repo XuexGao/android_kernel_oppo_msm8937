@@ -1339,7 +1339,24 @@
 			};
 		};
 
-		sdhc_1: mmc@7824900 {
+		/*
+		 * 节点名必须是 sdhci@ 而不是 mmc@。
+		 *
+		 * sysfs 里设备的路径名是直接取 DT 节点名（去 unit address），
+		 * 所以 mmc@7824900 会注册成 /sys/devices/platform/soc/7824900.mmc。
+		 *
+		 * 但 bootloader 传的 cmdline 是
+		 *     androidboot.boot_devices=soc/7824900.sdhci
+		 * Android ueventd 按这个名字去找 sysfs 节点、创建
+		 *     /dev/block/platform/soc/7824900.sdhci/by-name/<分区名>
+		 * 找不到就不建 → init 挂 /system 时
+		 *     "Failed to open .../by-name/system: No such file or directory"
+		 * → "Failed to mount required partitions early" → abort 重启。
+		 *
+		 * 4.9 CAF 的节点名就是 sdhci@7824900 / sdhci@7864900，
+		 * 所以它的 by-name 链接能正常生成。这里对齐。
+		 */
+		sdhc_1: sdhci@7824900 {
 			compatible = "qcom,msm8953-sdhci", "qcom,sdhci-msm-v4";
 
 			reg = <0x07824900 0x500>, <0x07824000 0x800>;
@@ -1399,7 +1416,7 @@
 			};
 		};
 
-		sdhc_2: mmc@7864900 {
+		sdhc_2: sdhci@7864900 {
 			compatible = "qcom,msm8953-sdhci", "qcom,sdhci-msm-v4";
 
 			reg = <0x07864900 0x500>, <0x07864000 0x800>;
