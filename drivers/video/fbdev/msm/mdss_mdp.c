@@ -5139,7 +5139,17 @@ static void mdss_mdp_notify_idle_pc(struct mdss_data_type *mdata)
 	int i;
 
 	for (i = 0; i < mdata->nctl; i++)
-		if ((mdata->ctl_off[i].ref_cnt) &&
+		/*
+		 * ctl 的 ref_cnt 可以不为 0，但 mfd 还没绑定（比如写回通道、
+		 * 或 secondary ctl 在 fb 注册前就被打开）。这时 mfd 是 NULL，
+		 * 往下传会直接解引用 mfd->mdp.private1 崩掉：
+		 *   Unable to handle kernel read at 0x6e0 (NULL + private1 偏移)
+		 *   pc : mdss_fb_idle_pc+0x8/0x4c
+		 *   lr : mdss_mdp_footswitch_ctrl+0x1b4/0x37c
+		 *   Workqueue: pm pm_runtime_work
+		 * 相机/视频这类会让显示进入空闲的场景最容易踩到。
+		 */
+		if ((mdata->ctl_off[i].ref_cnt) && mdata->ctl_off[i].mfd &&
 			!mdss_mdp_ctl_is_power_off(&mdata->ctl_off[i]))
 			mdss_fb_idle_pc(mdata->ctl_off[i].mfd);
 }
