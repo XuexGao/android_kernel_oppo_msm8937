@@ -310,7 +310,7 @@ CONFIG_SATA_RCAR=y
 CONFIG_PATA_OF_PLATFORM=y
 CONFIG_MD=y
 CONFIG_BLK_DEV_MD=m
-CONFIG_BLK_DEV_DM=m
+
 CONFIG_DM_MIRROR=m
 CONFIG_DM_ZERO=m
 CONFIG_NETDEVICES=y
@@ -1984,3 +1984,33 @@ CONFIG_SECURITY_SELINUX=y
 CONFIG_SECURITY_SELINUX_BOOTPARAM=y
 CONFIG_SECURITY_SELINUX_DEVELOP=y
 CONFIG_DEFAULT_SECURITY_SELINUX=y
+
+# ============================================================
+# device-mapper / dm-verity —— Android init 第一阶段挂载 /system 的硬依赖
+#
+# 实测崩溃（run 8e6418f1 的 dmesg-ramoops，卡了 19.7 秒后 abort）：
+#
+#   init: Failed to read vbmeta partitions.
+#   init: device-mapper device not found in /sys, waiting for its uevent
+#   init: Wait for device-mapper returned after 10005ms
+#   init: device-mapper device not found after polling timeout
+#   init: Failed to create devices required for first stage mount
+#   init: InitFatalReboot: signal 6
+#   reboot: Restarting system with command 'bootloader'
+#
+# 原因：CONFIG_BLK_DEV_DM 原来是 **=m**（模块），而打包时 do.modules=0
+# 不安装任何模块 —— 所以 init 第一阶段运行时 /dev/mapper 根本不存在。
+# Android 的 first-stage init 要用 dm-linear / dm-verity 把
+# system/vendor 分区映射出来，拿不到 device-mapper 就只能 abort。
+#
+# 全部改成 =y 内置（跟 4.19 分支一致，那边真机验证可启动）。
+# ============================================================
+CONFIG_BLK_DEV_DM=y
+CONFIG_DM_BUFIO=y
+CONFIG_DM_CRYPT=y
+CONFIG_DM_SNAPSHOT=y
+CONFIG_DM_THIN_PROVISIONING=y
+CONFIG_DM_VERITY=y
+CONFIG_DM_VERITY_FEC=y
+CONFIG_DM_UEVENT=y
+CONFIG_DM_INIT=y

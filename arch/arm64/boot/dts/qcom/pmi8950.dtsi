@@ -207,6 +207,24 @@
 		labibb {
 			compatible = "qcom,pmi8998-lab-ibb";
 
+			/*
+			 * 注意：主线 qcom-labibb-regulator.c 的 probe 是
+			 *   for (; reg_data->name; reg_data++)
+			 * 会遍历 **lab 和 ibb 两个**，且每个都要求
+			 * of_irq_get_byname(reg_node, "sc-err") 成功：
+			 *
+			 *   irq = of_irq_get_byname(reg_node, "sc-err");
+			 *   if (irq <= 0)
+			 *           return dev_err_probe(... "Short-circuit irq not found");
+			 *
+			 * 之前只写了 ibb、漏了 lab，于是 lab 那一轮直接 -EINVAL，
+			 * 整个 labibb 驱动 probe 失败，DSI 一直卡在
+			 *   "deferred probe pending: wait for supplier .../labibb/ibb"
+			 * → 屏幕不亮。
+			 *
+			 * lab 的中断号照抄主线 pmi8998.dtsi（同 PMIC 家族，
+			 * PMI8950 的 LAB 也在 0xde00）。
+			 */
 			ibb: ibb {
 				interrupts = <0x3 0xdc 0x2 IRQ_TYPE_EDGE_RISING>,
 					     <0x3 0xdc 0x0 IRQ_TYPE_LEVEL_HIGH>;
@@ -218,6 +236,7 @@
 					     <0x3 0xde 0x0 IRQ_TYPE_LEVEL_LOW>;
 				interrupt-names = "sc-err", "ocp";
 			};
+
 		};
 
 		pmi8950_wled: leds@d800 {
