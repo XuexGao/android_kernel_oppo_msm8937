@@ -1098,9 +1098,29 @@ static void bq27541_reset(struct i2c_client *client)
 
 	if (!bq27541_di->batt_psy) {
 		bq27541_di->batt_psy = power_supply_get_by_name("battery");
-		power_supply_get_property(bq27541_di->batt_psy,
-				POWER_SUPPLY_PROP_CAPACITY, &val);
-		ui_soc = val.intval;
+
+		/*
+		 * 必须检查 power_supply_get_by_name() 的返回值。
+		 *
+		 * 原代码直接调用 power_supply_get_property(batt_psy, ...)，
+		 * 一旦拿不到 "battery"（例如在 reboot/shutdown 流程里，
+		 * power_supply 设备已经被注销），batt_psy 就是 NULL，
+		 * 解引用 ps->desc->get_property 直接 Oops：
+		 *
+		 *   Unable to handle kernel NULL pointer dereference
+		 *   pc : power_supply_get_property+0x0/0x40
+		 *   lr : bq27541_reset+0x128/0x1dc
+		 *   i2c_device_shutdown -> device_shutdown -> kernel_restart
+		 *
+		 * 实测就是这样崩的（用户在 recovery 里 reboot 到系统时触发）。
+		 * 拿不到就退回默认 ui_soc，不要继续取值。
+		 */
+		if (!bq27541_di->batt_psy) {
+			pr_debug("bq27541_reset: no \"battery\" psy, skip soc read\n");
+		} else if (!power_supply_get_property(bq27541_di->batt_psy,
+				     POWER_SUPPLY_PROP_CAPACITY, &val)) {
+			ui_soc = val.intval;
+		}
 	}
 
 	if (bq27541_get_battery_voltage_micros() <= 3300 * 1000
