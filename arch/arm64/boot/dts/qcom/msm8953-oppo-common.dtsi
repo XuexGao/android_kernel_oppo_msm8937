@@ -128,40 +128,27 @@
 		 *     record  0x300000 (3 MiB)
 		 */
 		/*
-		 * ramoops@b0600000 —— 放在 4.9/TWRP 永远不写的那 2 MiB 里
+		 * ramoops@b0000000 —— 回到与 4.9/TWRP 相同的位置。
 		 *
-		 * 背景：TWRP 跑的是 4.9 内核，它的 ramoops 也在 0xb0000000。
-		 * 每次进 TWRP 导日志，4.9 都会把自己那 6 MiB 覆盖一遍，
-		 * 6.12 留下的东西全没了 —— 这就是"刷完失败 → 进 TWRP 导日志
-		 * → 导出来的永远是 4.9 日志"的根源。
+		 * 之前试过挪到 0xb0800000 / 0xb0600000 想避开 TWRP 覆盖，
+		 * 但 ramoops 是这台设备**唯一的 console 后端**（没有串口，
+		 * tty0 没有实际输出），一旦新位置的注册有任何问题，
+		 * 内核在 0.17s 之后的所有 printk 就无处可去，
+		 * 连"注册失败"这条错误本身都打不出来 —— 表现为彻底静默。
 		 *
-		 * 4.9 的 ramoops 分区是**固定大小**（见 CAF DTS）：
-		 *     record-size  = 0x200000   → 0xb0000000..0xb01fffff
-		 *     console-size = 0x200000   → 0xb0200000..0xb03fffff
-		 *     pmsg-size    = 0x200000   → 0xb0400000..0xb05fffff
-		 * 合计 6 MiB，**到 0xb0600000 就结束了**。
-		 * 后面那 2 MiB（0xb0600000..0xb07fffff）4.9 从来不写。
-		 *
-		 * 所以把 6.12 的 ramoops 放在 0xb0600000，既能正常注册
-		 * （和之前一样是同一块 4.9 保留区家族，机制验证过），
-		 * 又不会被 TWRP 覆盖。
-		 *
-		 * ⚠️ ramoops 驱动是**单实例**（fs/pstore/ram.c 里 oops_cxt 是
-		 * 全局变量），只能有一个 compatible="ramoops" 的节点生效，
-		 * 所以这里只有这一个，不再另开一块。
-		 *
-		 * 分区（共 2 MiB，全留给 console —— panic 时最需要的就是 dmesg）：
-		 *     console 1.5 MiB
-		 *     record  0.25 MiB（oops/panic 记录，也就是 dmesg-ramoops-*.enc.z）
-		 *     pmsg    0.25 MiB
+		 * 所以不再动地址：保持在 0xb0000000，与 4.9 一致，
+		 * 保证 6.12 一定能注册成功、一定能留下日志。
+		 * （代价是进 TWRP 后会被 4.9 覆盖，但至少 6.12 自己
+		 *   panic/重启时的 dmesg-ramoops 能保住 —— 上一轮就是靠它
+		 *   定位到 bq27541 的 NULL deref。）
 		 */
-		 ramoops: ramoops@b0600000 {
+		 ramoops: ramoops@b0000000 {
 			compatible = "ramoops";
-			reg = <0x0 0xb0600000 0x0 0x200000>;
-			console-size = <0x180000>;
+			reg = <0x0 0xb0000000 0x0 0x800000>;
+			console-size = <0x400000>;
 			ftrace-size = <0>;
-			record-size = <0x40000>;
-			pmsg-size = <0x40000>;
+			record-size = <0x300000>;
+			pmsg-size = <0x100000>;
 			ecc-size = <0>;
 			no-map;
 		};
