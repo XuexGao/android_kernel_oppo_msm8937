@@ -59,6 +59,9 @@ static struct mutex quin_mclk_lock;
 static atomic_t auxpcm_mi2s_clk_ref;
 static struct snd_info_entry *codec_root;
 
+extern int msm_anlg_cdc_mclk_enable(struct snd_soc_component *component,
+				     int mclk_enable, bool dapm);
+
 static int msm8952_enable_dig_cdc_clk(struct snd_soc_component *component,
 					int enable, bool dapm);
 static bool msm8952_swap_gnd_mic(struct snd_soc_component *component,
@@ -183,7 +186,11 @@ static int msm8952_mclk_event(struct snd_soc_dapm_widget *w,
 			}
 		}
 		msm8952_enable_dig_cdc_clk(component, 1, true);
-		msm_anlg_cdc_mclk_enable(component, 1, true);
+		if (!pdata->codec_comp)
+			pr_err("%s: analog codec component missing\n",
+				__func__);
+		else
+			msm_anlg_cdc_mclk_enable(pdata->codec_comp, 1, true);
 		break;
 	case SND_SOC_DAPM_POST_PMD:
 		pr_debug("%s: mclk_res_ref = %d\n",
@@ -199,7 +206,8 @@ static int msm8952_mclk_event(struct snd_soc_dapm_widget *w,
 		}
 		pr_debug("%s: disabling MCLK\n", __func__);
 		/* disable the codec mclk config*/
-		msm_anlg_cdc_mclk_enable(component, 0, true);
+		if (pdata->codec_comp)
+			msm_anlg_cdc_mclk_enable(pdata->codec_comp, 0, true);
 		msm8952_enable_dig_cdc_clk(component, 0, true);
 		break;
 	default:
@@ -385,6 +393,20 @@ int is_ext_spk_gpio_support(struct platform_device *pdev,
 	pdata->spk_ext_pa_gpio = of_get_named_gpio(pdev->dev.of_node,
 				spk_ext_pa, 0);
 
+	/*
+	 * OPPO 的 DTB 用自家属性名 oppo-spk-pa-en 描述外置扬声器功放使能脚，
+	 * 4.19 移植只保留了 QC 的 qcom,msm-spk-ext-pa。拿不到 GPIO 时
+	 * enable_spk_ext_pa() 会直接返回，功放永不使能 —— 表现为播放时
+	 * DAPM 全部上电、寄存器全对，但扬声器完全没有声音。
+	 */
+	if (pdata->spk_ext_pa_gpio < 0) {
+		pdata->spk_ext_pa_gpio = of_get_named_gpio(pdev->dev.of_node,
+					"oppo-spk-pa-en", 0);
+		if (pdata->spk_ext_pa_gpio >= 0)
+			pr_info("%s: falling back to oppo-spk-pa-en gpio %d\n",
+				__func__, pdata->spk_ext_pa_gpio);
+	}
+
 	if (pdata->spk_ext_pa_gpio < 0) {
 		dev_err(&pdev->dev,
 			"%s: missing %s in dt node\n", __func__, spk_ext_pa);
@@ -429,11 +451,14 @@ static int enable_spk_ext_pa(struct snd_soc_component *component, int enable)
             }
         } else {
 			int ret;
-            ret = msm_cdc_pinctrl_select_active_state(pdata->spk_ext_pa_gpio_p);
-            if (ret) {
-                pr_err("%s: gpio set cannot be activated %s\n",
-                        __func__, "ext_spk_gpio");
-                return ret;
+            if (pdata->spk_ext_pa_gpio_p) {
+                ret = msm_cdc_pinctrl_select_active_state(
+                        pdata->spk_ext_pa_gpio_p);
+                if (ret) {
+                    pr_err("%s: gpio set cannot be activated %s\n",
+                            __func__, "ext_spk_gpio");
+                    return ret;
+                }
             }
             gpio_set_value_cansleep(pdata->spk_ext_pa_gpio, enable);
         }
@@ -442,11 +467,14 @@ static int enable_spk_ext_pa(struct snd_soc_component *component, int enable)
         
         if (!is_mido) {
 			int ret;
-            ret = msm_cdc_pinctrl_select_sleep_state(pdata->spk_ext_pa_gpio_p);
-            if (ret) {
-                pr_err("%s: gpio set cannot be de-activated %s\n",
-                        __func__, "ext_spk_gpio");
-                return ret;
+            if (pdata->spk_ext_pa_gpio_p) {
+                ret = msm_cdc_pinctrl_select_sleep_state(
+                        pdata->spk_ext_pa_gpio_p);
+                if (ret) {
+                    pr_err("%s: gpio set cannot be de-activated %s\n",
+                            __func__, "ext_spk_gpio");
+                    return ret;
+                }
             }
         }
     }
@@ -787,14 +815,50 @@ static int msm_mi2s_sclk_ctl(struct snd_pcm_substream *substream, bool enable)
 {
 	int ret = 0;
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
+	struct msm_asoc_mach_data *pdata;
 	int port_id = 0;
+	int mi2s_idx = -1;
 
 	port_id = msm8952_get_port_id(rtd->dai_link->id);
 	if (port_id < 0) {
 		pr_err("%s: Invalid port_id\n", __func__);
 		return -EINVAL;
 	}
+
+	/*
+	 * Switch the TLMM pins to their lpa/MI2S function around the
+	 * stream. Without this GPIO_4/5/6 stay in reset state
+	 * (MUX UNCLAIMED), so the PRI/QUAT MI2S bit clock and data
+	 * never reach the internal codec and playback is silent.
+	 */
+	pdata = snd_soc_card_get_drvdata(rtd->card);
+	switch (port_id) {
+	case AFE_PORT_ID_PRIMARY_MI2S_RX:
+		mi2s_idx = PRIM_MI2S;
+		break;
+	case AFE_PORT_ID_SECONDARY_MI2S_RX:
+		mi2s_idx = SEC_MI2S;
+		break;
+	case AFE_PORT_ID_TERTIARY_MI2S_RX:
+		mi2s_idx = TERT_MI2S;
+		break;
+	case AFE_PORT_ID_QUATERNARY_MI2S_RX:
+		mi2s_idx = QUAT_MI2S;
+		break;
+	case AFE_PORT_ID_QUINARY_MI2S_RX:
+		mi2s_idx = QUIN_MI2S;
+		break;
+	default:
+		break;
+	}
+	pr_info("%s: port=0x%x idx=%d pdata=%pK np=%pK enable=%d\n",
+		__func__, port_id, mi2s_idx, pdata,
+		(pdata && mi2s_idx >= 0) ?
+			pdata->mi2s_gpio_p[mi2s_idx] : NULL, enable);
 	if (enable) {
+		if (pdata && mi2s_idx >= 0 && pdata->mi2s_gpio_p[mi2s_idx])
+			ret = msm_cdc_pinctrl_select_active_state(
+					pdata->mi2s_gpio_p[mi2s_idx]);
 		if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
 			mi2s_rx_clk.enable = enable;
 			mi2s_rx_clk.clk_id =
@@ -837,6 +901,10 @@ static int msm_mi2s_sclk_ctl(struct snd_pcm_substream *substream, bool enable)
 		if (ret < 0)
 			pr_err("%s:afe_set_lpass_clock_v2 failed\n", __func__);
 	}
+	if (!enable && pdata && mi2s_idx >= 0 &&
+	    pdata->mi2s_gpio_p[mi2s_idx])
+		ret = msm_cdc_pinctrl_select_sleep_state(
+				pdata->mi2s_gpio_p[mi2s_idx]);
 	return ret;
 }
 
@@ -1177,6 +1245,133 @@ static const struct soc_enum msm_snd_enum[] = {
 				mi2s_rx_sample_rate_text),
 };
 
+/*
+ * OPPO 私有控件：mixer_paths_mtp.xml 的 speaker / headphones 路径会写
+ * Ext_SPK_Switch 和 Ext_HP_Switch，用来拉外部功放使能脚。4.9 树由
+ * oppo_audio_custom.c 提供，4.19 移植时丢失，导致 audio_route 写控件失败、
+ * 外置功放永不使能，扬声器无声。
+ */
+static const char * const oppo_pa_text[] = {"DISABLE", "ENABLE"};
+static const struct soc_enum oppo_pa_enum[] = {
+	SOC_ENUM_SINGLE_EXT(ARRAY_SIZE(oppo_pa_text), oppo_pa_text),
+};
+
+static struct oppo_pa_gpio {
+	const char *prop;		/* 功放主使能脚 */
+	const char *boost_prop;		/* 需先拉起的 boost/偏置脚，可为 NULL */
+	int gpio;
+	int boost_gpio;
+	int state;
+} oppo_pa_gpios[] = {
+	{ "oppo-spk-pa-en", "oppo-spk-boost-en", -1, -1, -1 },
+	{ "oppo-hp-pa-en",  NULL,                -1, -1, -1 },
+};
+
+static int oppo_pa_gpio_lookup(const char *prop)
+{
+	struct device_node *np;
+	int gpio, ret;
+
+	np = of_find_node_by_path("/soc/sound");
+	if (!np)
+		np = of_find_compatible_node(NULL, NULL,
+					     "qcom,msm8952-audio-codec");
+	if (!np) {
+		pr_err("%s: no audio codec node for %s\n", __func__, prop);
+		return -ENODEV;
+	}
+
+	gpio = of_get_named_gpio(np, prop, 0);
+	of_node_put(np);
+	if (!gpio_is_valid(gpio)) {
+		pr_err("%s: %s not found in dt\n", __func__, prop);
+		return -EINVAL;
+	}
+
+	ret = gpio_request(gpio, prop);
+	if (ret)
+		pr_warn("%s: gpio %d request rc=%d, driving anyway\n",
+			__func__, gpio, ret);
+	gpio_direction_output(gpio, 0);
+	return gpio;
+}
+
+static int oppo_pa_apply(int idx, int enable)
+{
+	struct oppo_pa_gpio *pa = &oppo_pa_gpios[idx];
+	int g;
+
+	if (pa->gpio < 0) {
+		g = oppo_pa_gpio_lookup(pa->prop);
+		if (g < 0)
+			return g;
+		pa->gpio = g;
+		if (pa->boost_prop) {
+			g = oppo_pa_gpio_lookup(pa->boost_prop);
+			if (g >= 0)
+				pa->boost_gpio = g;
+		}
+		pa->state = 0;
+		pr_info("%s: %s -> gpio %d (boost gpio %d)\n", __func__,
+			pa->prop, pa->gpio, pa->boost_gpio);
+	}
+
+	if (pa->state == !!enable)
+		return 0;
+
+	/*
+	 * 顺序不能反，且两步之间要留 1ms：先给功放 boost/偏置上电，稳定后
+	 * 再拉 PA 使能，否则喇叭没有输出；关闭时按相反顺序。
+	 * 与 4.9 oppo_spk_pa_enable() 的行为一致。
+	 */
+	if (enable) {
+		if (pa->boost_gpio >= 0) {
+			gpio_set_value_cansleep(pa->boost_gpio, 1);
+			usleep_range(1000, 1050);
+		}
+		gpio_set_value_cansleep(pa->gpio, 1);
+	} else {
+		gpio_set_value_cansleep(pa->gpio, 0);
+		if (pa->boost_gpio >= 0) {
+			usleep_range(1000, 1050);
+			gpio_set_value_cansleep(pa->boost_gpio, 0);
+		}
+	}
+
+	pa->state = !!enable;
+	pr_info("%s: %s %s\n", __func__, pa->prop,
+		enable ? "ENABLE" : "DISABLE");
+	return 0;
+}
+
+static int oppo_spk_switch_get(struct snd_kcontrol *kcontrol,
+			       struct snd_ctl_elem_value *ucontrol)
+{
+	ucontrol->value.integer.value[0] = oppo_pa_gpios[0].state > 0;
+	return 0;
+}
+
+static int oppo_spk_switch_put(struct snd_kcontrol *kcontrol,
+			       struct snd_ctl_elem_value *ucontrol)
+{
+	oppo_pa_apply(0, ucontrol->value.integer.value[0]);
+	return 0;
+}
+
+static int oppo_hp_switch_get(struct snd_kcontrol *kcontrol,
+			      struct snd_ctl_elem_value *ucontrol)
+{
+	ucontrol->value.integer.value[0] = oppo_pa_gpios[1].state > 0;
+	return 0;
+}
+
+static int oppo_hp_switch_put(struct snd_kcontrol *kcontrol,
+			      struct snd_ctl_elem_value *ucontrol)
+{
+	oppo_pa_apply(1, ucontrol->value.integer.value[0]);
+	return 0;
+}
+
 static const struct snd_kcontrol_new msm_snd_controls[] = {
 	SOC_ENUM_EXT("MI2S_RX Format", msm_snd_enum[0],
 			mi2s_rx_bit_format_get, mi2s_rx_bit_format_put),
@@ -1194,6 +1389,10 @@ static const struct snd_kcontrol_new msm_snd_controls[] = {
 			msm_vi_feed_tx_ch_get, msm_vi_feed_tx_ch_put),
 	SOC_ENUM_EXT("MI2S_RX SampleRate", msm_snd_enum[6],
 			mi2s_rx_sample_rate_get, mi2s_rx_sample_rate_put),
+	SOC_ENUM_EXT("Ext_SPK_Switch", oppo_pa_enum[0],
+			oppo_spk_switch_get, oppo_spk_switch_put),
+	SOC_ENUM_EXT("Ext_HP_Switch", oppo_pa_enum[0],
+			oppo_hp_switch_get, oppo_hp_switch_put),
 };
 
 static int msm8952_enable_wsa_mclk(struct snd_soc_card *card, bool enable)
@@ -1286,6 +1485,21 @@ static int msm_mi2s_snd_startup(struct snd_pcm_substream *substream)
 	ret = snd_soc_dai_set_fmt(cpu_dai, SND_SOC_DAIFMT_CBS_CFS);
 	if (ret < 0)
 		pr_err("%s: set fmt cpu dai failed; ret=%d\n", __func__, ret);
+
+	/*
+	 * 4.9 parity: the msm8x16 machine driver called
+	 * msm8x16_wcd_mclk_enable(codec, 1, true) in this path. In 4.19 the
+	 * clock pairing is owned by the MCLK supply widget
+	 * (msm8952_mclk_event), so only cache the analog codec component
+	 * here (dlc_rx1 = {dig, analog}, hence ANA_CDC = 1) and let the
+	 * event drive msm_anlg_cdc_mclk_enable() with the right component.
+	 */
+	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK &&
+	    pdata->snd_card_val == INT_SND_CARD) {
+		if (rtd->num_codecs > ANA_CDC)
+			pdata->codec_comp =
+				rtd->codec_dais[ANA_CDC]->component;
+	}
 
 	return ret;
 }
@@ -3557,6 +3771,77 @@ static const struct of_device_id msm8952_asoc_machine_of_match[]  = {
 	{},
 };
 
+/*
+ * A57 speaker workaround: the vendor mixer_paths speaker path only
+ * flips HPHL, so the internal Class-D speaker output never gets
+ * enabled. Turn the SPK DAPM mux on once after the card is up; the
+ * speaker PA then follows the normal DAPM playback power-up and
+ * shuts down with it. Pure kernel-side, no vendor file change.
+ */
+static int (*msm8952_orig_spk_put)(struct snd_kcontrol *kcontrol,
+					struct snd_ctl_elem_value *ucontrol);
+static int (*msm8952_orig_rx3_put)(struct snd_kcontrol *kcontrol,
+					struct snd_ctl_elem_value *ucontrol);
+
+/*
+ * The vendor speaker mixer path only selects RX1 MIX1 INP1 (RX1), which
+ * feeds PDM_OUT_RX1 and therefore only the headphone output. The speaker
+ * DAC on this codec is fed from PDM_IN_RX3, which needs RX3 MIX1 INP1
+ * pointing at I2S RX1. The vendor default block also resets both the SPK
+ * mux and RX3 MIX1 INP1 to ZERO during HAL init, so force the two
+ * controls and keep them forced even if userspace writes ZERO.
+ */
+static int msm8952_spk_put_force_on(struct snd_kcontrol *kcontrol,
+					struct snd_ctl_elem_value *ucontrol)
+{
+	ucontrol->value.enumerated.item[0] = 1;
+	ucontrol->value.enumerated.item[1] = 1;
+	return msm8952_orig_spk_put(kcontrol, ucontrol);
+}
+
+static int msm8952_rx3_put_force_rx1(struct snd_kcontrol *kcontrol,
+					struct snd_ctl_elem_value *ucontrol)
+{
+	/* enum: ZERO, IIR1, IIR2, RX1, RX2, RX3 */
+	ucontrol->value.enumerated.item[0] = 3;
+	return msm8952_orig_rx3_put(kcontrol, ucontrol);
+}
+
+static void msm8952_force_spk_mux_on(struct snd_soc_card *card)
+{
+	struct snd_kcontrol *kctl;
+	struct snd_ctl_elem_value ucontrol;
+
+	kctl = snd_soc_card_get_kcontrol(card, "SPK");
+	if (!kctl) {
+		pr_err("%s: SPK kcontrol not found\n", __func__);
+	} else {
+		memset(&ucontrol, 0, sizeof(ucontrol));
+		ucontrol.value.enumerated.item[0] = 1;
+		ucontrol.value.enumerated.item[1] = 1;
+		if (kctl->put(kctl, &ucontrol) < 0)
+			pr_err("%s: SPK put failed\n", __func__);
+		else
+			pr_info("%s: speaker mux set to Switch\n", __func__);
+		msm8952_orig_spk_put = kctl->put;
+		kctl->put = msm8952_spk_put_force_on;
+	}
+
+	kctl = snd_soc_card_get_kcontrol(card, "RX3 MIX1 INP1");
+	if (!kctl) {
+		pr_err("%s: RX3 MIX1 INP1 kcontrol not found\n", __func__);
+	} else {
+		memset(&ucontrol, 0, sizeof(ucontrol));
+		ucontrol.value.enumerated.item[0] = 3;
+		if (kctl->put(kctl, &ucontrol) < 0)
+			pr_err("%s: RX3 MIX1 INP1 put failed\n", __func__);
+		else
+			pr_info("%s: RX3 MIX1 INP1 set to RX1\n", __func__);
+		msm8952_orig_rx3_put = kctl->put;
+		kctl->put = msm8952_rx3_put_force_rx1;
+	}
+}
+
 static int msm8952_asoc_machine_probe(struct platform_device *pdev)
 {
 	struct snd_soc_card *card;
@@ -3909,6 +4194,8 @@ parse_mclk_freq:
 			ret);
 		goto err;
 	}
+
+	msm8952_force_spk_mux_on(card);
 
 	return 0;
 err:

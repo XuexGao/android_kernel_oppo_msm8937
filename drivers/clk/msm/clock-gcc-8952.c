@@ -4968,6 +4968,29 @@ static int msm_gcc_mdss_probe(struct platform_device *pdev)
 
 	dev_info(&pdev->dev, "Registered GCC MDSS clocks.\n");
 
+	/*
+	 * 显式建立 RCG 的父指针。ext_byte0_clk_src / ext_pclk0_clk_src 的父
+	 * 是从 DT 取的，但 byte0_clk_src / pclk0_clk_src 自己没人设父；
+	 * 结果唤醒后 clk_get_parent(byte0_clk_src) 返回 NULL，
+	 * clk_ops_byte_multiparent 无法用父速率算分频比，clk_set_rate 恒
+	 * 返回 -EINVAL，面板拿不到像素时钟（只有背光没有图像）。
+	 */
+	ret = clk_set_parent(&byte0_clk_src.c, &ext_byte0_clk_src.c);
+	if (ret)
+		dev_err(&pdev->dev, "failed to set byte0_clk_src parent rc=%d\n",
+			ret);
+	else
+		dev_info(&pdev->dev, "byte0_clk_src parent = %s\n",
+			 ext_byte0_clk_src.c.dbg_name);
+
+	ret = clk_set_parent(&pclk0_clk_src.c, &ext_pclk0_clk_src.c);
+	if (ret)
+		dev_err(&pdev->dev, "failed to set pclk0_clk_src parent rc=%d\n",
+			ret);
+	else
+		dev_info(&pdev->dev, "pclk0_clk_src parent = %s\n",
+			 ext_pclk0_clk_src.c.dbg_name);
+
 	return ret;
 fail_8937:
 	devm_clk_put(&pdev->dev, ext_byte1_clk_src.c.parent);

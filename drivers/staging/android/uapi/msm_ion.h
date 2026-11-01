@@ -119,4 +119,26 @@ struct ion_prefetch_data {
 #define ION_IOC_DRAIN			_IOWR(ION_IOC_MSM_MAGIC, 4, \
 						struct ion_prefetch_data)
 
+
+/*
+ * Legacy Qualcomm flush ABI used by old vendor gralloc/memalloc to
+ * keep the CPU and GPU caches coherent on a dmabuf fd. Required for
+ * 4.9-era userspace running against this kernel (qdgralloc calls
+ * ION_IOC_CLEAN_INV_CACHES before every GPU read/write cycle).
+ */
+struct ion_flush_data {
+	__s32 handle;
+	__s32 fd;
+	__u64 vaddr;
+	__u32 offset;
+	__u32 length;
+};
+
+#define ION_IOC_CLEAN_CACHES		_IOWR(ION_IOC_MSM_MAGIC, 0, \
+						struct ion_flush_data)
+#define ION_IOC_INV_CACHES		_IOWR(ION_IOC_MSM_MAGIC, 1, \
+						struct ion_flush_data)
+#define ION_IOC_CLEAN_INV_CACHES	_IOWR(ION_IOC_MSM_MAGIC, 2, \
+						struct ion_flush_data)
+
 #endif /* _UAPI_LINUX_MSM_ION_H */

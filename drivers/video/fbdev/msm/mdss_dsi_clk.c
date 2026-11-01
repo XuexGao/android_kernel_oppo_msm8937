@@ -3,6 +3,7 @@
 
 #define pr_fmt(fmt) "mdss-dsi-clk:[%s] " fmt, __func__
 #include <linux/clk.h>
+#include <linux/clk/msm-clk-provider.h>
 #include <linux/list.h>
 
 #include "mdss_dsi_clk.h"
@@ -139,6 +140,11 @@ static int dsi_core_clk_stop(struct dsi_core_clks *c_clks)
 	return 0;
 }
 
+extern int mdss_dsi_pll_lpm_set_vco_rate0(unsigned long rate);
+extern unsigned long mdss_dsi_pll_lpm_get_vco_rate0(void);
+
+extern int mdss_dsi_pll_lpm_force_indirect0(unsigned long byte_rate);
+
 static int dsi_link_hs_clk_set_rate(
 	struct mdss_dsi_link_hs_clk_info *link_hs_clks)
 {
@@ -164,13 +170,67 @@ static int dsi_link_hs_clk_set_rate(
 
 	rc = clk_set_rate(link_hs_clks->byte_clk, link_hs_clks->byte_clk_rate);
 	if (rc) {
-		pr_err("clk_set_rate failed for byte_clk rc = %d\n", rc);
-		goto error;
+		unsigned long vco_rate = mdss_dsi_pll_lpm_get_vco_rate0();
+		struct clk *mux = clk_get_parent(link_hs_clks->byte_clk);
+		struct clk *vco = mux ? clk_get_parent(mux) : NULL;
+
+		pr_err("byte_clk=%s rc=%d req=%u cur=%lu mux=%s/%lu vco=%s/%lu cached=%lu\n",
+			link_hs_clks->byte_clk->dbg_name, rc,
+			link_hs_clks->byte_clk_rate,
+			clk_get_rate(link_hs_clks->byte_clk),
+			mux ? mux->dbg_name : "null",
+			mux ? clk_get_rate(mux) : 0UL,
+			vco ? vco->dbg_name : "null",
+			vco ? clk_get_rate(vco) : 0UL, vco_rate);
+
+		/*
+		 * The direct path (4x VCO) is impossible below the 350MHz PLL
+		 * floor, so panels with a ~64MHz byte clock must go through the
+		 * /2 indirect path with the VCO at exactly 8x. The gcc RCG2 in
+		 * between has no usable freq_tbl entry for this rate, so
+		 * clk_set_rate can never succeed in software; what matters is
+		 * that the PLL hardware is programmed to exactly 8x. Run the
+		 * indirect programming, refresh the cached VCO rate and decide
+		 * on hardware correctness instead of retrying set_rate.
+		 */
+		if (vco_rate != 8UL * (unsigned long)
+				link_hs_clks->byte_clk_rate) {
+			rc = mdss_dsi_pll_lpm_force_indirect0(
+				(unsigned long)link_hs_clks->byte_clk_rate);
+			if (rc)
+				pr_err("indirect path recovery failed rc = %d\n",
+					rc);
+			else
+				vco_rate = mdss_dsi_pll_lpm_get_vco_rate0();
+		}
+		if (clk_get_rate(link_hs_clks->byte_clk) ==
+				link_hs_clks->byte_clk_rate ||
+		    vco_rate ==
+			8UL * (unsigned long)link_hs_clks->byte_clk_rate) {
+			pr_err("byte_clk hw ok (vco=%lu 8x req) but clk_set_rate failed rc=%d\n",
+				vco_rate, rc);
+			/*
+			 * 4.9 的语义是失败即返回。继续往下走会让 DSI 带着
+			 * 错误时钟运行，触发错误中断风暴并最终 SError，
+			 * 所以这里不再把失败吞掉。
+			 */
+			goto error;
+		} else {
+			pr_err("clk_set_rate for byte_clk unrecovered rc = %d\n",
+				rc);
+			goto error;
+		}
 	}
 
 	rc = clk_set_rate(link_hs_clks->pixel_clk, link_hs_clks->pix_clk_rate);
 	if (rc) {
 		pr_err("clk_set_rate failed for pixel_clk rc = %d\n", rc);
+		/*
+		 * 4.9 在这里直接返回错误。之前忽略 -EINVAL 会让 DSI 带着
+		 * 错误的 pixel clock 继续跑，形成
+		 *   错误中断 → MDP_BUSY_RELEASE → 重提交 → 重设时钟失败
+		 * 的活锁，最终 SError panic 或显示驱动死等（黑屏）。
+		 */
 		goto error;
 	}
 
@@ -185,7 +245,12 @@ static int dsi_link_hs_clk_set_rate(
 			link_hs_clks->byte_clk_rate / 2);
 		if (rc) {
 			pr_err("set rate failed for byte intf clk rc=%d\n", rc);
-			goto error;
+			if (rc == -EINVAL) {
+				pr_err("byte_intf rcg freq mismatch, ignoring\n");
+				rc = 0;
+			} else {
+				goto error;
+			}
 		}
 	}
 

@@ -15,6 +15,10 @@
 
 #include <linux/module.h>
 #include <linux/of_gpio.h>
+#include <linux/proc_fs.h>
+#include <linux/uaccess.h>
+#include <linux/fs.h>
+#include <linux/cred.h>
 #include "msm_flash.h"
 #include "msm_camera_dt_util.h"
 #include "msm_cci.h"
@@ -110,6 +114,139 @@ static struct led_classdev msm_torch_led[MAX_LED_TRIGGERS] = {
 		.brightness	= LED_OFF,
 	},
 };
+
+/*
+ * /proc/qcom_flash
+ *
+ * Vendor mm-camera HAL (libmmcamera2_sensor_modules.so) opens this node to
+ * drive the torch and, when a session ends, reads it back so it can force the
+ * LED off if it was left on.  The 4.9 tree carried this as a local patch
+ * (kernel release string ends in -dirty) that never reached the 4.19 port, so
+ * the node was missing and the HAL logged "open qcom_flash failed" - which
+ * left the back camera without a flash unit and made a stuck torch
+ * impossible to clear.
+ */
+static int qcom_flash_torch_state;
+
+/*
+ * 本文件与 drivers/media/platform/msm/camera_v2/sensor/flash/msm_flash.c
+ * 是两份同名驱动，实际绑定 qcom,camera-flash 的可能是另一份，那样本文件的
+ * 静态 torch_trigger 永远是 NULL（实测：torch-light0 的 trigger 是 [none]，
+ * 而 led:torch_0 上是 [torch0_trigger]）。所以 trigger 不可用时直接写
+ * qpnp flash LED 的 sysfs，保证手电筒真的能被点亮/熄灭。
+ */
+static void qcom_flash_led_set(int on)
+{
+	struct file *f;
+	const struct cred *old_cred;
+	struct cred *cred;
+	const char *val = on ? "255" : "0";
+	int len = on ? 3 : 1;
+
+	if (torch_trigger) {
+		led_trigger_event(torch_trigger, on ? LED_FULL : LED_OFF);
+		return;
+	}
+
+	/*
+	 * 写 proc 的是 vendor HAL（uid 1000/1047），直接用它的凭据 open
+	 * root:root 0644 的 LED 节点会被 VFS 拒绝（-EACCES，实测 -13），
+	 * 所以临时切到内核 root 凭据再操作。
+	 */
+	cred = prepare_kernel_cred(NULL);
+	if (!cred) {
+		pr_err("%s: no memory for cred\n", __func__);
+		return;
+	}
+	old_cred = override_creds(cred);
+
+	f = filp_open("/sys/class/leds/led:torch_0/brightness", O_WRONLY, 0);
+	if (IS_ERR(f)) {
+		pr_err("%s: cannot open torch led node (%ld)\n", __func__,
+		       PTR_ERR(f));
+	} else {
+		kernel_write(f, val, len, &f->f_pos);
+		filp_close(f, NULL);
+		pr_info("%s: torch %s via sysfs\n", __func__, on ? "on" : "off");
+	}
+
+	revert_creds(old_cred);
+	put_cred(cred);
+}
+
+static ssize_t qcom_flash_proc_read(struct file *file, char __user *buff,
+				    size_t count, loff_t *ppos)
+{
+	char kbuf[8];
+	int len;
+
+	if (*ppos)
+		return 0;
+
+	len = scnprintf(kbuf, sizeof(kbuf), "%d\n", qcom_flash_torch_state);
+	if (len > count)
+		len = count;
+	if (len && copy_to_user(buff, kbuf, len))
+		return -EFAULT;
+
+	*ppos += len;
+	return len;
+}
+
+static ssize_t qcom_flash_proc_write(struct file *file,
+				     const char __user *buff,
+				     size_t count, loff_t *ppos)
+{
+	char kbuf[32];
+	size_t orig = count;
+	long val = 0;
+	int rc;
+
+	if (!count)
+		return -EINVAL;
+	if (count > sizeof(kbuf) - 1)
+		count = sizeof(kbuf) - 1;
+
+	if (copy_from_user(kbuf, buff, count))
+		return -EFAULT;
+	kbuf[count] = '\0';
+
+	/* 先无条件记录 HAL 传来的原始字节，第一版就用它确认真实协议 */
+	pr_info("%s: HAL wrote %zu byte(s): %*ph\n", __func__, orig,
+		(int)(orig > sizeof(kbuf) - 1 ? sizeof(kbuf) - 1 : orig), kbuf);
+
+	rc = kstrtol(kbuf, 0, &val);
+	if (rc) {
+		pr_err("%s: proc write error, can not parse %*ph\n", __func__,
+		       (int)(orig > sizeof(kbuf) - 1 ? sizeof(kbuf) - 1 : orig),
+		       kbuf);
+		return -EINVAL;
+	}
+
+	qcom_flash_torch_state = val ? 1 : 0;
+
+	/* 非 0 一律给最亮，避免 HAL 传 1 时电流档为 0 反而看不到灯 */
+	qcom_flash_led_set(val ? 1 : 0);
+
+	return orig;
+}
+
+static const struct file_operations qcom_flash_proc_fops = {
+	.owner	= THIS_MODULE,
+	.read	= qcom_flash_proc_read,
+	.write	= qcom_flash_proc_write,
+};
+
+static int __init qcom_flash_proc_init(void)
+{
+	if (!proc_create("qcom_flash", 0666, NULL, &qcom_flash_proc_fops)) {
+		pr_err("%s: Error! Couldn't create qcom_flash proc entry\n",
+		       __func__);
+		return -ENOMEM;
+	}
+	pr_info("%s: /proc/qcom_flash registered\n", __func__);
+	return 0;
+}
 
 #if IS_ENABLED(CONFIG_MACH_XIAOMI_VINCE)
 static void msm_flashlight_brightness_vince_set(struct led_classdev *led_cdev,
@@ -1421,6 +1558,16 @@ extern bool camera_legacy_enable;
 static int __init msm_flash_init_module(void)
 {
 	int32_t rc = 0;
+
+	/*
+	 * /proc/qcom_flash 必须在 camera_legacy_enable 判定之前注册：
+	 * 该标志在模块 init 阶段还是 false，放在后面会让节点永远不出现，
+	 * 而 vendor HAL 只关心这个节点存不存在（缺了就连手电筒都不给用，
+	 * 卡住的灯也没法被强制关掉）。
+	 */
+	if (qcom_flash_proc_init())
+		pr_err("%s: /proc/qcom_flash init failed\n", __func__);
+
 	if (!camera_legacy_enable)
 		return -ENODEV;
 	CDBG("Enter\n");
