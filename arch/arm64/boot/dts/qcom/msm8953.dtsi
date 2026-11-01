@@ -436,7 +436,28 @@
 		};
 	};
 
-	soc: soc@0 {
+	/*
+	 * 节点名必须是 soc，不能是 soc@0。
+	 *
+	 * sysfs 里的 platform 设备路径直接取自 DT 节点名，
+	 * soc@0 会生成 /sys/devices/platform/soc@0/...，
+	 * 而 bootloader 传的 cmdline 是：
+	 *     androidboot.boot_devices=soc/7824900.sdhci
+	 *
+	 * Android init 拼出 /dev/block/platform/soc/7824900.sdhci/by-name/，
+	 * 但内核实际在 soc@0 下，路径对不上 → 找不到分区 →
+	 *   "Failed to mount required partitions early" → abort 重启。
+	 *
+	 * 实测证据（修复前的日志）：
+	 *   input: Synaptics s3320 as /devices/platform/soc@0/78b7000.i2c/...
+	 *                                          ↑ 这里是 soc@0
+	 *   init: Failed to open
+	 *     '/dev/block/platform/soc/7824900.sdhci/by-name/system'
+	 *                        ↑ 这里是 soc（没有 @0）
+	 *
+	 * 4.9 CAF 的节点名就是 `soc {`，所以路径一致。
+	 */
+	soc: soc {
 		#address-cells = <1>;
 		#size-cells = <1>;
 		ranges = <0 0 0 0xffffffff>;
