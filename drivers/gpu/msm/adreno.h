@@ -1080,7 +1080,7 @@ int adreno_set_unsecured_mode(struct adreno_device *adreno_dev,
 		struct adreno_ringbuffer *rb);
 void adreno_spin_idle_debug(struct adreno_device *adreno_dev, const char *str);
 int adreno_spin_idle(struct adreno_device *device, unsigned int timeout);
-int adreno_idle(struct kgsl_device *device);
+int kgsl_adreno_idle(struct kgsl_device *device);
 bool adreno_isidle(struct kgsl_device *device);
 
 int adreno_set_constraint(struct kgsl_device *device,

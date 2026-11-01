@@ -3238,7 +3238,20 @@ int adreno_spin_idle(struct adreno_device *adreno_dev, unsigned int timeout)
  * Caller must hold the device mutex, and must not hold the dispatcher mutex.
  */
 
-int adreno_idle(struct kgsl_device *device)
+/*
+ * 注意：这个函数**不能**叫 adreno_idle。
+ *
+ * mainline 的 DRM MSM 驱动（drivers/gpu/drm/msm/adreno/adreno_gpu.c:652）
+ * 已经有一个同名符号：
+ *     bool adreno_idle(struct msm_gpu *gpu, struct msm_ringbuffer *ring)
+ *
+ * 本仓库同时编入了 KGSL（drivers/gpu/msm，QCOM vendor 栈）
+ * 和 DRM MSM（mainline 显示栈的 GPU 部分），两者链接成一个 vmlinux，
+ * 重名会直接 multiple definition 失败（实测 vmlinux.o 阶段报错）。
+ *
+ * 所以 KGSL 侧改名成 kgsl_adreno_idle，与 DRM 的 adreno_idle 区分开。
+ */
+int kgsl_adreno_idle(struct kgsl_device *device)
 {
 	struct adreno_device *adreno_dev = ADRENO_DEVICE(device);
 	int ret;
@@ -3286,7 +3299,7 @@ static int adreno_suspend_context(struct kgsl_device *device)
 	adreno_profile_process_results(ADRENO_DEVICE(device));
 
 	/* Wait for the device to go idle */
-	return adreno_idle(device);
+	return kgsl_adreno_idle(device);
 }
 
 static void adreno_retry_rbbm_read(struct kgsl_device *device,
@@ -4103,7 +4116,7 @@ static const struct kgsl_functable adreno_functable = {
 	/* Mandatory functions */
 	.regread = adreno_regread,
 	.regwrite = adreno_regwrite,
-	.idle = adreno_idle,
+	.idle = kgsl_adreno_idle,
 	.isidle = adreno_isidle,
 	.suspend_context = adreno_suspend_context,
 	.init = adreno_init,
