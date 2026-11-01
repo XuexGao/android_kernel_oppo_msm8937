@@ -616,6 +616,18 @@ static int msm_gpio_get_direction(struct gpio_chip *chip, unsigned int offset)
 
 	g = &pctrl->soc->groups[offset];
 
+	/*
+	 * 诊断（临时）：printk 出 pinctrl 的映射地址、tile、ctl_reg。
+	 * 用来确认 synchronous external abort 到底访问了哪个地址。
+	 * 只在 offset<2 打，避免刷屏。
+	 */
+	if (offset < 2)
+		pr_info("pinctrl-diag: offset=%u ngpio=%u tile=%u ctl_reg=0x%x "
+			"regs[0]=%px phys_base[0]=0x%llx\n",
+			offset, chip->ngpio, g->tile, g->ctl_reg,
+			pctrl->regs[g->tile],
+			(unsigned long long)pctrl->phys_base[g->tile]);
+
 	val = msm_readl_ctl(pctrl, g);
 
 	return val & BIT(g->oe_bit) ? GPIO_LINE_DIRECTION_OUT :
@@ -1582,6 +1594,18 @@ int msm_pinctrl_probe(struct platform_device *pdev,
 			return PTR_ERR(pctrl->regs[0]);
 
 		pctrl->phys_base[0] = res->start;
+
+		/*
+		 * 诊断（临时）：确认 DT 的 reg 解析结果和 ioremap 返回地址。
+		 * 目标：搞清 synchronous external abort 到底访问了哪里
+		 * （FAR 推出来是 0x84400000，落在 qseecom nomap 保留区里）。
+		 */
+		pr_info("pinctrl-diag: res->start=0x%llx size=0x%llx "
+			"ioremap=%px ngpios=%u ngroups=%u npins=%u\n",
+			(unsigned long long)res->start,
+			(unsigned long long)resource_size(res),
+			pctrl->regs[0],
+			soc_data->ngpios, soc_data->ngroups, soc_data->npins);
 	}
 
 	msm_pinctrl_setup_pm_reset(pctrl);
