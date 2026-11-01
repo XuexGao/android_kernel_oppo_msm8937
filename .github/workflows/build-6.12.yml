@@ -137,7 +137,8 @@ jobs:
           # "logo 2 秒 → 黑屏 → 重启" 就是这个原因）。
           for sym in ARM64_VA_BITS_39 PSTORE PSTORE_RAM PSTORE_CONSOLE PSTORE_PMSG \
                      MAILBOX RPMSG_QCOM_SMD QCOM_SMP2P QCOM_SMSM QCOM_APCS_IPC \
-                     SECURITY_NETWORK SECURITY_SELINUX; do
+                     SECURITY_NETWORK SECURITY_SELINUX \
+                     SQUASHFS SQUASHFS_LZ4 BLK_DEV_DM DM_VERITY; do
             v="$(grep -E "^CONFIG_${sym}=" .config | head -1 || true)"
             case "$v" in
               "CONFIG_${sym}=y") echo "  OK   $v" ;;

@@ -2014,3 +2014,38 @@ CONFIG_DM_VERITY=y
 CONFIG_DM_VERITY_FEC=y
 CONFIG_DM_UEVENT=y
 CONFIG_DM_INIT=y
+
+# ============================================================
+# SquashFS lz4 支持 —— 系统分区实际用的压缩算法
+#
+# 实测崩溃（run 8755d70d 的 dmesg-ramoops）：
+#
+#   [11.945204] EXT4-fs (mmcblk0p56): mounted filesystem ... ro
+#   [11.955996] Filesystem uses "lz4" compression. This is not supported
+#   [12.640086] reboot: Restarting system with command 'bootloader'
+#
+# 这条消息来自 fs/squashfs/super.c:171 —— 是 **SquashFS** 而不是 EROFS。
+# 说明 /system（或 /vendor）镜像是 SquashFS + lz4 压缩，
+# 而内核只开了 SQUASHFS_ZLIB，没开 SQUASHFS_LZ4 → 挂载失败 →
+# init 拿不到 /system → abort 重启。
+#
+# 之前我一直在 EROFS 里找这个错误，方向错了：内核的 EROFS 压缩
+# 支持是完整的（decompressor.o / zdata.o / zmap.o / zutil.o 都编了），
+# 真正缺的是 SquashFS 的 lz4 解码器。
+#
+# 4.19 分支（真机验证可启动）的 oppo-common.config 里有：
+#     CONFIG_SQUASHFS=y
+#     CONFIG_SQUASHFS_ZLIB=y
+#     CONFIG_SQUASHFS_LZ4=y
+#     CONFIG_SQUASHFS_XATTR=y
+# 这里补齐。
+# ============================================================
+CONFIG_SQUASHFS=y
+CONFIG_SQUASHFS_ZLIB=y
+CONFIG_SQUASHFS_LZ4=y
+CONFIG_SQUASHFS_ZSTD=y
+CONFIG_SQUASHFS_XZ=y
+CONFIG_SQUASHFS_XATTR=y
+CONFIG_SQUASHFS_FILE_DIRECT=y
+CONFIG_SQUASHFS_DECOMP_MULTI_PERCPU=y
+CONFIG_SQUASHFS_FRAGMENT_CACHE_SIZE=3
