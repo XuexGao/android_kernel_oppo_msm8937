@@ -151,6 +151,25 @@
 			pmsg-size = <0x100000>;
 			ecc-size = <0>;
 			no-map;
+			/*
+			 * 关键：默认 max-reason = 2 (KMSG_DUMP_OOPS)，
+			 * 只记录 oops/panic。而"开机几秒后正常重启"走的是
+			 * KMSG_DUMP_SHUTDOWN(=4)，大于 2 → **根本不会写**。
+			 *
+			 * 这解释了两次实测的差异：
+			 *   · 6.12 panic 那次 → 留下 dmesg-ramoops-0.enc.z (Panic#2)
+			 *   · 6.12 正常重启这次 → 什么都没留下
+			 *
+			 * 更关键的是：record 区恰好是 TWRP 的 4.9 内核**从不覆盖**
+			 * 的地方（4.9 不 panic，不写 record 区）。所以只要 6.12
+			 * 肯往 record 写，日志在进 TWRP 之后就能保住 ——
+			 * 这是这台设备上唯一可靠的抓日志通道（console 区会被
+			 * 4.9 持续覆盖，pmsg 同理）。
+			 *
+			 * 5 = KMSG_DUMP_MAX，记录全部类型：
+			 *   UNDEF(0) PANIC(1) OOPS(2) EMERG(3) SHUTDOWN(4)
+			 */
+			max-reason = <5>;
 		};
 	};
 
