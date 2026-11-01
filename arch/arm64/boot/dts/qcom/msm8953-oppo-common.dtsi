@@ -729,27 +729,8 @@
 };
 
 /*
- * GPU（Adreno 506 / a5xx）
- *
- * KGSL 已移植完成（47 处 4.19→6.12 API 差异全部清完，见
- * drivers/gpu/msm/ 的改动和 include/linux/iommu.h 里补回的
- * DOMAIN_ATTR_* 接口）。这里是**第一次**在设备树上打开它。
- *
- * 上一版卡在 SurfaceFlinger 的 chooseEglConfig —— 因为没有 GPU，
- * EGL 拿不到任何 config。打开这个节点后才有可能继续。
- *
- * 依赖（都已确认在位）：
- *   clocks        gcc OXILI gfx3d / ahb / bimc_gfx / bimc_gpu / timer / aon
- *   power-domains gcc OXILI_GX_GDSC
- *   iommus        gpu_iommu（qcom,msm-iommu-v2，6.12 的 qcom_iommu 驱动能匹配）
- *   opp           gpu_opp_table（19.2MHz ~ 650MHz）
- *
- * 注意：zap-shader 子节点目前引用 zap_shader_region，
- * 但本仓库的 subsystem_restart.h 是 stub（返回 -ENODEV），
- * 所以 KGSL 会认为 zap 固件不可用而跳过加载。
- * Adreno 506 在非 secure 模式下不强制要求 zap shader，
- * 先按这个状态试；如果 GPU 起不来再处理 zap。
+ * GPU 节点现在直接写在 msm8953.dtsi 里，改用 KGSL 约定的
+ * compatible "qcom,kgsl-3d0" 和私有属性（qcom,chipid /
+ * qcom,gpu-pwrlevels / qcom,initial-pwrlevel 等），
+ * status 已经是 okay，这里不再需要 &gpu 覆盖。
  */
-&gpu {
-	status = "okay";
-};

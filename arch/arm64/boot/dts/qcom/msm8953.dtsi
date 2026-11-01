@@ -1066,11 +1066,65 @@
 			};
 		};
 
-		gpu: gpu@1c00000 {
-			compatible = "qcom,adreno-506.0", "qcom,adreno";
+		/*
+		 * GPU —— Adreno 506（a5xx，无 GMU）
+		 *
+		 * 必须用 **KGSL 的约定**，不能用 mainline DRM MSM 的。
+		 *
+		 * 实测（run b4750186 的 dmesg，内核已跑到 73 秒）：
+		 * Android second stage 起来了，servicemanager / apexd /
+		 * keymaster 都正常，但 SurfaceFlinger 在 48 秒崩在
+		 *     SkiaGLRenderEngine::chooseEglConfig __android_log_assert
+		 * 之后 servicemanager 一直刷
+		 *     "SurfaceFlingerAIDL could not be found"
+		 * 根因是 **GPU 从未 probe**。
+		 *
+		 * 整份日志里 GPU 只有一行痕迹：
+		 *     adreno 1c00000.gpu: Adding to iommu group 0
+		 * 那一行是 iommu 核心打的，不是 KGSL。
+		 *
+		 * 因为 KGSL 的 of_match_table 只认：
+		 *     { .compatible = "qcom,kgsl-3d0", .data = &device_3d0 }
+		 * 而原来写的是 mainline 的
+		 *     compatible = "qcom,adreno-506.0", "qcom,adreno"
+		 * 两个都不匹配 → adreno_probe 根本没被调用 → 静默无日志。
+		 *
+		 * 这里按 4.9 CAF 的 msm8953-gpu.dtsi 改写：
+		 *   compatible   "qcom,kgsl-3d0", "qcom,kgsl-3d"
+		 *   label        kgsl-3d0
+		 *   clock-names  必须带 _clk 后缀（KGSL kgsl_pwrctrl.c 的
+		 *                clocks[] 表里写死了 "core_clk" "iface_clk"
+		 *                "mem_iface_clk" "alt_mem_iface_clk"
+		 *                "rbbmtimer_clk" "alwayson_clk"）
+		 *   qcom,chipid  0x05000600（A506）
+		 *   qcom,gpu-pwrlevels  8 档，照抄 4.9
+		 *
+		 * 与 mainline 写法的冲突：
+		 *   · 去掉 operating-points-v2 —— KGSL 不读 opp，读 qcom,gpu-pwrlevels
+		 *   · 去掉 power-domains —— KGSL 自己管 GDSC
+		 *   · 去掉 zap-shader —— 本仓库 subsystem_restart.h 是 stub
+		 *     （返回 -ENODEV），留着会让 a5xx_microcode_load() 直接
+		 *     返回 -ENODEV 导致 probe 失败。A506 非 secure 模式不需要它。
+		 */
+		gpu: kgsl-3d0@1c00000 {
+			label = "kgsl-3d0";
+			compatible = "qcom,kgsl-3d0", "qcom,kgsl-3d";
+			status = "okay";
 			reg = <0x01c00000 0x40000>;
 			reg-names = "kgsl_3d0_reg_memory";
 			interrupts = <GIC_SPI 33 IRQ_TYPE_LEVEL_HIGH>;
+			interrupt-names = "kgsl_3d0_irq";
+
+			qcom,id = <0>;
+			qcom,chipid = <0x05000600>;
+			qcom,initial-pwrlevel = <4>;
+
+			qcom,idle-timeout = <80>;
+			qcom,deep-nap-timeout = <100>;
+			qcom,strtstp-sleepwake;
+
+			qcom,highest-bank-bit = <14>;
+			qcom,snapshot-size = <0x200000>;
 
 			clocks = <&gcc GCC_OXILI_GFX3D_CLK>,
 				 <&gcc GCC_OXILI_AHB_CLK>,
@@ -1078,78 +1132,88 @@
 				 <&gcc GCC_BIMC_GPU_CLK>,
 				 <&gcc GCC_OXILI_TIMER_CLK>,
 				 <&gcc GCC_OXILI_AON_CLK>;
-			clock-names = "core",
-				      "iface",
-				      "mem_iface",
-				      "alt_mem_iface",
-				      "rbbmtimer",
-				      "alwayson";
-			power-domains = <&gcc OXILI_GX_GDSC>;
+			clock-names = "core_clk",
+				      "iface_clk",
+				      "mem_iface_clk",
+				      "alt_mem_iface_clk",
+				      "rbbmtimer_clk",
+				      "alwayson_clk";
 
 			iommus = <&gpu_iommu 0>;
-			operating-points-v2 = <&gpu_opp_table>;
+
+			/*
+			 * 故意不写 regulator-names，让 KGSL 走 get_legacy_regulators()：
+			 *   · 有 regulator-names → of_property_for_each_string 逐个
+			 *     devm_regulator_get，任何一个拿不到就 probe 失败
+			 *   · 没有 → 只取 "vdd"，且 vddcx-supply 属性不存在时
+			 *     根本不会去取 vddcx
+			 * 本机 GPU 供电由 RPM 侧固定配置，没有独立 regulator 节点
+			 * 能对上，走 legacy 路径更稳（拿不到会退回 dummy，
+			 * 只影响电压调节粒度，不影响 probe）。
+			 */
 
 			#cooling-cells = <2>;
 
-			status = "disabled";
+			qcom,gpu-pwrlevels {
+				#address-cells = <1>;
+				#size-cells = <0>;
+				compatible = "qcom,gpu-pwrlevels";
 
-			zap-shader {
-				memory-region = <&zap_shader_region>;
-			};
-
-			gpu_opp_table: opp-table {
-				compatible = "operating-points-v2";
-
-				opp-19200000 {
-					opp-hz = /bits/ 64 <19200000>;
-					opp-supported-hw = <0xff>;
-					required-opps = <&rpmpd_opp_min_svs>;
+				qcom,gpu-pwrlevel@0 {
+					reg = <0>;
+					qcom,gpu-freq = <650000000>;
+					qcom,bus-freq = <10>;
+					qcom,bus-min = <10>;
+					qcom,bus-max = <10>;
 				};
-
-				opp-133300000 {
-					opp-hz = /bits/ 64 <133300000>;
-					opp-supported-hw = <0xff>;
-					required-opps = <&rpmpd_opp_min_svs>;
+				qcom,gpu-pwrlevel@1 {
+					reg = <1>;
+					qcom,gpu-freq = <560000000>;
+					qcom,bus-freq = <10>;
+					qcom,bus-min = <8>;
+					qcom,bus-max = <10>;
 				};
-
-				opp-216000000 {
-					opp-hz = /bits/ 64 <216000000>;
-					opp-supported-hw = <0xff>;
-					required-opps = <&rpmpd_opp_low_svs>;
+				qcom,gpu-pwrlevel@2 {
+					reg = <2>;
+					qcom,gpu-freq = <510000000>;
+					qcom,bus-freq = <9>;
+					qcom,bus-min = <6>;
+					qcom,bus-max = <10>;
 				};
-
-				opp-320000000 {
-					opp-hz = /bits/ 64 <320000000>;
-					opp-supported-hw = <0xff>;
-					required-opps = <&rpmpd_opp_svs>;
+				qcom,gpu-pwrlevel@3 {
+					reg = <3>;
+					qcom,gpu-freq = <400000000>;
+					qcom,bus-freq = <7>;
+					qcom,bus-min = <5>;
+					qcom,bus-max = <8>;
 				};
-
-				opp-400000000 {
-					opp-hz = /bits/ 64 <400000000>;
-					opp-supported-hw = <0xff>;
-					required-opps = <&rpmpd_opp_svs_plus>;
+				qcom,gpu-pwrlevel@4 {
+					reg = <4>;
+					qcom,gpu-freq = <320000000>;
+					qcom,bus-freq = <4>;
+					qcom,bus-min = <2>;
+					qcom,bus-max = <6>;
 				};
-
-				opp-510000000 {
-					opp-hz = /bits/ 64 <510000000>;
-					opp-supported-hw = <0xff>;
-					required-opps = <&rpmpd_opp_nom>;
+				qcom,gpu-pwrlevel@5 {
+					reg = <5>;
+					qcom,gpu-freq = <216000000>;
+					qcom,bus-freq = <1>;
+					qcom,bus-min = <1>;
+					qcom,bus-max = <4>;
 				};
-
-				opp-560000000 {
-					opp-hz = /bits/ 64 <560000000>;
-					opp-supported-hw = <0xff>;
-					required-opps = <&rpmpd_opp_nom_plus>;
+				qcom,gpu-pwrlevel@6 {
+					reg = <6>;
+					qcom,gpu-freq = <133300000>;
+					qcom,bus-freq = <1>;
+					qcom,bus-min = <1>;
+					qcom,bus-max = <4>;
 				};
-
-				/*
-				 * This opp is only available on msm8953 and
-				 * sdm632, the max for sdm450 is 600MHz.
-				 */
-				opp-650000000 {
-					opp-hz = /bits/ 64 <650000000>;
-					opp-supported-hw = <0xff>;
-					required-opps = <&rpmpd_opp_turbo>;
+				qcom,gpu-pwrlevel@7 {
+					reg = <7>;
+					qcom,gpu-freq = <19200000>;
+					qcom,bus-freq = <0>;
+					qcom,bus-min = <0>;
+					qcom,bus-max = <0>;
 				};
 			};
 		};
