@@ -1951,3 +1951,36 @@ CONFIG_PGTABLE_LEVELS=4
 #   → DRM / sdhci / USB 全部 -EPROBE_DEFER
 # ============================================================
 CONFIG_MAILBOX=y
+
+# ============================================================
+# SELinux —— Android init 第一阶段的硬性依赖
+#
+# 实测崩溃（run 4439cce5 的 dmesg-ramoops）：
+#
+#   init: mount("selinuxfs", "/sys/fs/selinux", "selinuxfs", 0, NULL)
+#         failed Invalid argument
+#   init: Init encountered errors starting first stage, aborting
+#   init: InitFatalReboot: signal 6
+#   reboot: Restarting system with command 'bootloader'
+#
+# 内核没编进 SELinux 时没有 selinuxfs 这个文件系统类型，
+# init 第一阶段挂载就直接失败 → abort → 重启。表现正是
+# "logo 2 秒 → 黑屏 → 重启" 的循环。
+#
+# 这跟内核能不能启动无关 —— 内核其实已经完整跑起来
+# （触摸 s3320、eMMC 58 分区、gpio-keys、bq27541 全部 probe 成功，
+#   3.7 秒就 Run /init 了），是用户态被 SELinux 缺失卡死。
+#
+# 依赖链（security/selinux/Kconfig:4）：
+#     SECURITY_SELINUX depends on SECURITY_NETWORK && AUDIT && NET && INET
+# AUDIT/NET/INET 已开，只缺 SECURITY_NETWORK，一起补上。
+#
+# 4.19 分支（真机验证可启动）同样是这两条：
+#     CONFIG_SECURITY_NETWORK=y
+#     CONFIG_SECURITY_SELINUX=y
+# ============================================================
+CONFIG_SECURITY_NETWORK=y
+CONFIG_SECURITY_SELINUX=y
+CONFIG_SECURITY_SELINUX_BOOTPARAM=y
+CONFIG_SECURITY_SELINUX_DEVELOP=y
+CONFIG_DEFAULT_SECURITY_SELINUX=y
