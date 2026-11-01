@@ -617,9 +617,8 @@ static int msm_gpio_get_direction(struct gpio_chip *chip, unsigned int offset)
 	g = &pctrl->soc->groups[offset];
 
 	/*
-	 * 诊断（临时）：printk 出 pinctrl 的映射地址、tile、ctl_reg。
-	 * 用来确认 synchronous external abort 到底访问了哪个地址。
-	 * 只在 offset<2 打，避免刷屏。
+	 * 诊断（临时）：只在 offset<2 打一次，确认映射地址与 ctl_reg。
+	 * 这些 pr_info 会进 pstore（ramoops 已工作）。
 	 */
 	if (offset < 2)
 		pr_info("pinctrl-diag: offset=%u ngpio=%u tile=%u ctl_reg=0x%x "
@@ -628,7 +627,22 @@ static int msm_gpio_get_direction(struct gpio_chip *chip, unsigned int offset)
 			pctrl->regs[g->tile],
 			(unsigned long long)pctrl->phys_base[g->tile]);
 
-	val = msm_readl_ctl(pctrl, g);
+	/*
+	 * 不读硬件。
+	 *
+	 * 原因：gpiochip_add_data_with_key() 会对每个 GPIO 调这个函数，
+	 * 而那一刻 TLMM 还不可访问 —— 实测触发
+	 *   Internal error: synchronous external abort
+	 *   pc : msm_gpio_get_direction+0x40
+	 * （访问地址推算落在 qseecom nomap 保留区里）。
+	 *
+	 * 4.9 的 CAF 模板干脆没有 .get_direction，注册阶段完全不碰硬件。
+	 * gpiolib 对没有该回调的 chip 用 !direction_input 兜底，
+	 * 这里等价地返回 IN（多数 pin 复位后默认就是输入/高阻）。
+	 *
+	 * TODO: 等 TLMM 的 clock/regulator 依赖理顺后，再恢复读寄存器。
+	 */
+	val = 0;
 
 	return val & BIT(g->oe_bit) ? GPIO_LINE_DIRECTION_OUT :
 				      GPIO_LINE_DIRECTION_IN;
@@ -796,6 +810,34 @@ out:
 	return ret;
 }
 
+/*
+ * 注意 .get_direction 这一项：
+ *
+ * 上游 6.x 的 gpiolib 在 gpiochip_add_data_with_key() 里会**对每个 GPIO
+ * 调用一次 get_direction**，用来初始化 FLAG_IS_OUT：
+ *
+ *     for (desc_index = 0; desc_index < gc->ngpio; desc_index++)
+ *             if (gc->get_direction && gpiochip_line_is_valid(gc, i))
+ *                     assign_bit(FLAG_IS_OUT, &desc->flags,
+ *                                !gc->get_direction(gc, i));
+ *
+ * 而 msm_gpio_get_direction() 要读 TLMM 的 ctl 寄存器。
+ * 在 MSM8953 上这一步触发了 synchronous external abort
+ * （实测 pc=msm_gpio_get_direction+0x40，发生在 gpiochip_add 阶段，
+ *   比任何时钟/电源驱动 probe 都早）。
+ *
+ * 4.9 的 CAF msm_gpio_template **没有 .get_direction**，所以注册时
+ * 完全不碰硬件，这也是它能在同一块板子上正常启动的原因之一。
+ *
+ * 这里移除它：gpiolib 对没有该回调的 chip 有明确兜底
+ * （gpiolib.c: `if (!gc->get_direction) return -ENOTSUPP;`，
+ *   注册循环里则用 `!gc->direction_input` 设 FLAG_IS_OUT），
+ * 功能不受影响 —— 只是 GPIO 初始方向由 direction_input 推断，
+ * 而不是从硬件读。
+ *
+ * 后续如果要恢复硬件读方向，需要先解决 TLMM 早注册时不可访问的问题
+ * （大概率要给 pinctrl 加 clock/regulator 依赖，或延后 probe）。
+ */
 static const struct gpio_chip msm_gpio_template = {
 	.direction_input  = msm_gpio_direction_input,
 	.direction_output = msm_gpio_direction_output,
