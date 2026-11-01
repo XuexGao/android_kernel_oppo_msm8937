@@ -2304,8 +2304,47 @@ static int msm_digital_cdc_dt_parse_vreg_info(struct device *dev,
 	return 0;
 }
 
+static int msm_dig_cdc_dai_startup(struct snd_pcm_substream *substream,
+				   struct snd_soc_dai *dai)
+{
+	struct snd_soc_component *component = dai->component;
+
+	if (substream->stream != SNDRV_PCM_STREAM_PLAYBACK)
+		return 0;
+
+	/*
+	 * The analog codec mclk path that normally raises
+	 * DIG_CDC_EVENT_CLK_ON is not wired into the legacy machine
+	 * driver, so the PDM clock feeding the analog codec was never
+	 * enabled and the speaker got silent PDM.  Enable it here.
+	 */
+	pr_info("%s: enable PDM clock for playback\n", __func__);
+	snd_soc_component_update_bits(component,
+		MSM89XX_CDC_CORE_CLK_PDM_CTL, 0x03, 0x03);
+	snd_soc_component_update_bits(component,
+		MSM89XX_CDC_CORE_CLK_MCLK_CTL, 0x01, 0x01);
+	return 0;
+}
+
+static void msm_dig_cdc_dai_shutdown(struct snd_pcm_substream *substream,
+				     struct snd_soc_dai *dai)
+{
+	struct snd_soc_component *component = dai->component;
+
+	if (substream->stream != SNDRV_PCM_STREAM_PLAYBACK)
+		return;
+
+	pr_info("%s: disable PDM clock\n", __func__);
+	snd_soc_component_update_bits(component,
+		MSM89XX_CDC_CORE_CLK_MCLK_CTL, 0x01, 0x00);
+	snd_soc_component_update_bits(component,
+		MSM89XX_CDC_CORE_CLK_PDM_CTL, 0x03, 0x00);
+}
+
 static struct snd_soc_dai_ops msm_dig_dai_ops = {
 	.hw_params = msm_dig_cdc_hw_params,
+	.startup = msm_dig_cdc_dai_startup,
+	.shutdown = msm_dig_cdc_dai_shutdown,
 };
 
 
@@ -2384,7 +2423,7 @@ const struct snd_soc_component_driver soc_msm_dig_codec = {
 
 const struct regmap_config msm_digital_regmap_config = {
 	.reg_bits = 32,
-	.reg_stride = 4,
+	.reg_stride = 1,
 	.val_bits = 8,
 	.lock = enable_digital_callback,
 	.unlock = disable_digital_callback,

@@ -509,6 +509,89 @@ static long msm_sensor_subdev_ioctl(struct v4l2_subdev *sd,
 }
 
 #ifdef CONFIG_COMPAT
+struct msm_sensor_info_t_legacy32 {
+	char sensor_name[32];
+	__u32 session_id;
+	__s32 subdev_id[12];
+	__s32 subdev_intf[12];
+	__u8 is_mount_angle_valid;
+	__u32 sensor_mount_angle;
+	__s32 modes_supported;
+	__s32 position;
+};
+
+struct sensorb_cfg_data_legacy32 {
+	__s32 cfgtype;
+	union {
+		struct msm_sensor_info_t_legacy32 sensor_info;
+		__u32 setting;
+	} cfg;
+};
+
+/*
+ * 4.9 userspace command number for VIDIOC_MSM_SENSOR_CFG: the ioctl
+ * size covers the 4.9 msm_sensor_info_t (12 subdev slots), so it
+ * differs from the 4.19 VIDIOC_MSM_SENSOR_CFG32 number.  arg is the
+ * video_usercopy kernel buffer.
+ */
+#define VIDIOC_MSM_SENSOR_CFG_LEGACY32 \
+	_IOWR('V', BASE_VIDIOC_PRIVATE + 1, struct sensorb_cfg_data_legacy32)
+
+static int msm_sensor_config32(struct msm_sensor_ctrl_t *s_ctrl, void __user *argp);
+
+static long msm_sensor_config_legacy32(struct v4l2_subdev *sd, void *arg)
+{
+	struct msm_sensor_ctrl_t *s_ctrl = get_sctrl(sd);
+	struct sensorb_cfg_data_legacy32 *u32l = arg;
+	struct sensorb_cfg_data32 cdata;
+	int i, rc;
+
+	if (!s_ctrl)
+		return -EBADF;
+
+	memset(&cdata, 0, sizeof(cdata));
+	cdata.cfgtype = u32l->cfgtype;
+	pr_info("LEGACY32 sensor CFG cfgtype=%d\n", cdata.cfgtype);
+
+	switch (cdata.cfgtype) {
+	case CFG_GET_SENSOR_INFO:
+		rc = msm_sensor_config32(s_ctrl, &cdata);
+		if (rc < 0)
+			return rc;
+		memcpy(u32l->cfg.sensor_info.sensor_name,
+			cdata.cfg.sensor_info.sensor_name,
+			sizeof(u32l->cfg.sensor_info.sensor_name));
+		u32l->cfg.sensor_info.session_id =
+			cdata.cfg.sensor_info.session_id;
+		for (i = 0; i < 12; i++) {
+			u32l->cfg.sensor_info.subdev_id[i] =
+				cdata.cfg.sensor_info.subdev_id[i];
+			u32l->cfg.sensor_info.subdev_intf[i] =
+				cdata.cfg.sensor_info.subdev_intf[i];
+		}
+		u32l->cfg.sensor_info.is_mount_angle_valid =
+			cdata.cfg.sensor_info.is_mount_angle_valid;
+		u32l->cfg.sensor_info.sensor_mount_angle =
+			cdata.cfg.sensor_info.sensor_mount_angle;
+		u32l->cfg.sensor_info.modes_supported =
+			cdata.cfg.sensor_info.modes_supported;
+		u32l->cfg.sensor_info.position =
+			cdata.cfg.sensor_info.position;
+		return 0;
+	case CFG_GET_SENSOR_INIT_PARAMS:
+		rc = msm_sensor_config32(s_ctrl, &cdata);
+		if (rc < 0)
+			return rc;
+		memcpy(&u32l->cfg, &cdata.cfg,
+			sizeof(struct msm_sensor_init_params));
+		return 0;
+	default:
+		memcpy(&cdata.cfg, &u32l->cfg, 148);
+		rc = msm_sensor_config32(s_ctrl, &cdata);
+		return rc;
+	}
+}
+
 static long msm_sensor_subdev_do_ioctl(
 	struct file *file, unsigned int cmd, void *arg)
 {
@@ -517,6 +600,9 @@ static long msm_sensor_subdev_do_ioctl(
 	switch (cmd) {
 	case VIDIOC_MSM_SENSOR_CFG32:
 		cmd = VIDIOC_MSM_SENSOR_CFG;
+		return msm_sensor_subdev_ioctl(sd, cmd, arg);
+	case VIDIOC_MSM_SENSOR_CFG_LEGACY32:
+		return msm_sensor_config_legacy32(sd, arg);
 	default:
 		return msm_sensor_subdev_ioctl(sd, cmd, arg);
 	}

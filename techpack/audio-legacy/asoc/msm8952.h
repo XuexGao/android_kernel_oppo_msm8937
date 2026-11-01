@@ -100,7 +100,7 @@ struct msm_asoc_mach_data {
 	struct device_node *comp_gpio_p;
 	struct device_node *mi2s_gpio_p[MI2S_MAX];
 	struct device_node *dmic_gpio_p; /* used by pinctrl API */
-	struct snd_soc_codec *codec;
+	struct snd_soc_component *codec_comp;
 	struct snd_info_entry *codec_root;
 };
 

@@ -14,6 +14,7 @@
 #define pr_fmt(fmt)	"%s: " fmt, __func__
 
 #include <linux/kernel.h>
+#include <linux/clk.h>
 #include <linux/err.h>
 #include <linux/delay.h>
 #include <linux/clk/msm-clk.h>
@@ -520,3 +521,54 @@ int dsi_pll_clock_register_lpm(struct platform_device *pdev,
 
 	return rc;
 }
+
+/*
+ * Public accessors for the DSI clock manager (primary PLL only).
+ *
+ * The fixed /4 byte divider rejects clk_set_rate() unless the cached VCO
+ * rate is exactly 4x (direct path) or 8x (indirect /2 path) the panel byte
+ * clock. After a suspend/resume cycle the handoff-cached VCO rate can be
+ * stale for such panels; let the clock manager inspect and re-program the
+ * PLL before retrying the divider.
+ */
+unsigned long mdss_dsi_pll_lpm_get_vco_rate0(void)
+{
+	return clk_get_rate(&dsi_pll0_vco_clk.c);
+}
+EXPORT_SYMBOL(mdss_dsi_pll_lpm_get_vco_rate0);
+
+int mdss_dsi_pll_lpm_set_vco_rate0(unsigned long rate)
+{
+	return clk_set_rate(&dsi_pll0_vco_clk.c, rate);
+}
+EXPORT_SYMBOL(mdss_dsi_pll_lpm_set_vco_rate0);
+
+/*
+ * Recover the primary byte clock for panels whose VCO must run through the
+ * /2 indirect path (the direct path would need a 4x VCO below the 350MHz
+ * PLL floor). Program the VCO to exactly 8x the panel byte clock, rewire
+ * the byte mux to the indirect divider and refresh the cached rates:
+ * div_set_rate() validates the request against the mux's cached rate (the
+ * mux has no round_rate ops) and then clk_set_rate()s the mux back to 4x
+ * the byte clock, so every cached rate must match exactly or the whole
+ * request bails out with -EINVAL. Rewiring mux->c.parent also keeps
+ * dsi_pll_mux_prepare() from restoring the direct path on the next
+ * prepare.
+ */
+int mdss_dsi_pll_lpm_force_indirect0(unsigned long byte_rate)
+{
+	unsigned long vco_rate = byte_rate * 8;
+	int rc;
+
+	rc = clk_set_rate(&dsi_pll0_vco_clk.c, vco_rate);
+	if (rc)
+		return rc;
+
+	dsi_pll0_byte_mux.c.parent = &dsi_pll0_indirect_path_div2_clk.c;
+	dsi_pll0_indirect_path_div2_clk.c.rate = vco_rate / 2;
+	dsi_pll0_byte_mux.c.rate = vco_rate / 2;
+	dsi_pll0_byte_clk_src.c.rate = byte_rate;
+
+	return set_byte_mux_sel(&dsi_pll0_byte_mux, 1);
+}
+EXPORT_SYMBOL(mdss_dsi_pll_lpm_force_indirect0);

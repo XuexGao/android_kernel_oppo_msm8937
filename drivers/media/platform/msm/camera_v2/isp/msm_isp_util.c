@@ -774,6 +774,23 @@ struct msm_vfe_cfg_cmd_list_32 {
 #define VIDIOC_MSM_VFE_REG_LIST_CFG_COMPAT \
 	_IOWR('V', BASE_VIDIOC_PRIVATE+14, struct msm_vfe_cfg_cmd_list_32)
 
+/*
+ * 4.9 ABI layout of msm_vfe_axi_stream_cfg_cmd (44 bytes, no trailing
+ * hw_state).  32-bit vendor HAL (mm-qcamera-daemon) sends
+ * VIDIOC_MSM_ISP_CFG_STREAM encoded with this 44-byte size; the 4.19
+ * fork added enum msm_vfe_hw_state at the tail which changed the ioctl
+ * encoding, so remap it here.
+ */
+struct msm_vfe_axi_stream_cfg_cmd_44 {
+	uint8_t num_streams;
+	uint32_t stream_handle[VFE_AXI_SRC_MAX];
+	enum msm_vfe_axi_stream_cmd cmd;
+	uint8_t sync_frame_id_src;
+};
+
+#define VIDIOC_MSM_ISP_CFG_STREAM_LEGACY \
+	_IOWR('V', MSM_ISP_CFG_STREAM, struct msm_vfe_axi_stream_cfg_cmd_44)
+
 static void msm_isp_compat_to_proc_cmd(struct msm_vfe_cfg_cmd2 *proc_cmd,
 	struct msm_vfe_cfg_cmd2_32 *proc_cmd_ptr32)
 {
@@ -1130,6 +1147,25 @@ static long msm_isp_ioctl_compat(struct v4l2_subdev *sd,
 		mutex_lock(&vfe_dev->realtime_mutex);
 		rc = msm_isp_proc_cmd_list(vfe_dev, arg);
 		mutex_unlock(&vfe_dev->realtime_mutex);
+		break;
+	}
+	case VIDIOC_MSM_ISP_CFG_STREAM_LEGACY: {
+		/*
+		 * Vendor 32-bit HAL sends the 4.9 44-byte CFG_STREAM
+		 * (no hw_state).  arg buffer was allocated with the
+		 * caller's 44-byte _IOC_SIZE; fork struct only appends
+		 * hw_state at the tail, so copy the first 44 bytes and
+		 * leave hw_state = HW_STATE_NONE.
+		 */
+		struct msm_vfe_axi_stream_cfg_cmd cfg_cmd = {0};
+
+		memcpy(&cfg_cmd, arg,
+			sizeof(struct msm_vfe_axi_stream_cfg_cmd_44));
+		mutex_lock(&vfe_dev->core_mutex);
+		MSM_ISP_DUAL_VFE_MUTEX_LOCK(vfe_dev);
+		rc = msm_isp_cfg_axi_stream(vfe_dev, &cfg_cmd);
+		MSM_ISP_DUAL_VFE_MUTEX_UNLOCK(vfe_dev);
+		mutex_unlock(&vfe_dev->core_mutex);
 		break;
 	}
 	default:

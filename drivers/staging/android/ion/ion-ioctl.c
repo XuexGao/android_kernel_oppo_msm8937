@@ -4,6 +4,8 @@
  */
 
 #include <linux/kernel.h>
+#include <linux/dma-buf.h>
+#include <linux/dma-mapping.h>
 #include <linux/file.h>
 #include <linux/fs.h>
 #include <linux/uaccess.h>
@@ -15,12 +17,102 @@
 #include "ion_legacy.h"
 #endif
 
+
+/*
+ * Legacy Qualcomm flush API (ION_IOC_MSM_MAGIC 'M') used by old vendor
+ * gralloc/memalloc to keep CPU/GPU caches coherent on a dmabuf fd.
+ * CLEAN = writeback (DMA_TO_DEVICE), INV = invalidate (DMA_FROM_DEVICE),
+ * CLEAN_INV = both directions.
+ */
+int ion_flush_buffer_fd(int fd, enum dma_data_direction dir)
+{
+	struct dma_buf *dmabuf;
+	struct ion_buffer *buffer;
+	struct scatterlist *sg;
+	struct device *dev;
+	int i;
+
+	dmabuf = dma_buf_get(fd);
+	if (IS_ERR(dmabuf))
+		return PTR_ERR(dmabuf);
+
+	buffer = dmabuf->priv;
+	if (!buffer || !buffer->sg_table) {
+		dma_buf_put(dmabuf);
+		return -EINVAL;
+	}
+
+	dev = buffer->dev->dev.this_device;
+
+	for_each_sg(buffer->sg_table->sgl, sg, buffer->sg_table->nents, i) {
+		if (dir == DMA_TO_DEVICE)
+			dma_sync_sg_for_device(dev, sg, 1, dir);
+		else if (dir == DMA_FROM_DEVICE)
+			dma_sync_sg_for_cpu(dev, sg, 1, dir);
+		else {
+			dma_sync_sg_for_cpu(dev, sg, 1, dir);
+			dma_sync_sg_for_device(dev, sg, 1, dir);
+		}
+	}
+
+	dma_buf_put(dmabuf);
+	return 0;
+}
+
+#ifdef CONFIG_ION_LEGACY
+/*
+ * Vendor cache maintenance dispatched through ION_IOC_CUSTOM: mcmd is
+ * one of the M-magic flush ioctls (direction in the command number),
+ * uarg points at the vendor ion_flush_data whose first field is the
+ * dmabuf fd.
+ */
+int ion_legacy_cache_op(unsigned int mcmd, unsigned long uarg)
+{
+	struct ion_flush_data flush;
+	enum dma_data_direction dir;
+	unsigned int sz;
+	int fd;
+
+	if (_IOC_TYPE(mcmd) != ION_IOC_MSM_MAGIC)
+		return -ENOTTY;
+
+	switch (_IOC_NR(mcmd)) {
+	case 0:
+		dir = DMA_TO_DEVICE;
+		break;
+	case 1:
+		dir = DMA_FROM_DEVICE;
+		break;
+	case 2:
+		dir = DMA_BIDIRECTIONAL;
+		break;
+	default:
+		return -ENOTTY;
+	}
+
+	memset(&flush, 0, sizeof(flush));
+	sz = _IOC_SIZE(mcmd);
+	if (sz > sizeof(flush))
+		sz = sizeof(flush);
+	if (sz && copy_from_user(&flush, (void __user *)uarg, sz))
+		return -EFAULT;
+
+	fd = flush.handle;	/* vendor flush_data: fd comes first */
+	if (!fd)
+		fd = flush.fd;	/* tolerate the uapi field order */
+
+	return ion_flush_buffer_fd(fd, dir);
+}
+#endif
+
 union ion_ioctl_arg {
 	struct ion_allocation_data allocation;
 	struct ion_heap_query query;
 	struct ion_prefetch_data prefetch_data;
+	struct ion_flush_data flush;
 #ifdef CONFIG_ION_LEGACY
 	struct ion_fd_data fd;
+	struct ion_custom_data custom;
 	struct ion_old_allocation_data old_allocation;
 	struct ion_handle_data handle;
 #endif
@@ -128,6 +220,18 @@ long ion_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 			return ret;
 		break;
 	}
+	case ION_IOC_CLEAN_CACHES:
+		ret = ion_flush_buffer_fd(data.flush.fd,
+					  DMA_TO_DEVICE);
+		break;
+	case ION_IOC_INV_CACHES:
+		ret = ion_flush_buffer_fd(data.flush.fd,
+					  DMA_FROM_DEVICE);
+		break;
+	case ION_IOC_CLEAN_INV_CACHES:
+		ret = ion_flush_buffer_fd(data.flush.fd,
+					  DMA_BIDIRECTIONAL);
+		break;
 #ifdef CONFIG_ION_LEGACY
 	case ION_OLD_IOC_ALLOC:
 	{
@@ -161,6 +265,28 @@ long ion_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		break;
 	case ION_IOC_IMPORT:
 		data.fd.handle = data.fd.fd;
+		break;
+	case ION_IOC_SYNC:
+		/*
+		 * 4.9 ion_sync_for_device() pushed the cpu cache contents
+		 * of the whole dmabuf towards the device. Legacy handle
+		 * based clients pass the dma-buf fd in the handle field.
+		 */
+		if (data.fd.fd)
+			ret = ion_flush_buffer_fd(data.fd.fd,
+						  DMA_BIDIRECTIONAL);
+		else
+			ret = ion_flush_buffer_fd(data.fd.handle,
+						  DMA_BIDIRECTIONAL);
+		break;
+		case ION_IOC_CUSTOM:
+		/*
+		 * 4.9 vendor gralloc/memalloc wraps the M-magic flush
+		 * commands in ION_IOC_CUSTOM; the referenced flush data
+		 * has the dmabuf fd in its first field.
+		 */
+		ret = ion_legacy_cache_op(data.custom.cmd,
+					  data.custom.arg);
 		break;
 #endif
 	default:

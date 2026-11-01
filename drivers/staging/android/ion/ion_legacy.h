@@ -4,6 +4,7 @@
 #ifdef CONFIG_ION_LEGACY
 
 #include "../uapi/ion.h"
+#include "../uapi/msm_ion.h"
 
 typedef int ion_user_handle_t;
 
@@ -95,6 +96,35 @@ struct ion_handle_data {
  * filed set to the corresponding opaque handle.
  */
 #define ION_IOC_IMPORT		_IOWR(ION_IOC_MAGIC, 5, struct ion_fd_data)
+
+/**
+ * DOC: ION_IOC_SYNC - syncs a shared file descriptor to memory
+ *
+ * 4.9-era userspace calls this after touching a cached buffer from the
+ * cpu so the contents become coherent for the device.
+ */
+#define ION_IOC_SYNC		_IOWR(ION_IOC_MAGIC, 7, struct ion_fd_data)
+
+/**
+ * struct ion_custom_data - 4.9 ION_IOC_CUSTOM payload
+ * @cmd:	the vendor command to run, one of the M-magic flush
+ *		ioctls (the direction is the command number and the flush
+ *		struct size is baked into the encoding)
+ * @arg:	userspace pointer to the command argument, a vendor
+ *		ion_flush_data whose first field is the dmabuf fd
+ *
+ * 4.9-era vendor gralloc/memalloc performs all cache maintenance
+ * through ION_IOC_CUSTOM: 64-bit clients pass a 16-byte custom_data
+ * (0xC0104906), 32-bit clients an 8-byte one (0xC0084906).
+ */
+struct ion_custom_data {
+	unsigned int cmd;
+	unsigned long arg;
+};
+
+#define ION_IOC_CUSTOM		_IOWR(ION_IOC_MAGIC, 6, struct ion_custom_data)
+
+int ion_legacy_cache_op(unsigned int mcmd, unsigned long uarg);
 
 #endif /* CONFIG_ION_LEGACY */
 

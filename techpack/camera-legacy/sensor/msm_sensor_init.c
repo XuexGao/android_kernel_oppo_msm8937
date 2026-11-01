@@ -118,12 +118,47 @@ static long msm_sensor_init_subdev_ioctl(struct v4l2_subdev *sd,
 		break;
 
 	default:
-		pr_err_ratelimited("default\n");
+		pr_err_ratelimited("default cmd=0x%x\n", cmd);
 		break;
 	}
 
 	return rc;
 }
+
+
+/*
+ * 4.9 userspace ABI compat for the sensor_init subdev.
+ *
+ * The sensor_sub_module_t enum grew in 4.19 (SUB_MODULE_IR_LED/IR_CUT
+ * inserted before SUB_MODULE_MAX, 12 -> 14), which enlarges
+ * msm_sensor_info_t by 8 bytes and therefore shifts the ioctl command
+ * number of VIDIOC_MSM_SENSOR_INIT_CFG. 4.9-era vendor camera HALs
+ * compute the old command number and hit the ioctl default branch, so
+ * no sensor is ever enumerated and the camera provider reports 0
+ * devices. Match the old command number explicitly and translate the
+ * old 32-bit layout.
+ */
+struct msm_sensor_info_t_legacy32 {
+	char sensor_name[32];
+	__u32 session_id;
+	__s32 subdev_id[12];
+	__s32 subdev_intf[12];
+	__u8 is_mount_angle_valid;
+	__u32 sensor_mount_angle;
+	__s32 modes_supported;
+	__s32 position;
+};
+
+struct sensor_init_cfg_data_legacy32 {
+	__s32 cfgtype;
+	struct msm_sensor_info_t_legacy32 probed_info;
+	char entity_name[32];
+	__u32 setting;
+};
+
+#define VIDIOC_MSM_SENSOR_INIT_CFG_LEGACY32 \
+	_IOWR('V', BASE_VIDIOC_PRIVATE + 10, \
+		struct sensor_init_cfg_data_legacy32)
 
 #ifdef CONFIG_COMPAT
 static long msm_sensor_init_subdev_do_ioctl(
@@ -152,6 +187,51 @@ static long msm_sensor_init_subdev_do_ioctl(
 		strlcpy(u32->entity_name, sensor_init_data.entity_name,
 			sizeof(sensor_init_data.entity_name));
 		return 0;
+	case VIDIOC_MSM_SENSOR_INIT_CFG_LEGACY32: {
+		/* arg is the video_usercopy kernel buffer, not user memory */
+		struct sensor_init_cfg_data_legacy32 *u32l = arg;
+		struct sensor_init_cfg_data sensor_init_data;
+		int i;
+
+		memset(&sensor_init_data, 0, sizeof(sensor_init_data));
+		sensor_init_data.cfgtype = u32l->cfgtype;
+		sensor_init_data.cfg.setting = compat_ptr(u32l->setting);
+		pr_info("LEGACY32 INIT_CFG cfgtype=%d\n",
+			sensor_init_data.cfgtype);
+
+		rc = msm_sensor_driver_cmd(s_init, &sensor_init_data);
+		if (rc < 0) {
+			pr_info("LEGACY32 INIT_CFG rc=%d\n", (int)rc);
+			return rc;
+		}
+
+		/* copy the probed info back in the legacy 32-bit layout */
+		memcpy(u32l->entity_name,
+			sensor_init_data.entity_name,
+			sizeof(sensor_init_data.entity_name));
+		memcpy(&u32l->probed_info.sensor_name,
+			&sensor_init_data.probed_info.sensor_name,
+			sizeof(u32l->probed_info.sensor_name));
+		u32l->probed_info.session_id =
+			sensor_init_data.probed_info.session_id;
+		for (i = 0; i < 12; i++) {
+			u32l->probed_info.subdev_id[i] =
+				sensor_init_data.probed_info.subdev_id[i];
+			u32l->probed_info.subdev_intf[i] =
+				sensor_init_data.probed_info.subdev_intf[i];
+		}
+		u32l->probed_info.is_mount_angle_valid =
+			sensor_init_data.probed_info.is_mount_angle_valid;
+		u32l->probed_info.sensor_mount_angle =
+			sensor_init_data.probed_info.sensor_mount_angle;
+		u32l->probed_info.modes_supported =
+			sensor_init_data.probed_info.modes_supported;
+		u32l->probed_info.position =
+			sensor_init_data.probed_info.position;
+		pr_info("LEGACY32 INIT_CFG done entity=%s\n",
+			sensor_init_data.entity_name);
+		return 0;
+	}
 	default:
 		return msm_sensor_init_subdev_ioctl(sd, cmd, arg);
 	}

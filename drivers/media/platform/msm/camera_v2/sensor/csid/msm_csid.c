@@ -1358,6 +1358,7 @@ static int csid_probe(struct platform_device *pdev)
 	snprintf(new_csid_dev->msm_sd.sd.name,
 			ARRAY_SIZE(new_csid_dev->msm_sd.sd.name), "msm_csid");
 	media_entity_pads_init(&new_csid_dev->msm_sd.sd.entity, 0, NULL);
+	new_csid_dev->msm_sd.sd.entity.function = MEDIA_ENT_F_V4L2_SUBDEV_UNKNOWN;
 	new_csid_dev->msm_sd.sd.entity.group_id = MSM_CAMERA_SUBDEV_CSID;
 	new_csid_dev->msm_sd.close_seq = MSM_SD_CLOSE_2ND_CATEGORY | 0x5;
 	msm_sd_register(&new_csid_dev->msm_sd);

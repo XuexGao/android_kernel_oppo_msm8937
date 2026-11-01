@@ -1607,8 +1607,9 @@ int mdss_dsi_on(struct mdss_panel_data *pdata)
 		mdss_dsi_validate_debugfs_info(ctrl_pdata);
 
 	cur_power_state = pdata->panel_info.panel_power_state;
-	pr_debug("%s+: ctrl=%pK ndx=%d cur_power_state=%d\n", __func__,
-		ctrl_pdata, ctrl_pdata->ndx, cur_power_state);
+	pr_info("%s+: ndx=%d cur_power_state=%d interactive=%d\n", __func__,
+		ctrl_pdata->ndx, cur_power_state,
+		mdss_dsi_is_panel_on_interactive(pdata));
 
 	pinfo = &pdata->panel_info;
 	mipi = &pdata->panel_info.mipi;
@@ -1621,7 +1622,7 @@ int mdss_dsi_on(struct mdss_panel_data *pdata)
 		 * sent to panel
 		 */
 		mdss_dsi_restore_intr_mask(ctrl_pdata);
-		pr_debug("%s: panel already on\n", __func__);
+		pr_info("%s: PANEL ALREADY ON, skipping full init\n", __func__);
 		goto end;
 	}
 
@@ -1632,7 +1633,7 @@ int mdss_dsi_on(struct mdss_panel_data *pdata)
 	}
 
 	if (mdss_panel_is_power_on(cur_power_state)) {
-		pr_debug("%s: dsi_on from panel low power state\n", __func__);
+		pr_info("%s: POWER STILL ON, skipping phy/ctrl setup\n", __func__);
 		goto end;
 	}
 
@@ -4028,6 +4029,66 @@ static int mdss_dsi_res_init(struct platform_device *pdev)
 				__func__);
 			goto mem_fail;
 		}
+
+		/*
+		 * 4.19 移植丢失了 DSI 外部时钟的获取（4.9 由
+		 * mdss_dsi_link_clk_init() 完成）。sdata->ext_byte0_clk 恒为 NULL
+		 * 会让 mdss_dsi_config_clk_src() 直接返回，byte0_parent 永远不设，
+		 * 于是唤醒后 RCG 父链断掉、clk_set_rate 恒 -EINVAL、面板黑屏。
+		 * 按 DT clock-names 补回（这些名字在 DSI 控制器节点里存在）。
+		 */
+		sdata->ext_byte0_clk = devm_clk_get(&pdev->dev, "ext_byte0_clk");
+		sdata->ext_pixel0_clk = devm_clk_get(&pdev->dev, "ext_pixel0_clk");
+		sdata->ext_byte1_clk = devm_clk_get(&pdev->dev, "ext_byte1_clk");
+		sdata->ext_pixel1_clk = devm_clk_get(&pdev->dev, "ext_pixel1_clk");
+
+		if (IS_ERR(sdata->ext_byte0_clk)) {
+			pr_err("%s: ext_byte0_clk get failed rc=%ld\n", __func__,
+			       PTR_ERR(sdata->ext_byte0_clk));
+			sdata->ext_byte0_clk = NULL;
+		}
+		if (IS_ERR(sdata->ext_pixel0_clk)) {
+			pr_err("%s: ext_pixel0_clk get failed rc=%ld\n", __func__,
+			       PTR_ERR(sdata->ext_pixel0_clk));
+			sdata->ext_pixel0_clk = NULL;
+		}
+		if (IS_ERR(sdata->ext_byte1_clk))
+			sdata->ext_byte1_clk = NULL;
+		if (IS_ERR(sdata->ext_pixel1_clk))
+			sdata->ext_pixel1_clk = NULL;
+
+		pr_info("%s: ext_byte0=%p ext_pixel0=%p\n", __func__,
+			sdata->ext_byte0_clk, sdata->ext_pixel0_clk);
+
+		/*
+		 * 4.19 移植丢失了 DSI 外部时钟的获取（4.9 由
+		 * mdss_dsi_link_clk_init() 完成）。sdata->ext_byte0_clk 恒为 NULL
+		 * 会让 mdss_dsi_config_clk_src() 直接返回，byte0_parent 永远不设，
+		 * 于是唤醒后 RCG 父链断掉、clk_set_rate 恒 -EINVAL、面板黑屏。
+		 * 按 DT clock-names 补回（这些名字在 DSI 控制器节点里存在）。
+		 */
+		sdata->ext_byte0_clk = devm_clk_get(&pdev->dev, "ext_byte0_clk");
+		sdata->ext_pixel0_clk = devm_clk_get(&pdev->dev, "ext_pixel0_clk");
+		sdata->ext_byte1_clk = devm_clk_get(&pdev->dev, "ext_byte1_clk");
+		sdata->ext_pixel1_clk = devm_clk_get(&pdev->dev, "ext_pixel1_clk");
+
+		if (IS_ERR(sdata->ext_byte0_clk)) {
+			pr_err("%s: ext_byte0_clk get failed rc=%ld\n", __func__,
+			       PTR_ERR(sdata->ext_byte0_clk));
+			sdata->ext_byte0_clk = NULL;
+		}
+		if (IS_ERR(sdata->ext_pixel0_clk)) {
+			pr_err("%s: ext_pixel0_clk get failed rc=%ld\n", __func__,
+			       PTR_ERR(sdata->ext_pixel0_clk));
+			sdata->ext_pixel0_clk = NULL;
+		}
+		if (IS_ERR(sdata->ext_byte1_clk))
+			sdata->ext_byte1_clk = NULL;
+		if (IS_ERR(sdata->ext_pixel1_clk))
+			sdata->ext_pixel1_clk = NULL;
+
+		pr_info("%s: ext_byte0=%p ext_pixel0=%p\n", __func__,
+			sdata->ext_byte0_clk, sdata->ext_pixel0_clk);
 
 		/* Parse the regulator information */
 		for (i = DSI_CORE_PM; i < DSI_MAX_PM; i++) {

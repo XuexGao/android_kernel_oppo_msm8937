@@ -21,6 +21,37 @@
 #include "ion.h"
 #include "compat_ion.h"
 #include "ion_legacy.h"
+#include "../uapi/msm_ion.h"
+
+extern int ion_flush_buffer_fd(int fd, enum dma_data_direction dir);
+
+/*
+ * Legacy Qualcomm flush ABI, 32-bit layout: the ioctl command number is
+ * computed from the compat struct size, so it must be matched here before
+ * reaching the native handler.
+ */
+struct compat_ion_flush_data {
+	compat_int_t handle;
+	compat_int_t fd;
+	compat_uptr_t vaddr;
+	compat_uint_t offset;
+	compat_uint_t length;
+};
+
+#define COMPAT_ION_IOC_CLEAN_CACHES	_IOWR(ION_IOC_MSM_MAGIC, 0, \
+					      struct compat_ion_flush_data)
+#define COMPAT_ION_IOC_INV_CACHES	_IOWR(ION_IOC_MSM_MAGIC, 1, \
+					      struct compat_ion_flush_data)
+#define COMPAT_ION_IOC_CLEAN_INV_CACHES	_IOWR(ION_IOC_MSM_MAGIC, 2, \
+					      struct compat_ion_flush_data)
+
+struct compat_ion_custom_data {
+	compat_uint_t cmd;
+	compat_uptr_t arg;
+};
+
+#define COMPAT_ION_IOC_CUSTOM	_IOWR(ION_IOC_MAGIC, 6, \
+				      struct compat_ion_custom_data)
 
 /* See drivers/staging/android/uapi/ion.h for the definition of these structs */
 struct compat_ion_old_allocation_data {
@@ -39,6 +70,29 @@ struct compat_ion_handle_data {
 				      struct compat_ion_old_allocation_data)
 #define COMPAT_ION_IOC_FREE	_IOWR(ION_IOC_MAGIC, 1, \
 				      struct compat_ion_handle_data)
+
+static int compat_get_ion_flush_fd(struct compat_ion_flush_data __user *data32)
+{
+	compat_int_t fd, handle;
+	int ret;
+
+	ret = get_user(fd, &data32->fd);
+	if (ret)
+		return ret;
+
+	/*
+	 * Pre-4.12 clients keep the dma-buf fd they got from the legacy
+	 * alloc ioctl in the handle field; the fd field stays empty.
+	 */
+	if (!fd) {
+		ret = get_user(handle, &data32->handle);
+		if (ret)
+			return ret;
+		fd = handle;
+	}
+
+	return fd;
+}
 
 static int compat_get_ion_allocation_data(
 			struct compat_ion_old_allocation_data __user *data32,
@@ -147,13 +201,78 @@ long compat_ion_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	case ION_IOC_SHARE:
 	case ION_IOC_MAP:
 	case ION_IOC_IMPORT:
+	case ION_IOC_SYNC:
 	case ION_IOC_ALLOC:
 	case ION_IOC_HEAP_QUERY:
 	case ION_IOC_PREFETCH:
 	case ION_IOC_DRAIN:
 		return filp->f_op->unlocked_ioctl(filp, cmd,
 						(unsigned long)compat_ptr(arg));
+	case COMPAT_ION_IOC_CLEAN_CACHES:
+	case COMPAT_ION_IOC_INV_CACHES:
+	case COMPAT_ION_IOC_CLEAN_INV_CACHES: {
+		struct compat_ion_flush_data __user *data32 =
+			compat_ptr(arg);
+		int fd;
+		enum dma_data_direction dir;
+
+		if (cmd == COMPAT_ION_IOC_CLEAN_CACHES)
+			dir = DMA_TO_DEVICE;
+		else if (cmd == COMPAT_ION_IOC_INV_CACHES)
+			dir = DMA_FROM_DEVICE;
+		else
+			dir = DMA_BIDIRECTIONAL;
+
+		fd = compat_get_ion_flush_fd(data32);
+		if (fd < 0)
+			return fd;
+
+		return ion_flush_buffer_fd(fd, dir);
+	}
+	case COMPAT_ION_IOC_CUSTOM:
+	{
+		struct compat_ion_custom_data __user *d32 = compat_ptr(arg);
+		compat_uint_t mcmd;
+		compat_uptr_t uarg;
+
+		if (copy_from_user(&mcmd, &d32->cmd, sizeof(mcmd)) ||
+		    copy_from_user(&uarg, &d32->arg, sizeof(uarg)))
+			return -EFAULT;
+		return ion_legacy_cache_op(mcmd, (unsigned long)uarg);
+	}
 	default:
+		/*
+		 * Legacy Qualcomm flush commands. The vendor gralloc was
+		 * built against a different struct layout than the one
+		 * we declare, so match on the command number instead of
+		 * the encoded size.
+		 */
+		if (_IOC_TYPE(cmd) == ION_IOC_MSM_MAGIC) {
+			struct compat_ion_flush_data __user *data32 =
+				compat_ptr(arg);
+			int fd;
+			enum dma_data_direction dir;
+
+			switch (_IOC_NR(cmd)) {
+			case 0:
+				dir = DMA_TO_DEVICE;
+				break;
+			case 1:
+				dir = DMA_FROM_DEVICE;
+				break;
+			case 2:
+				dir = DMA_BIDIRECTIONAL;
+				break;
+			default:
+				return -ENOIOCTLCMD;
+			}
+
+			fd = compat_get_ion_flush_fd(data32);
+			if (fd < 0)
+				return fd;
+
+			return ion_flush_buffer_fd(fd, dir);
+		}
 		return -ENOIOCTLCMD;
 	}
 }

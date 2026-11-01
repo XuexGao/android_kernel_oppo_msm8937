@@ -1575,29 +1575,29 @@ int mdss_dsi_core_clk_init(struct platform_device *pdev,
 	/* Optional Clocks */
 	sdata->ext_byte0_clk = devm_clk_get(dev, "ext_byte0_clk");
 	if (IS_ERR(sdata->ext_byte0_clk)) {
-		pr_debug("%s: unable to get byte0 clk rcg. rc=%d\n",
-			__func__, rc);
+		pr_info("%s: unable to get ext_byte0_clk, PTR_ERR=%ld\n",
+			__func__, PTR_ERR(sdata->ext_byte0_clk));
 		sdata->ext_byte0_clk = NULL;
 	}
 
 	sdata->ext_pixel0_clk = devm_clk_get(dev, "ext_pixel0_clk");
 	if (IS_ERR(sdata->ext_pixel0_clk)) {
-		pr_debug("%s: unable to get pixel0 clk rcg. rc=%d\n",
-			__func__, rc);
+		pr_info("%s: unable to get ext_pixel0_clk, PTR_ERR=%ld\n",
+			__func__, PTR_ERR(sdata->ext_pixel0_clk));
 		sdata->ext_pixel0_clk = NULL;
 	}
 
 	sdata->ext_byte1_clk = devm_clk_get(dev, "ext_byte1_clk");
 	if (IS_ERR(sdata->ext_byte1_clk)) {
-		pr_debug("%s: unable to get byte1 clk rcg. rc=%d\n",
-			__func__, rc);
+		pr_info("%s: unable to get ext_byte1_clk, PTR_ERR=%ld\n",
+			__func__, PTR_ERR(sdata->ext_byte1_clk));
 		sdata->ext_byte1_clk = NULL;
 	}
 
 	sdata->ext_pixel1_clk = devm_clk_get(dev, "ext_pixel1_clk");
 	if (IS_ERR(sdata->ext_pixel1_clk)) {
-		pr_debug("%s: unable to get pixel1 clk rcg. rc=%d\n",
-			__func__, rc);
+		pr_info("%s: unable to get ext_pixel1_clk, PTR_ERR=%ld\n",
+			__func__, PTR_ERR(sdata->ext_pixel1_clk));
 		sdata->ext_pixel1_clk = NULL;
 	}
 
