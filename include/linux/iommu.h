@@ -156,6 +156,39 @@ struct iopf_queue {
 typedef int (*iommu_fault_handler_t)(struct iommu_domain *,
 			struct device *, unsigned long, int, void *);
 
+/*
+ * CAF（4.9/4.19）在 iommu.h 里额外提供了一套 domain attribute 接口，
+ * 供 KGSL 这类需要直接操作 SMMU context bank 的驱动使用。
+ * mainline 6.12 删掉了它们（转而只保留通用的 IOMMU_DEV_FEAT）。
+ *
+ * 这里按 4.9 的定义补回（值保持原样，见 lineage-22.1:include/linux/iommu.h:129），
+ * 只给 KGSL / qcom_iommu 用，不影响 mainline 的通用路径。
+ */
+enum iommu_attr {
+	DOMAIN_ATTR_GEOMETRY,
+	DOMAIN_ATTR_PAGING,
+	DOMAIN_ATTR_WINDOWS,
+	DOMAIN_ATTR_FSL_PAMU_STASH,
+	DOMAIN_ATTR_FSL_PAMU_ENABLE,
+	DOMAIN_ATTR_FSL_PAMUV1,
+	DOMAIN_ATTR_NESTING,
+	DOMAIN_ATTR_PT_BASE_ADDR,
+	DOMAIN_ATTR_CONTEXT_BANK,
+	DOMAIN_ATTR_DYNAMIC,
+	DOMAIN_ATTR_TTBR0,
+	DOMAIN_ATTR_CONTEXTIDR,
+	DOMAIN_ATTR_PROCID,
+	DOMAIN_ATTR_NON_FATAL_FAULTS,
+	DOMAIN_ATTR_S1_BYPASS,
+	DOMAIN_ATTR_ATOMIC,
+	DOMAIN_ATTR_SECURE_VMID,
+	DOMAIN_ATTR_FAST,
+	DOMAIN_ATTR_PGTBL_INFO,
+	DOMAIN_ATTR_USE_UPSTREAM_HINT,
+	DOMAIN_ATTR_USE_LLC_NWA,
+	DOMAIN_ATTR_MAX,
+};
+
 struct iommu_domain_geometry {
 	dma_addr_t aperture_start; /* First address that can be mapped    */
 	dma_addr_t aperture_end;   /* Last address that can be mapped     */
@@ -232,6 +265,7 @@ struct iommu_domain {
 		};
 	};
 };
+
 
 static inline bool iommu_is_dma_domain(struct iommu_domain *domain)
 {
@@ -686,6 +720,16 @@ struct iommu_domain_ops {
 	int (*enable_nesting)(struct iommu_domain *domain);
 	int (*set_pgtable_quirks)(struct iommu_domain *domain,
 				  unsigned long quirks);
+
+	/*
+	 * CAF 私有：KGSL 用它读写 SMMU context bank 的寄存器
+	 * （TTBR0 / CONTEXTIDR / PROCID / CONTEXT_BANK 等）。
+	 * mainline 6.12 没有这两个回调，这里补回。
+	 */
+	int (*domain_get_attr)(struct iommu_domain *domain,
+			       enum iommu_attr attr, void *data);
+	int (*domain_set_attr)(struct iommu_domain *domain,
+			       enum iommu_attr attr, void *data);
 
 	void (*free)(struct iommu_domain *domain);
 
@@ -1648,4 +1692,20 @@ static inline void iopf_group_response(struct iopf_group *group,
 {
 }
 #endif /* CONFIG_IOMMU_IOPF */
+static inline int iommu_domain_get_attr(struct iommu_domain *domain,
+					enum iommu_attr attr, void *data)
+{
+	if (domain->ops->domain_get_attr)
+		return domain->ops->domain_get_attr(domain, attr, data);
+	return -ENODEV;
+}
+
+static inline int iommu_domain_set_attr(struct iommu_domain *domain,
+					enum iommu_attr attr, void *data)
+{
+	if (domain->ops->domain_set_attr)
+		return domain->ops->domain_set_attr(domain, attr, data);
+	return -ENODEV;
+}
+
 #endif /* __LINUX_IOMMU_H */

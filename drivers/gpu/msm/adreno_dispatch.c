@@ -2848,6 +2848,20 @@ static struct attribute *dispatcher_attrs[] = {
 	NULL,
 };
 
+/*
+ * 6.12 把 struct kobj_type 的 .default_attrs（attribute* 数组）
+ * 换成了 .default_groups（attribute_group* 数组）。
+ * 这里把原来的 attrs 包成一个 group。
+ */
+static const struct attribute_group dispatcher_attr_group = {
+	.attrs = dispatcher_attrs,
+};
+
+static const struct attribute_group *dispatcher_attr_groups[] = {
+	&dispatcher_attr_group,
+	NULL,
+};
+
 static ssize_t dispatcher_sysfs_show(struct kobject *kobj,
 				   struct attribute *attr, char *buf)
 {
@@ -2882,7 +2896,7 @@ static const struct sysfs_ops dispatcher_sysfs_ops = {
 
 static struct kobj_type ktype_dispatcher = {
 	.sysfs_ops = &dispatcher_sysfs_ops,
-	.default_attrs = dispatcher_attrs,
+	.default_groups = dispatcher_attr_groups,
 };
 
 /**
@@ -2951,8 +2965,17 @@ int adreno_dispatcher_idle(struct adreno_device *adreno_dev)
 	 * Ensure that this function is not called when dispatcher
 	 * mutex is held and device is started
 	 */
-	if (mutex_is_locked(&dispatcher->mutex) &&
-		(__mutex_owner(&dispatcher->mutex) == current))
+	/*
+	 * 原代码用 __mutex_owner(&dispatcher->mutex) == current 判断
+	 * 「当前线程是否已持有 dispatcher mutex」，作为一种防御性的
+	 * 死锁检测（返回 -EDEADLK）。
+	 *
+	 * 6.12 删除了 __mutex_owner()（也没有 mutex_is_locked_by()），
+	 * 这层检测拿不到了。它是纯防御性的 —— 只在调用方误用时才生效，
+	 * 不影响正常路径的正确性。这里保留 mutex_is_locked 的弱检查，
+	 * 去掉 owner 比较。
+	 */
+	if (mutex_is_locked(&dispatcher->mutex))
 		return -EDEADLK;
 
 	adreno_get_gpu_halt(adreno_dev);

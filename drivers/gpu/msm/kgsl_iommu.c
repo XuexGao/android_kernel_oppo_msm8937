@@ -7,6 +7,7 @@
 #include <linux/compat.h>
 #include <linux/iommu.h>
 #include <linux/of_platform.h>
+#include <linux/of_device.h>
 #include <linux/seq_file.h>
 #include <linux/delay.h>
 #include <linux/random.h>
@@ -227,7 +228,7 @@ static void kgsl_iommu_add_global(struct kgsl_mmu *mmu,
 	if (memdesc->priv & KGSL_MEMDESC_RANDOM) {
 		u32 range = GLOBAL_MAP_PAGES - (size >> PAGE_SHIFT);
 
-		start = get_random_int() % range;
+		start = get_random_u32() % range;
 	}
 
 	while (start >= 0) {
@@ -398,7 +399,7 @@ static int _iommu_map_single_page_sync_pc(struct kgsl_pagetable *pt,
 
 	for (i = 0; i < times; i++) {
 		ret = iommu_map(iommu_pt->domain, gpuaddr + mapped,
-				physaddr, PAGE_SIZE, flags);
+				physaddr, PAGE_SIZE, flags, GFP_KERNEL);
 		if (ret)
 			break;
 		mapped += PAGE_SIZE;
@@ -480,7 +481,7 @@ static int _iommu_map_sg_offset_sync_pc(struct kgsl_pagetable *pt,
 
 		/* Do the map for this sg */
 		ret = iommu_map(iommu_pt->domain, addr + mapped,
-				physaddr, size_tmp, flags);
+				physaddr, size_tmp, flags, GFP_KERNEL);
 		if (ret)
 			break;
 
@@ -515,7 +516,7 @@ static int _iommu_map_sg_sync_pc(struct kgsl_pagetable *pt,
 
 	_iommu_sync_mmu_pc(true);
 
-	mapped = iommu_map_sg(iommu_pt->domain, addr, sg, nents, flags);
+	mapped = iommu_map_sg(iommu_pt->domain, addr, sg, nents, flags, GFP_KERNEL);
 
 	_iommu_sync_mmu_pc(false);
 
@@ -1095,7 +1096,7 @@ static struct kgsl_iommu_pt *
 _alloc_pt(struct device *dev, struct kgsl_mmu *mmu, struct kgsl_pagetable *pt)
 {
 	struct kgsl_iommu_pt *iommu_pt;
-	struct bus_type *bus = kgsl_mmu_get_bus(dev);
+	const struct bus_type *bus = kgsl_mmu_get_bus(dev);
 
 	if (bus == NULL)
 		return ERR_PTR(-ENODEV);
@@ -1793,7 +1794,8 @@ static unsigned int _get_protection_flags(struct kgsl_pagetable *pt,
 {
 	unsigned int flags = IOMMU_READ | IOMMU_WRITE |
 		IOMMU_NOEXEC;
-	int ret, llc_nwa = 0, upstream_hint = 0;
+	int ret, upstream_hint = 0;
+	/* llc_nwa 在 6.12 下没有对应的 prot flag，已移除（见下方注释） */
 	struct kgsl_iommu_pt *iommu_pt = pt->priv;
 
 	ret = iommu_domain_get_attr(iommu_pt->domain,
@@ -1802,11 +1804,11 @@ static unsigned int _get_protection_flags(struct kgsl_pagetable *pt,
 	if (!ret && upstream_hint)
 		flags |= IOMMU_USE_UPSTREAM_HINT;
 
-	ret = iommu_domain_get_attr(iommu_pt->domain,
-				DOMAIN_ATTR_USE_LLC_NWA, &llc_nwa);
-
-	if (!ret && llc_nwa)
-		flags |= IOMMU_USE_LLC_NWA;
+	/*
+	 * LLC NWA（No Write Allocate）是 QCOM 的私有缓存提示位，
+	 * 6.12 的通用 iommu 里没有 IOMMU_USE_LLC_NWA 这个 prot flag。
+	 * 它只影响缓存策略（性能），不影响正确性，这里直接跳过。
+	 */
 
 	if (memdesc->flags & KGSL_MEMFLAGS_GPUREADONLY)
 		flags &= ~IOMMU_WRITE;
@@ -2663,7 +2665,7 @@ static int _kgsl_iommu_cb_probe(struct kgsl_device *device,
 			return PTR_ERR(ctx->dev);
 	}
 
-	of_dma_configure(ctx->dev, node, true);
+	of_dma_configure_id(ctx->dev, node, true, NULL);
 	return 0;
 }
 

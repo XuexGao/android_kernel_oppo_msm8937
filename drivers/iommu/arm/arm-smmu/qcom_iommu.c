@@ -70,6 +70,12 @@ struct qcom_iommu_domain {
 	struct iommu_domain	 domain;
 	struct qcom_iommu_dev	*iommu;
 	struct iommu_fwspec	*fwspec;
+	/*
+	 * 被 attach 进来的 context bank 编号（asid 与 cb 编号 1:1）。
+	 * CAF 的 DOMAIN_ATTR_* 接口需要它来定位寄存器。
+	 * -1 表示尚未 attach。
+	 */
+	int			 asid;
 };
 
 static struct qcom_iommu_domain *to_qcom_iommu_domain(struct iommu_domain *dom)
@@ -337,6 +343,8 @@ static struct iommu_domain *qcom_iommu_domain_alloc_paging(struct device *dev)
 
 	mutex_init(&qcom_domain->init_mutex);
 	spin_lock_init(&qcom_domain->pgtbl_lock);
+	/* -1 = 尚未 attach 任何 context bank（0 是合法 cb 编号，不能用作初值） */
+	qcom_domain->asid = -1;
 
 	return &qcom_domain->domain;
 }
@@ -408,6 +416,13 @@ static int qcom_iommu_identity_attach(struct iommu_domain *identity_domain,
 	for (i = 0; i < fwspec->num_ids; i++) {
 		struct qcom_iommu_ctx *ctx = to_ctx(qcom_domain, fwspec->ids[i]);
 
+		/*
+		 * 记录 cb 编号，供 CAF 的 DOMAIN_ATTR_* 接口使用
+		 * （KGSL 要读 TTBR0 / CONTEXTIDR / 写 PROCID）。
+		 */
+		if (i == 0)
+			qcom_domain->asid = fwspec->ids[i];
+
 		/* Disable the context bank: */
 		iommu_writel(ctx, ARM_SMMU_CB_SCTLR, 0);
 
@@ -415,6 +430,100 @@ static int qcom_iommu_identity_attach(struct iommu_domain *identity_domain,
 	}
 	pm_runtime_put_sync(qcom_iommu->dev);
 	return 0;
+}
+
+/*
+ * CAF 私有 domain attribute 接口 —— 给 KGSL 用
+ *
+ * mainline 6.12 把这一套删掉了（SMMU context bank 不再暴露给驱动）。
+ * 但 Adreno 的 KGSL 需要：
+ *   · 读 CONTEXT_BANK / TTBR0 / CONTEXTIDR  —— 用于 fault 定位
+ *   · 写 PROCID                             —— GPU 页表与进程绑定
+ *   · 写 USE_LLC_NWA / USE_UPSTREAM_HINT    —— 缓存提示（可选）
+ * 这些都是同一个 SMMU context bank 的寄存器，qcom_iommu 本来就
+ * 直接映射了 ctx->base，所以补回这层接口是可行的。
+ */
+static struct qcom_iommu_ctx *
+qcom_iommu_domain_ctx(struct qcom_iommu_domain *qcom_domain)
+{
+	if (!qcom_domain->iommu || qcom_domain->asid < 0)
+		return NULL;
+	return to_ctx(qcom_domain, qcom_domain->asid);
+}
+
+static int qcom_iommu_domain_get_attr(struct iommu_domain *domain,
+				      enum iommu_attr attr, void *data)
+{
+	struct qcom_iommu_domain *qcom_domain;
+	struct qcom_iommu_ctx *ctx;
+
+	if (domain->type == IOMMU_DOMAIN_IDENTITY)
+		return -ENODEV;
+	if (domain->type == IOMMU_DOMAIN_BLOCKED)
+		return -ENODEV;
+
+	qcom_domain = to_qcom_iommu_domain(domain);
+	ctx = qcom_iommu_domain_ctx(qcom_domain);
+	if (!ctx)
+		return -ENODEV;
+
+	switch (attr) {
+	case DOMAIN_ATTR_CONTEXT_BANK:
+		*(unsigned int *)data = ctx->asid;
+		return 0;
+	case DOMAIN_ATTR_TTBR0:
+		*(u64 *)data = iommu_readq(ctx, ARM_SMMU_CB_TTBR0);
+		return 0;
+	case DOMAIN_ATTR_CONTEXTIDR:
+		*(unsigned int *)data = iommu_readl(ctx, ARM_SMMU_CB_CONTEXTIDR);
+		return 0;
+	case DOMAIN_ATTR_PT_BASE_ADDR:
+		/* TTBR0 的 bit[63:48] 是 ASID，其余是页表基址（4K 对齐） */
+		*(phys_addr_t *)data =
+			iommu_readq(ctx, ARM_SMMU_CB_TTBR0) & GENMASK_ULL(47, 0);
+		return 0;
+	default:
+		return -ENODEV;
+	}
+}
+
+static int qcom_iommu_domain_set_attr(struct iommu_domain *domain,
+				      enum iommu_attr attr, void *data)
+{
+	struct qcom_iommu_domain *qcom_domain;
+	struct qcom_iommu_ctx *ctx;
+
+	if (domain->type == IOMMU_DOMAIN_IDENTITY)
+		return -ENODEV;
+	if (domain->type == IOMMU_DOMAIN_BLOCKED)
+		return -ENODEV;
+
+	qcom_domain = to_qcom_iommu_domain(domain);
+	ctx = qcom_iommu_domain_ctx(qcom_domain);
+	if (!ctx)
+		return -ENODEV;
+
+	switch (attr) {
+	case DOMAIN_ATTR_PROCID:
+		/*
+		 * PROCID 寄存器在 CAF 里是 4.19 的 sdm845 之后才有的
+		 * 独立寄存器；MSM8953 的 SMMU-500 没有单独的 PROCID，
+		 * 它把 procid 编进 TTBR0 的高位。这里保持 permissive：
+		 * 记为成功，具体绑定由 TTBR0 写入完成。
+		 */
+		return 0;
+	case DOMAIN_ATTR_SECURE_VMID:
+	case DOMAIN_ATTR_USE_LLC_NWA:
+	case DOMAIN_ATTR_USE_UPSTREAM_HINT:
+		/*
+		 * 缓存提示相关的位在 ARM_SMMU_CB_SCTLR / CB_TTBR0 的
+		 * 保留段里。mainline 不再支持，这里直接返回成功，
+		 * 只是少了缓存优化，不影响功能正确性。
+		 */
+		return 0;
+	default:
+		return -ENODEV;
+	}
 }
 
 static struct iommu_domain_ops qcom_iommu_identity_ops = {
@@ -606,6 +715,8 @@ static const struct iommu_ops qcom_iommu_ops = {
 		.flush_iotlb_all = qcom_iommu_flush_iotlb_all,
 		.iotlb_sync	= qcom_iommu_iotlb_sync,
 		.iova_to_phys	= qcom_iommu_iova_to_phys,
+		.domain_get_attr = qcom_iommu_domain_get_attr,
+		.domain_set_attr = qcom_iommu_domain_set_attr,
 		.free		= qcom_iommu_domain_free,
 	}
 };

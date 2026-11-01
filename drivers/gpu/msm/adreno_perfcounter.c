@@ -912,6 +912,8 @@ static int adreno_perfcounter_enable(struct adreno_device *adreno_dev,
 		if (adreno_is_a540(adreno_dev))
 			if (countable == A5XX_RBBM_ALWAYS_COUNT)
 				return -EINVAL;
+		/* 这里本来就有意落到 default，显式标注以满足 -Wimplicit-fallthrough */
+		fallthrough;
 	default:
 		return _perfcounter_enable_default(adreno_dev, counters, group,
 				counter, countable);

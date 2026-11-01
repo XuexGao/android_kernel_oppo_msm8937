@@ -2049,3 +2049,28 @@ CONFIG_SQUASHFS_XATTR=y
 CONFIG_SQUASHFS_FILE_DIRECT=y
 CONFIG_SQUASHFS_DECOMP_MULTI_PERCPU=y
 CONFIG_SQUASHFS_FRAGMENT_CACHE_SIZE=3
+
+# ============================================================
+# KGSL（Adreno 506 GPU 驱动）—— 开机动画/UI 渲染的硬依赖
+#
+# 实测崩溃（run 88721c36 的 dmesg-ramoops，已达 second stage）：
+#
+#   init: init second stage started!            ← 越过 first stage
+#   servicemanager: ... SurfaceFlingerAIDL ...
+#   DEBUG: #00 abort+156
+#   DEBUG: #02 __android_log_assert+288
+#   DEBUG: #03 surfaceflinger
+#            android::renderengine::skia::SkiaGLRenderEngine::chooseEglConfig
+#   reboot: Restarting system with command 'netbpfload-missing'
+#
+# SurfaceFlinger 启动时在 chooseEglConfig 断言失败 —— 因为内核
+# 没有 GPU 驱动，EGL 拿不到任何可用 config，无法创建渲染上下文。
+# 没有 GPU = 没有开机动画、没有桌面。
+#
+# KGSL 源码早在第一轮就搬进 drivers/gpu/msm/ 了（46 个 .c 文件），
+# drivers/gpu/Makefile 里也有 obj-$(CONFIG_QCOM_KGSL) += msm/，
+# 只是这个符号一直没打开（因为当时编译有 47 处 4.19→6.12 API 差异）。
+#
+# 先打开看具体错误，再逐个修。
+# ============================================================
+CONFIG_QCOM_KGSL=y

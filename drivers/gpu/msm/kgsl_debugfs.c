@@ -167,9 +167,11 @@ static int print_mem_entry(void *data, void *ptr)
 			(uint64_t *)(uintptr_t) m->gpuaddr,
 			/*
 			 * Show zero for the useraddr - we can't reliably track
-			 * that value for multiple vmas anyway
+			 * that value for multiple vmas anyway.
+			 * 6.12 的 %pK 要求 void*，裸 0 会被 -Werror=format 拒绝，
+			 * 用 (void *)0 显式转型。
 			 */
-			0, m->size, entry->id, flags,
+			(void *)0, m->size, entry->id, flags,
 			memtype_str(usermem_type),
 			usage, (m->sgt ? m->sgt->nents : 0),
 			atomic_read(&entry->map_count),

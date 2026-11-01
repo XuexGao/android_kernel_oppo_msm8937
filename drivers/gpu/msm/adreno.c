@@ -1057,7 +1057,7 @@ static void adreno_of_get_bimc_iface_clk(struct adreno_device *adreno_dev,
 				"bimc_gpu_clk");
 		if (IS_ERR_OR_NULL(pwr->gpu_bimc_int_clk)) {
 			dev_err(&device->pdev->dev,
-					"dt: Couldn't get bimc_gpu_clk (%d)\n",
+					"dt: Couldn't get bimc_gpu_clk (%ld)\n",
 					PTR_ERR(pwr->gpu_bimc_int_clk));
 			pwr->gpu_bimc_int_clk = NULL;
 		}
@@ -1652,7 +1652,7 @@ static void _adreno_free_memories(struct adreno_device *adreno_dev)
 	kgsl_free_global(device, &pm4_fw->memdesc);
 }
 
-static int adreno_remove(struct platform_device *pdev)
+static void adreno_remove(struct platform_device *pdev)
 {
 	const struct of_device_id *of_id;
 	struct adreno_device *adreno_dev;
@@ -1661,7 +1661,7 @@ static int adreno_remove(struct platform_device *pdev)
 
 	of_id = of_match_device(adreno_match_table, &pdev->dev);
 	if (!of_id)
-		return -EINVAL;
+	/* void 函数（6.11+） */
 
 	adreno_dev = (struct adreno_device *) of_id->data;
 	device = KGSL_DEVICE(adreno_dev);
@@ -1714,7 +1714,7 @@ static int adreno_remove(struct platform_device *pdev)
 	}
 	clear_bit(ADRENO_DEVICE_INITIALIZED, &adreno_dev->priv);
 
-	return 0;
+	/* void 函数（6.11+） */
 }
 
 static void adreno_fault_detect_init(struct adreno_device *adreno_dev)

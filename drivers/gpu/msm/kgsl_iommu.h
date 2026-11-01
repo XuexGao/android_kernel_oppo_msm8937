@@ -8,6 +8,31 @@
 #include "kgsl_mmu.h"
 
 /*
+ * CAF（4.9/4.19）在 include/linux/iommu.h 里额外定义了几个私有的
+ * fault 类型标志，6.12 mainline 只保留了 IOMMU_FAULT_WRITE。
+ *
+ * KGSL 的 fault handler 用它们区分「翻译失败 / 权限失败 / 外部错误 /
+ * 事务停顿」，只是为了日志里打一个更精确的类型字符串（fault_type），
+ * 不影响故障处理逻辑本身。
+ *
+ * 这里在本地补上同样的值（取自 4.9 的 include/linux/iommu.h:49-52），
+ * 避免改动通用 IOMMU 头文件。
+ */
+#ifndef IOMMU_FAULT_TRANSLATION
+#define IOMMU_FAULT_TRANSLATION		(1 << 2)
+#endif
+#ifndef IOMMU_FAULT_PERMISSION
+#define IOMMU_FAULT_PERMISSION		(1 << 3)
+#endif
+#ifndef IOMMU_FAULT_EXTERNAL
+#define IOMMU_FAULT_EXTERNAL		(1 << 4)
+#endif
+#ifndef IOMMU_FAULT_TRANSACTION_STALLED
+#define IOMMU_FAULT_TRANSACTION_STALLED	(1 << 5)
+#endif
+
+
+/*
  * These defines control the address range for allocations that
  * are mapped into all pagetables.
  */

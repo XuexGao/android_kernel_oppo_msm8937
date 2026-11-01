@@ -319,7 +319,7 @@ static void a5xx_remove(struct adreno_device *adreno_dev)
 		a5xx_critical_packet_destroy(adreno_dev);
 }
 
-const static struct {
+static const struct {
 	u32 reg;
 	u32 base;
 	u32 count;
@@ -2860,7 +2860,7 @@ static void a5xx_gpmu_int_callback(struct adreno_device *adreno_dev, int bit)
 					A5XX_GPMU_CM3_SYSRESET, 1);
 				kgsl_schedule_work(&adreno_dev->gpmu_work);
 			}
-			/* fallthrough */
+			fallthrough;
 		case BIT(FW_INTR_INFO):
 		case BIT(LLM_ACK_ERR_INTR):
 		case BIT(ISENS_TRIM_ERR_INTR):

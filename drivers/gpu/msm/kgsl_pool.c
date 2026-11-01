@@ -215,7 +215,7 @@ void kgsl_pool_free_pages(struct page **pages, unsigned int pcount)
 	if (pages == NULL || pcount == 0)
 		return;
 
-	if (WARN(!virt_addr_valid((unsigned long)pages),
+	if (WARN(!virt_addr_valid(pages),
 		"Address of pages=%pK is not valid\n", pages))
 		return;
 
@@ -225,8 +225,13 @@ void kgsl_pool_free_pages(struct page **pages, unsigned int pcount)
 		 */
 		struct page *p = pages[i];
 
-		if (WARN(!virt_addr_valid((unsigned long)p),
-			"Address of page=%pK is not valid\n", p))
+		/*
+		 * 注意：6.12 的 virt_addr_valid() 宏用 __typeof__(addr) 做类型推导，
+		 * 所以必须直接传指针，传 (unsigned long)p 会让宏内部的
+		 * virt_to_pfn() 收到整数而报 -Wint-conversion。
+		 */
+		if (WARN(!virt_addr_valid(p),
+			"Address of page=%px is not valid\n", p))
 			return;
 
 		i += 1 << compound_order(p);
@@ -459,13 +464,20 @@ kgsl_pool_shrink_count_objects(struct shrinker *shrinker,
 	return kgsl_pool_size_total();
 }
 
-/* Shrinker callback data*/
-static struct shrinker kgsl_pool_shrinker = {
-	.count_objects = kgsl_pool_shrink_count_objects,
-	.scan_objects = kgsl_pool_shrink_scan_objects,
-	.seeks = DEFAULT_SEEKS,
-	.batch = 0,
-};
+/*
+ * Shrinker 回调。
+ *
+ * 6.12 把 shriner 从「静态结构体 + register_shrinker(&s, name)」
+ * 改成了「shrinker_alloc() 动态分配 + 填回调 + shrinker_register()」。
+ * 所以这里不再定义静态实例，改为保存一个指针，
+ * 回调在 kgsl_pool_init() 里挂上去。
+ */
+static struct shrinker *kgsl_pool_shrinker;
+
+/*
+ * 6.12 的 struct shrinker 把回调直接放在结构体里
+ * （没有单独的 shrinker_ops），所以这里不再需要中间层。
+ */
 
 static void kgsl_pool_config(unsigned int order, unsigned int reserved_pages,
 		bool allocation_allowed, unsigned int max_pages)
@@ -532,7 +544,7 @@ static void kgsl_of_get_mempools(struct device_node *parent)
 	 * low memory configuration is not specified
 	 * then fallback to default pool configuration.
 	 */
-	if (totalram_pages < (SZ_2G >> PAGE_SHIFT))
+	if (totalram_pages() < (SZ_2G >> PAGE_SHIFT))
 		node = of_find_compatible_node(parent, NULL,
 				"qcom,gpu-mempools-lowmem");
 
@@ -559,8 +571,21 @@ void kgsl_init_page_pools(struct kgsl_device *device)
 	/* Reserve the appropriate number of pages for each pool */
 	kgsl_pool_reserve_pages();
 
-	/* Initialize shrinker */
-	register_shrinker(&kgsl_pool_shrinker, "kgsl-pool");
+	/* Initialize shrinker
+	 *
+	 * 6.12 的 shrinker API 变了：
+	 *   - 旧: register_shrinker(&shrinker, "name")   （name 作为第二参）
+	 *   - 新: shrinker_alloc(flags, fmt, ...) 返回指针，再 shrinker_register()
+	 * 这里用 SHRINKER_MEMCG_AWARE 之外的默认 flags（0），
+	 * 名字用 "%s" 格式串传入。
+	 */
+	kgsl_pool_shrinker = shrinker_alloc(0, "kgsl-pool");
+	if (kgsl_pool_shrinker) {
+		kgsl_pool_shrinker->count_objects = kgsl_pool_shrink_count_objects;
+		kgsl_pool_shrinker->scan_objects = kgsl_pool_shrink_scan_objects;
+		kgsl_pool_shrinker->seeks = DEFAULT_SEEKS;
+		shrinker_register(kgsl_pool_shrinker);
+	}
 }
 
 void kgsl_exit_page_pools(void)
@@ -569,6 +594,9 @@ void kgsl_exit_page_pools(void)
 	kgsl_pool_reduce(0, true);
 
 	/* Unregister shrinker */
-	unregister_shrinker(&kgsl_pool_shrinker, "kgsl-pool");
+	if (kgsl_pool_shrinker) {
+		shrinker_free(kgsl_pool_shrinker);
+		kgsl_pool_shrinker = NULL;
+	}
 }
 

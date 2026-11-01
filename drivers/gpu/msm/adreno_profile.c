@@ -5,6 +5,7 @@
 
 #include <linux/ctype.h>
 #include <linux/debugfs.h>
+#include <linux/vmalloc.h>
 #include <linux/sched/signal.h>
 
 #include "adreno.h"
