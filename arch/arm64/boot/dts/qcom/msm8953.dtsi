@@ -1142,6 +1142,46 @@
 			iommus = <&gpu_iommu 0>;
 
 			/*
+			 * msm-bus 带宽表 —— **probe 必需**
+			 *
+			 * kgsl_get_bus_scale_table() 找不到 "qcom,gpu-bus-table(-ddr3)"
+			 * 节点时会退回 msm_bus_cl_get_pdata(pdev)，后者从**本节点**解析
+			 * qcom,msm-bus,vectors-KBps。两者都拿不到 pdata 就返回 NULL，
+			 * 于是 msm_bus_scale_register_client(NULL) 返回 0 →
+			 * kgsl_pwrctrl 判 `pwr->pcl == 0` → -EINVAL → **probe 失败**。
+			 *
+			 * 所以必须在这里给全（取值照抄 4.9 的 msm8953-gpu.dtsi）：
+			 *   26 = msm_bus 的 MASTER_GRAPHICS_3D port
+			 *   512 = SLAVE_EBI1（DDR）
+			 * num-cases 11 档与 pwrlevel 的 bus-freq/bus-min/bus-max 索引对应
+			 */
+			qcom,msm-bus,name = "grp3d";
+			qcom,msm-bus,num-cases = <11>;
+			qcom,msm-bus,num-paths = <1>;
+			qcom,msm-bus,vectors-KBps =
+				<26 512 0 0>,
+				<26 512 0 1689600>,
+				<26 512 0 2227200>,
+				<26 512 0 3072000>,
+				<26 512 0 3379200>,
+				<26 512 0 4454400>,
+				<26 512 0 5376000>,
+				<26 512 0 6144000>,
+				<26 512 0 6451200>,
+				<26 512 0 6758400>,
+				<26 512 0 7449600>;
+
+			/*
+			 * GDSC 走 mainline 的 power-domains（指标引 gcc 的 OXILI_CX_GDSC），
+			 * 不用 4.9 的 vddcx-supply = <&gdsc_oxili_cx> —— 6.12 没有那个 label。
+			 */
+			power-domains = <&gcc OXILI_CX_GDSC>;
+
+			/* CPU latency 参数（照抄 4.9，KGSL 用它做 pm-qos 投票） */
+			qcom,pm-qos-active-latency = <213>;
+			qcom,pm-qos-wakeup-latency = <213>;
+
+			/*
 			 * 故意不写 regulator-names，让 KGSL 走 get_legacy_regulators()：
 			 *   · 有 regulator-names → of_property_for_each_string 逐个
 			 *     devm_regulator_get，任何一个拿不到就 probe 失败
