@@ -165,22 +165,17 @@ static void a6xx_init(struct adreno_device *adreno_dev)
 			clamp_t(unsigned int, adreno_dev->highest_bank_bit,
 				13, 16);
 
-	/* LP DDR4 highest bank bit is different and needs to be overridden */
-	if (adreno_is_a650(adreno_dev) && of_fdt_get_ddrtype() == 0x7)
-		adreno_dev->highest_bank_bit = 15;
-	else if ((adreno_is_a610(adreno_dev) || adreno_is_a702(adreno_dev))
-			&& of_fdt_get_ddrtype() == 0x5) {
-		/*
-		 * LPDDR3 has multiple different highest bank bit value
-		 * based on different DDR density. Query this value from
-		 * FDT, in case FDT returns error fallback to value in GPU
-		 * DT node.
-		 */
-		int hbb = of_fdt_get_ddrhbb(0, 0);
-
-		if (hbb > 0)
-			adreno_dev->highest_bank_bit = hbb;
-	}
+	/*
+	 * 原代码用 of_fdt_get_ddrtype() / of_fdt_get_ddrhbb() 读
+	 * bootloader 传的 DDR 类型，据此修正 highest_bank_bit。
+	 * 这两个是 QCOM 私有 helper，6.12 mainline 没有
+	 * （kgsl.c 里同样的问题已用"按平台固定 LPDDR3"处理）。
+	 *
+	 * 而且这段逻辑只对 a650 / a610 / a702 生效 ——
+	 * 本机是 Adreno 506（a5xx 世代），三个判断都不成立，
+	 * 原来也不会走到这两个 helper。所以这里直接去掉，
+	 * 行为与 4.9 在 A506 上的行为完全一致。
+	 */
 
 	a6xx_crashdump_init(adreno_dev);
 

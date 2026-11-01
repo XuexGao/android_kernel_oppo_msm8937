@@ -1,355 +1,82 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2020, The Linux Foundation. All rights reserved.
+ *
+ * ---------------------------------------------------------------------------
+ * 本文件是 KGSL 的「进程内存回收」模块 —— 在内存压力下把 GPU
+ * 已经映射但可以牺牲的 shmem 页面换出去，等下次用的时候再换回来。
+ *
+ * 4.19 的实现依赖一批 QCOM 对 mm 子系统的**私有改动**：
+ *
+ *     check_move_unevictable_pages()    （操作 unevictable LRU）
+ *     __pagevec_release()               （pagevec，已改为 folio 接口）
+ *     pagevec_init / pagevec_add / pagevec_count
+ *     reclaim_address_space()           （QCOM 私有，按 address_space 回收）
+ *     proc_reclaim_notifier_register()  （QCOM 私有，进程退出通知）
+ *     mapping_clear_unevictable / mapping_set_unevictable（私有 shmem 标志）
+ *
+ * 6.12 mainline 里这些**全部不存在**（pagevec 整体换成了 folio batch、
+ * notifier 改名、QCOM 私有回收接口从未进入主线）。
+ *
+ * 要把这套逻辑在 6.12 上重写，等于重做一遍 QCOM 的 shmem 回收补丁，
+ * 工作量大且与主线 mm 演进方向冲突。
+ *
+ * 结论：本模块降级为**空实现**。
+ *
+ * 影响评估：
+ *  · 它只是内存压力下的**优化**，不影响 GPU 正确性 ——
+ *    禁用后 GPU 占用的内存不会被主动回收出去，低内存时
+ *    系统会选择杀进程（标准 Android 行为），而不是悄悄换出 GPU 页。
+ *  · 本机是 Adreno 506 + 3/4GB 内存，日常场景下这部分回收收益有限。
+ *  · 对外接口（kgsl_reclaim.h 里 7 个函数）全部保留，
+ *    调用方（kgsl.c / kgsl_sharedmem.c）**一行都不用改**。
+ *
+ * 如果将来确实需要，正确方向是按 6.12 的 folio / shmem 接口重写，
+ * 而不是把 4.19 的私有 API 硬搬回来。
+ * ---------------------------------------------------------------------------
  */
-
-#include <linux/kthread.h>
-#include <linux/notifier.h>
-#include <linux/pagevec.h>
-#include <linux/shmem_fs.h>
-#include <linux/swap.h>
 
 #include "kgsl_reclaim.h"
-#include "kgsl_sharedmem.h"
 
-static struct notifier_block kgsl_reclaim_nb;
-static bool kgsl_reclaim;
-
-/*
- * Reclaiming excessive number of pages from a process will impact launch
- * latency for the subsequent launch of the process. After measuring the
- * launch latencies by having various maximum limits, it has been decided
- * that allowing 30MB (7680 pages) of relcaim per process will have little
- * impact and the latency will be within acceptable limit.
- */
-static u32 kgsl_reclaim_max_page_limit = 7680;
-
-static int kgsl_memdesc_get_reclaimed_pages(struct kgsl_mem_entry *entry)
+int kgsl_reclaim_init(struct kgsl_device *device)
 {
-	struct kgsl_memdesc *memdesc = &entry->memdesc;
-	int i, ret;
-	struct page *page;
-
-	for (i = 0; i < memdesc->page_count; i++) {
-		if (memdesc->pages[i])
-			continue;
-
-		page = shmem_read_mapping_page_gfp(
-			memdesc->shmem_filp->f_mapping, i, kgsl_gfp_mask(0));
-
-		if (IS_ERR(page))
-			return PTR_ERR(page);
-
-		kgsl_flush_page(page);
-
-		/*
-		 * Update the pages array only if vmfault has not
-		 * updated it meanwhile
-		 */
-		spin_lock(&memdesc->lock);
-		if (!memdesc->pages[i]) {
-			memdesc->pages[i] = page;
-			memdesc->reclaimed_page_count--;
-			atomic_dec(&entry->priv->reclaimed_page_count);
-		} else
-			put_page(page);
-		spin_unlock(&memdesc->lock);
-	}
-
-	ret = kgsl_mmu_map(memdesc->pagetable, memdesc);
-	if (ret)
-		return ret;
-
-	memdesc->priv &= ~KGSL_MEMDESC_RECLAIMED;
-
+	/* 空实现：不注册 notifier、不建 sysfs 节点 */
 	return 0;
 }
 
-int kgsl_reclaim_to_pinned_state(
-		struct kgsl_process_private *process)
+void kgsl_reclaim_close(void)
 {
-	struct kgsl_mem_entry *entry;
-	int next = 0, valid_entry, ret = 0;
-
-	if (!kgsl_reclaim)
-		return 0;
-
-	mutex_lock(&process->reclaim_lock);
-
-	if (test_bit(KGSL_PROC_PINNED_STATE, &process->state))
-		goto done;
-
-	for ( ; ; ) {
-		valid_entry = 0;
-		spin_lock(&process->mem_lock);
-		entry = idr_get_next(&process->mem_idr, &next);
-		if (entry == NULL) {
-			spin_unlock(&process->mem_lock);
-			break;
-		}
-
-		if (!entry->pending_free &&
-				(entry->memdesc.priv & KGSL_MEMDESC_RECLAIMED))
-			valid_entry = kgsl_mem_entry_get(entry);
-		spin_unlock(&process->mem_lock);
-
-		if (valid_entry) {
-			ret = kgsl_memdesc_get_reclaimed_pages(entry);
-			kgsl_mem_entry_put(entry);
-			if (ret)
-				goto done;
-		}
-
-		next++;
-	}
-
-	set_bit(KGSL_PROC_PINNED_STATE, &process->state);
-done:
-	mutex_unlock(&process->reclaim_lock);
-	return ret;
+	/* 空实现 */
 }
 
-static void kgsl_reclaim_foreground_work(struct work_struct *work)
+int kgsl_reclaim_to_pinned_state(struct kgsl_process_private *priv)
 {
-	struct kgsl_process_private *process =
-		container_of(work, struct kgsl_process_private, fg_work);
-
-	if (test_bit(KGSL_PROC_STATE, &process->state))
-		kgsl_reclaim_to_pinned_state(process);
-	kgsl_process_private_put(process);
+	/*
+	 * 返回 0 = 成功。调用方（kgsl.c 的 ioctl 路径）把它当作
+	 * "已经处于 pinned 状态"来处理，不会因此报错。
+	 */
+	return 0;
 }
-
-static ssize_t kgsl_proc_state_show(struct kobject *kobj,
-		struct kgsl_process_attribute *attr, char *buf)
-{
-	struct kgsl_process_private *process =
-		container_of(kobj, struct kgsl_process_private, kobj);
-
-	if (test_bit(KGSL_PROC_STATE, &process->state))
-		return scnprintf(buf, PAGE_SIZE, "foreground\n");
-	else
-		return scnprintf(buf, PAGE_SIZE, "background\n");
-}
-
-static ssize_t kgsl_proc_state_store(struct kobject *kobj,
-	struct kgsl_process_attribute *attr, const char *buf, ssize_t count)
-{
-	struct kgsl_process_private *process =
-		container_of(kobj, struct kgsl_process_private, kobj);
-
-	if (sysfs_streq(buf, "foreground")) {
-		set_bit(KGSL_PROC_STATE, &process->state);
-		if (kgsl_process_private_get(process))
-			kgsl_schedule_work(&process->fg_work);
-	} else if (sysfs_streq(buf, "background"))
-		clear_bit(KGSL_PROC_STATE, &process->state);
-	else
-		return -EINVAL;
-
-	return count;
-}
-
-static ssize_t gpumem_reclaimed_show(struct kobject *kobj,
-		struct kgsl_process_attribute *attr, char *buf)
-{
-	struct kgsl_process_private *process =
-		container_of(kobj, struct kgsl_process_private, kobj);
-
-	return scnprintf(buf, PAGE_SIZE, "%d\n",
-		atomic_read(&process->reclaimed_page_count) << PAGE_SHIFT);
-}
-
-PROCESS_ATTR(state, 0644, kgsl_proc_state_show, kgsl_proc_state_store);
-PROCESS_ATTR(gpumem_reclaimed, 0444, gpumem_reclaimed_show, NULL);
-
-static const struct attribute *proc_reclaim_attrs[] = {
-	&attr_state.attr,
-	&attr_gpumem_reclaimed.attr,
-	NULL,
-};
 
 void kgsl_reclaim_proc_sysfs_init(struct kgsl_process_private *process)
 {
-	if (kgsl_reclaim)
-		WARN_ON(sysfs_create_files(&process->kobj, proc_reclaim_attrs));
+	/* 空实现：不创建 per-process 的 reclaim sysfs */
+}
+
+void kgsl_reclaim_proc_private_init(struct kgsl_process_private *process)
+{
+	/* 空实现 */
 }
 
 ssize_t kgsl_proc_max_reclaim_limit_store(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t count)
 {
-	int ret;
-
-	if (!kgsl_reclaim)
-		return -EINVAL;
-
-	ret = kstrtou32(buf, 0, &kgsl_reclaim_max_page_limit);
-	return ret ? ret : count;
+	/* 接受写入但忽略（没有回收机制可调），返回 count 让 sysfs 认为成功 */
+	return count;
 }
 
 ssize_t kgsl_proc_max_reclaim_limit_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
-	if (!kgsl_reclaim)
-		return 0;
-
-	return scnprintf(buf, PAGE_SIZE, "%d\n", kgsl_reclaim_max_page_limit);
-}
-
-static void kgsl_release_page_vec(struct pagevec *pvec)
-{
-	check_move_unevictable_pages(pvec->pages, pvec->nr);
-	__pagevec_release(pvec);
-}
-
-static int kgsl_reclaim_callback(struct notifier_block *nb,
-		unsigned long pid, void *data)
-{
-	struct kgsl_process_private *p, *process = NULL;
-	struct kgsl_mem_entry *entry;
-	struct kgsl_memdesc *memdesc;
-	int valid_entry, next = 0, ret = NOTIFY_OK;
-
-	spin_lock(&kgsl_driver.proclist_lock);
-	list_for_each_entry(p, &kgsl_driver.process_list, list) {
-		if ((unsigned long)p->pid == pid) {
-			if (kgsl_process_private_get(p))
-				process = p;
-			break;
-		}
-	}
-	spin_unlock(&kgsl_driver.proclist_lock);
-
-	if (!process)
-		return ret;
-
-	/*
-	 * If we do not get the lock here, it means that the buffers are
-	 * being pinned back. So do not keep waiting here as we would anyway
-	 * return empty handed once the lock is acquired.
-	 */
-	if (!mutex_trylock(&process->reclaim_lock))
-		goto done;
-
-	for ( ; ; ) {
-
-		if (atomic_read(&process->reclaimed_page_count) >=
-				kgsl_reclaim_max_page_limit)
-			break;
-
-		/* Abort reclaim if process submitted work. */
-		if (atomic_read(&process->cmd_count))
-			break;
-
-		/* Abort reclaim if process foreground hint is received. */
-		if (test_bit(KGSL_PROC_STATE, &process->state))
-			break;
-
-		valid_entry = 0;
-		spin_lock(&process->mem_lock);
-		entry = idr_get_next(&process->mem_idr, &next);
-		if (entry == NULL) {
-			spin_unlock(&process->mem_lock);
-			break;
-		}
-
-		memdesc = &entry->memdesc;
-		if (!entry->pending_free &&
-				(memdesc->priv & KGSL_MEMDESC_CAN_RECLAIM) &&
-				!(memdesc->priv & KGSL_MEMDESC_RECLAIMED) &&
-				!(memdesc->priv & KGSL_MEMDESC_SKIP_RECLAIM))
-			valid_entry = kgsl_mem_entry_get(entry);
-		spin_unlock(&process->mem_lock);
-
-		if (!valid_entry) {
-			next++;
-			continue;
-		}
-
-		if ((atomic_read(&process->reclaimed_page_count) +
-			memdesc->page_count) > kgsl_reclaim_max_page_limit) {
-			kgsl_mem_entry_put(entry);
-			next++;
-			continue;
-		}
-
-		if (!kgsl_mmu_unmap(memdesc->pagetable, memdesc)) {
-			int i;
-			struct pagevec pvec;
-
-			/*
-			 * Pages that are first allocated are by default added
-			 * to unevictable list. To reclaim them, we first clear
-			 * the AS_UNEVICTABLE flag of the shmem file address
-			 * space thus check_move_unevictable_pages() places
-			 * them on the evictable list.
-			 *
-			 * Once reclaim is done, hint that further shmem
-			 * allocations will have to be on the unevictable list.
-			 */
-			mapping_clear_unevictable(
-					memdesc->shmem_filp->f_mapping);
-			pagevec_init(&pvec);
-			for (i = 0; i < memdesc->page_count; i++) {
-				set_page_dirty_lock(memdesc->pages[i]);
-				spin_lock(&memdesc->lock);
-				pagevec_add(&pvec, memdesc->pages[i]);
-				memdesc->pages[i] = NULL;
-				spin_unlock(&memdesc->lock);
-				if (pagevec_count(&pvec) == PAGEVEC_SIZE)
-					kgsl_release_page_vec(&pvec);
-			}
-			if (pagevec_count(&pvec))
-				kgsl_release_page_vec(&pvec);
-
-			memdesc->priv |= KGSL_MEMDESC_RECLAIMED;
-
-			ret = reclaim_address_space
-				(memdesc->shmem_filp->f_mapping, data);
-
-			mapping_set_unevictable(memdesc->shmem_filp->f_mapping);
-			memdesc->reclaimed_page_count += memdesc->page_count;
-			atomic_add(memdesc->page_count,
-					&process->reclaimed_page_count);
-		}
-
-		kgsl_mem_entry_put(entry);
-
-		if (ret == NOTIFY_DONE)
-			break;
-
-		next++;
-	}
-	if (next)
-		clear_bit(KGSL_PROC_PINNED_STATE, &process->state);
-	mutex_unlock(&process->reclaim_lock);
-done:
-	kgsl_process_private_put(process);
-	return NOTIFY_OK;
-}
-
-void kgsl_reclaim_proc_private_init(struct kgsl_process_private *process)
-{
-	if (!kgsl_reclaim)
-		return;
-
-	mutex_init(&process->reclaim_lock);
-	INIT_WORK(&process->fg_work, kgsl_reclaim_foreground_work);
-	set_bit(KGSL_PROC_PINNED_STATE, &process->state);
-	set_bit(KGSL_PROC_STATE, &process->state);
-}
-
-int kgsl_reclaim_init(struct kgsl_device *device)
-{
-	if (!(device->flags & KGSL_FLAG_PROCESS_RECLAIM))
-		return 0;
-
-	kgsl_reclaim = true;
-
-	kgsl_reclaim_nb.notifier_call = kgsl_reclaim_callback;
-	return proc_reclaim_notifier_register(&kgsl_reclaim_nb);
-}
-
-void kgsl_reclaim_close(void)
-{
-	proc_reclaim_notifier_unregister(&kgsl_reclaim_nb);
+	return scnprintf(buf, PAGE_SIZE, "0\n");
 }
