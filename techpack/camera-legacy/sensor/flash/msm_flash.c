@@ -19,6 +19,7 @@
 #include <linux/uaccess.h>
 #include <linux/fs.h>
 #include <linux/cred.h>
+#include <linux/leds.h>
 #include "msm_flash.h"
 #include "msm_camera_dt_util.h"
 #include "msm_cci.h"
@@ -135,6 +136,8 @@ static int qcom_flash_torch_state;
  * 而 led:torch_0 上是 [torch0_trigger]）。所以 trigger 不可用时直接写
  * qpnp flash LED 的 sysfs，保证手电筒真的能被点亮/熄灭。
  */
+static struct led_classdev *qcom_flash_cdev;
+
 static void qcom_flash_led_set(int on)
 {
 	struct file *f;
@@ -145,6 +148,40 @@ static void qcom_flash_led_set(int on)
 
 	if (torch_trigger) {
 		led_trigger_event(torch_trigger, on ? LED_FULL : LED_OFF);
+		return;
+	}
+
+	/*
+	 * 优先直接操作 led_classdev。
+	 *
+	 * 走 /sys/class/leds/led:torch_0/brightness 在本机恒失败：
+	 *     qcom_flash_led_set: cannot open torch led node (-13)
+	 * -13 是 -EACCES。原代码已经 prepare_kernel_cred(NULL) +
+	 * override_creds() 切到内核 root 了仍然被拒，说明不是普通 DAC
+	 * 权限，而是 SELinux 按 sysfs 文件标签 + 当前 SID 判定。
+	 * led_set_brightness() 是内核内直接回调，不经过 VFS/权限检查。
+	 */
+	if (!qcom_flash_cdev) {
+		static const char * const names[] = {
+			"led:torch_0", "led:flash_0", "torch_0", "torch",
+		};
+		int i;
+		for (i = 0; i < ARRAY_SIZE(names); i++) {
+			qcom_flash_cdev = led_classdev_find_by_name(names[i]);
+			if (qcom_flash_cdev)
+				break;
+		}
+		if (qcom_flash_cdev)
+			pr_info("%s: using led_classdev '%s'\n", __func__,
+				qcom_flash_cdev->name);
+		else
+			pr_err("%s: no torch led_classdev found, fallback to sysfs\n",
+				__func__);
+	}
+	if (qcom_flash_cdev) {
+		led_set_brightness(qcom_flash_cdev, on ? LED_FULL : LED_OFF);
+		pr_info("%s: torch %s via led_classdev\n", __func__,
+			on ? "on" : "off");
 		return;
 	}
 

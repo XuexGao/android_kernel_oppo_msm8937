@@ -136,6 +136,9 @@ extern int devm_of_led_classdev_register(struct device *parent,
 #define devm_led_classdev_register(parent, led_cdev)			\
 	devm_of_led_classdev_register(parent, NULL, led_cdev)
 extern void led_classdev_unregister(struct led_classdev *led_cdev);
+
+/* 按名字查找已注册的 LED（不经过 sysfs，规避 SELinux 对 sysfs 的拦截） */
+extern struct led_classdev *led_classdev_find_by_name(const char *name);
 extern void devm_led_classdev_unregister(struct device *parent,
 					 struct led_classdev *led_cdev);
 extern void led_classdev_suspend(struct led_classdev *led_cdev);
