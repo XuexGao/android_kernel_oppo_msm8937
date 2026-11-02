@@ -927,9 +927,23 @@ static int msm_isp_buf_enqueue(struct msm_isp_buf_mgr *buf_mgr,
 
 	bufq = msm_isp_get_bufq(buf_mgr, info->handle);
 	if (!bufq) {
+		int i;
 		pr_err("%s: Invalid bufq, handle 0x%x, stream id %x num_plane %d\n"
 			, __func__, info->handle, (info->handle >> 8),
 			info->buffer.num_planes);
+		/*
+		 * 把当前 buf_mgr 里已注册的 bufq 全打出来。HAL 传下来的
+		 * handle 找不到对应 bufq 时，靠这条能直接看出是 handle 对不上、
+		 * 还是这个 buf_mgr 上压根没申请过（比如 enqueue 走错了 VFE 节点）。
+		 */
+		pr_err("%s: num_buf_q=%d, registered:\n", __func__,
+			buf_mgr->num_buf_q);
+		for (i = 0; i < BUF_MGR_NUM_BUF_Q; i++)
+			if (buf_mgr->bufq[i].bufq_handle)
+				pr_err("%s:   [%02d] handle=0x%x stream=%x\n",
+					__func__, i,
+					buf_mgr->bufq[i].bufq_handle,
+					(buf_mgr->bufq[i].bufq_handle >> 8));
 		return -EINVAL;
 	}
 

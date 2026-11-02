@@ -379,6 +379,43 @@ void led_classdev_unregister(struct led_classdev *led_cdev)
 }
 EXPORT_SYMBOL_GPL(led_classdev_unregister);
 
+/*
+ * 按名字查找一个已注册的 LED。
+ *
+ * 用途：某些驱动（比如相机闪光灯）需要在进程上下文里直接点灯，但走
+ * sysfs 会被 SELinux 的 sysfs 标签挡住（filp_open 返回 -EACCES，即使
+ * 已经 override_creds 成内核 root 也一样，因为 SELinux 看的是文件标签
+ * 和当前 SID）。直接拿 led_classdev 调 led_set_brightness() 就完全不
+ * 经过 VFS 和权限检查。
+ *
+ * 注意：返回的指针不额外持有引用。LED 设备在内核生命周期内不会注销，
+ * 所以调用方可以长期缓存。
+ */
+static int led_match_name(struct device *dev, const void *data)
+{
+	struct led_classdev *led_cdev = dev_get_drvdata(dev);
+
+	return led_cdev && led_cdev->name && !strcmp(led_cdev->name, data);
+}
+
+struct led_classdev *led_classdev_find_by_name(const char *name)
+{
+	struct device *dev;
+	struct led_classdev *led_cdev = NULL;
+
+	if (!name || !leds_class)
+		return NULL;
+
+	dev = class_find_device(leds_class, NULL, name, led_match_name);
+	if (dev) {
+		led_cdev = dev_get_drvdata(dev);
+		put_device(dev);
+	}
+
+	return led_cdev;
+}
+EXPORT_SYMBOL_GPL(led_classdev_find_by_name);
+
 static void devm_led_classdev_release(struct device *dev, void *res)
 {
 	led_classdev_unregister(*(struct led_classdev **)res);
