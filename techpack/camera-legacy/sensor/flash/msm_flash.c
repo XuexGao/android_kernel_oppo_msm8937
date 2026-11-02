@@ -137,6 +137,7 @@ static int qcom_flash_torch_state;
  * qpnp flash LED 的 sysfs，保证手电筒真的能被点亮/熄灭。
  */
 static struct led_classdev *qcom_flash_cdev;
+static struct led_classdev *qcom_flash_switch;
 
 static void qcom_flash_led_set(int on)
 {
@@ -174,14 +175,34 @@ static void qcom_flash_led_set(int on)
 		if (qcom_flash_cdev)
 			pr_info("%s: using led_classdev '%s'\n", __func__,
 				qcom_flash_cdev->name);
+		qcom_flash_switch = led_classdev_find_by_name("led:switch_0");
+		if (!qcom_flash_switch)
+			qcom_flash_switch = led_classdev_find_by_name("led:switch_1");
+		pr_info("%s: flash switch led_classdev '%s'\n", __func__,
+			qcom_flash_switch ? qcom_flash_switch->name : "none");
 		else
 			pr_err("%s: no torch led_classdev found, fallback to sysfs\n",
 				__func__);
 	}
 	if (qcom_flash_cdev) {
-		led_set_brightness(qcom_flash_cdev, on ? LED_FULL : LED_OFF);
-		pr_info("%s: torch %s via led_classdev\n", __func__,
-			on ? "on" : "off");
+		/*
+		 * QPNP 的 flash/torch 节点只负责设电流，光有它不会亮：
+		 * 还要先把 switch 节点打开（qpnp_flash_led_switch_set），
+		 * 否则 qpnp_flash_led_node_set() 写了也点不着。
+		 * 开灯顺序：switch -> torch；关灯反过来。
+		 */
+		if (on) {
+			if (qcom_flash_switch)
+				led_set_brightness(qcom_flash_switch, LED_FULL);
+			led_set_brightness(qcom_flash_cdev, LED_FULL);
+		} else {
+			led_set_brightness(qcom_flash_cdev, LED_OFF);
+			if (qcom_flash_switch)
+				led_set_brightness(qcom_flash_switch, LED_OFF);
+		}
+		pr_info("%s: torch %s via led_classdev (switch=%s)\n", __func__,
+			on ? "on" : "off",
+			qcom_flash_switch ? qcom_flash_switch->name : "none");
 		return;
 	}
 
