@@ -275,6 +275,18 @@ static int qcom_iommu_init_domain(struct iommu_domain *domain,
 			continue;
 		}
 
+		/*
+		 * 记录 cb 编号，供 CAF 的 DOMAIN_ATTR_* 接口使用。
+		 *
+		 * 必须在这里赋值 —— iommu_attach_device() 实际走的是
+		 * qcom_iommu_attach_dev() → qcom_iommu_init_domain()。
+		 * 而 qcom_iommu_identity_attach() 只在 detach 回 core domain
+		 * 时被调用，把赋值放那里等于永远不生效，KGSL 读到 asid=-1
+		 * 后 get_attr 返回 -ENODEV，kgsl_iommu_init 直接失败。
+		 */
+		if (i == 0)
+			qcom_domain->asid = fwspec->ids[i];
+
 		/* Disable context bank before programming */
 		iommu_writel(ctx, ARM_SMMU_CB_SCTLR, 0);
 
@@ -416,13 +428,6 @@ static int qcom_iommu_identity_attach(struct iommu_domain *identity_domain,
 	for (i = 0; i < fwspec->num_ids; i++) {
 		struct qcom_iommu_ctx *ctx = to_ctx(qcom_domain, fwspec->ids[i]);
 
-		/*
-		 * 记录 cb 编号，供 CAF 的 DOMAIN_ATTR_* 接口使用
-		 * （KGSL 要读 TTBR0 / CONTEXTIDR / 写 PROCID）。
-		 */
-		if (i == 0)
-			qcom_domain->asid = fwspec->ids[i];
-
 		/* Disable the context bank: */
 		iommu_writel(ctx, ARM_SMMU_CB_SCTLR, 0);
 
@@ -510,6 +515,18 @@ static int qcom_iommu_domain_set_attr(struct iommu_domain *domain,
 		 * 独立寄存器；MSM8953 的 SMMU-500 没有单独的 PROCID，
 		 * 它把 procid 编进 TTBR0 的高位。这里保持 permissive：
 		 * 记为成功，具体绑定由 TTBR0 写入完成。
+		 */
+		return 0;
+	case DOMAIN_ATTR_CONTEXT_BANK:
+	case DOMAIN_ATTR_DYNAMIC:
+	case DOMAIN_ATTR_NON_FATAL_FAULTS:
+	case DOMAIN_ATTR_FAST:
+	case DOMAIN_ATTR_ATOMIC:
+	case DOMAIN_ATTR_NESTING:
+		/*
+		 * KGSL 在 attach 前后会 set 这些（kgsl_iommu.c 的
+		 * _init_per_process_pt / _init_global_pt 路径）。
+		 * mainline 没有对应硬件概念，返回成功让流程继续。
 		 */
 		return 0;
 	case DOMAIN_ATTR_SECURE_VMID:

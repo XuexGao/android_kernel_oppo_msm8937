@@ -2371,8 +2371,27 @@ int kgsl_pwrctrl_init(struct kgsl_device *device)
 		 */
 		pwr->pcl = msm_bus_scale_register_client(bus_scale_table);
 		if (pwr->pcl == 0) {
-			result = -EINVAL;
-			goto error_cleanup_gpu_cfg;
+			/*
+			 * 6.12 mainline 里没有 msm_bus fabric 驱动
+			 * （drivers/soc/qcom/msm_bus/msm_bus_fabric_adhoc.c 的
+			 *  arb_ops 只有 "qcom,msm-bus-device" 节点 probe 成功
+			 *  后才会被赋值，而本仓库的 DTS 没有这个节点）。
+			 *
+			 * 于是 msm_bus_scale_register_client() 走到
+			 * "Bus driver not ready." 并返回 0。
+			 *
+			 * 原代码把 0 当成失败直接 -EINVAL，结果 GPU probe
+			 * 必然失败 —— 这是与 IOMMU 完全独立的第二条死亡路径。
+			 *
+			 * 总线带宽投票只是性能调节（把 GPU 需求投给 DDR 仲裁器），
+			 * 停用它不影响 GPU 功能：带宽会固定在 bootloader/初始值。
+			 * 所以这里改成"记录警告但继续"。
+			 */
+			dev_warn(&pdev->dev,
+				"msm_bus client unavailable (no fabric driver), "
+				"gpu bandwidth voting disabled\n");
+			pwr->pcl = 0;
+			pwr->bus_control = false;
 		}
 	}
 
@@ -2451,7 +2470,12 @@ error_cleanup_bus_ib:
 	kfree(pwr->bus_ib);
 error_cleanup_pcl:
 	_close_pcl(pwr);
-error_cleanup_gpu_cfg:
+	/*
+	 * gpu_cfg 的清理放在这里统一做。
+	 * 原来有个单独的 error_cleanup_gpu_cfg 标签，但 msm_bus 注册
+	 * 不再致命（见上面 register_client 的处理）后，没有 goto 再跳到
+	 * 那里，编译器会报 unused-label，所以合并进来。
+	 */
 	_close_gpu_cfg(pwr);
 error_disable_pm:
 	pm_runtime_disable(&pdev->dev);

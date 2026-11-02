@@ -1139,7 +1139,13 @@
 				      "rbbmtimer_clk",
 				      "alwayson_clk";
 
-			iommus = <&gpu_iommu 0>;
+			/*
+			 * 指向 KGSL 的 SMMU 包装子节点（不是 mainline 的 gpu_iommu）。
+			 * KGSL 靠 kgsl_smmu 下的 gfx3d_user / gfx3d_secure 子节点
+			 * 完成匹配；这里的 iommus 让 platform 层把 GPU 设备
+			 * 关联到正确的 IOMMU 组。
+			 */
+			iommus = <&gfx3d_user>;
 
 			/*
 			 * msm-bus 带宽表 —— **probe 必需**
@@ -1320,6 +1326,81 @@
 					qcom,bus-min = <0>;
 					qcom,bus-max = <0>;
 				};
+			};
+		};
+
+		/*
+		 * KGSL 的 SMMU 包装节点
+		 *
+		 * =========================================================
+		 * 为什么需要这一层？
+		 *
+		 * KGSL（drivers/gpu/msm/kgsl_iommu.c）对 SMMU 的识别方式是
+		 * CAF 私有约定，与 mainline 完全不同：
+		 *
+		 *   2757: kgsl_dt_devices[] = { "qcom,kgsl-smmu-v2", ... }
+		 *         ← 只认这个 compatible 的**父节点**
+		 *   2735: 遍历子节点，只认 compatible "qcom,smmu-kgsl-cb"
+		 *   2628: 按**节点名** strcmp(node->name, "gfx3d_user")
+		 *         ← 名字必须精确是 gfx3d_user / gfx3d_secure
+		 *   2659: 子节点有 "iommus" 属性时，ctx->dev = 该父节点的
+		 *         platform device；否则退回 kgsl_mmu_get_ctx()
+		 *         （后者在 mainline 路径下恒返回 -ENODEV）
+		 *   2743: 从第一个 cb 子节点的 iommus phandle 取 iommu_node，
+		 *         仅用于判断 "qcom,qsmmu-v500" 子类型
+		 *
+		 * 而 mainline 的 qcom_iommu.c 要求：
+		 *   compatible "qcom,msm-iommu-v1/v2" 父节点
+		 *   + 子节点 "qcom,msm-iommu-vN-ns/sec"（名字随意）
+		 *
+		 * 两套约定完全不兼容。这里做成**分层**结构：
+		 *   outer: qcom,kgsl-smmu-v2 + gfx3d_user/gfx3d_secure 子节点
+		 *          （满足 KGSL 的匹配）
+		 *   inner: gpu_iommu (qcom,msm-iommu-v2) 实际提供 IOMMU
+		 *          （满足 mainline qcom_iommu 驱动）
+		 * 用子节点的 iommus = <&gpu_iommu N> 把两层连起来，
+		 * 这样 kgsl_iommu.c:2659 走 "有 iommus" 分支，
+		 * ctx->dev 拿到的是真正绑定了 IOMMU 的 platform device，
+		 * iommu_attach_device() 才能成功。
+		 *
+		 * 注意：
+		 *   · 父亲的 reg 只是给 KGSL 读来做 regstart 记录
+		 *     （kgsl_iommu.c:2691 读 reg[0]/reg[1]）
+		 *   · clock-names 必须能被 devm_clk_get 到，
+		 *     用 gcc 的 OXILI AHB / BIMC_GFX
+		 *   · gfx3d_secure 的 iommus 指向 gpu_iommu 的 cb 2（secure ctx）
+		 * =========================================================
+		 */
+		kgsl_smmu: kgsl-smmu@1c40000 {
+			compatible = "qcom,kgsl-smmu-v2";
+			reg = <0x01c40000 0x10000>;
+			qcom,protect = <0x40000 0x10000>;
+			qcom,micro-mmu-control = <0x6000>;
+			qcom,secure_align_mask = <0xfff>;
+			qcom,retention;
+
+			clocks = <&gcc GCC_OXILI_AHB_CLK>,
+				 <&gcc GCC_BIMC_GFX_CLK>;
+			clock-names = "gpu_ahb_clk", "gcc_bimc_gfx_clk";
+
+			/*
+			 * 不给引擎挂 qcom,global_pt：本机只有一个 NS cb
+			 * （mainline gpu_iommu 的 iommu-ctx@0），
+			 * per-process 页表在硬件上无法区分多个 TTBR0。
+			 * global_pt 让 KGSL 用单一页表，避免多进程串页。
+			 */
+			qcom,global_pt;
+
+			gfx3d_user: gfx3d_user {
+				compatible = "qcom,smmu-kgsl-cb";
+				label = "gfx3d_user";
+				iommus = <&gpu_iommu 0>;
+				qcom,gpu-offset = <0x48000>;
+			};
+
+			gfx3d_secure: gfx3d_secure {
+				compatible = "qcom,smmu-kgsl-cb";
+				iommus = <&gpu_iommu 2>;
 			};
 		};
 

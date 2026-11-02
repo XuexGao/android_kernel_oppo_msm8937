@@ -655,21 +655,31 @@ static int a6xx_zap_load(struct adreno_device *adreno_dev)
 {
 	const struct adreno_a6xx_core *a6xx_core = to_a6xx_core(adreno_dev);
 	void *zap;
-	int ret = 0;
 
-	/* Load the zap shader firmware through PIL if its available */
+	/*
+	 * Load the zap shader firmware through PIL if it's available.
+	 * 与 a5xx 同样的处理：本仓库的 subsystem_restart.h 是 stub，
+	 * -ENODEV 表示"没有配置 PIL"，非 secure 场景不需要 zap，
+	 * 因此不作为致命错误。
+	 */
 	if (a6xx_core->zap_name && !adreno_dev->zap_loaded) {
 		zap = subsystem_get(a6xx_core->zap_name);
 
-		/* Return error if the zap shader cannot be loaded */
 		if (IS_ERR_OR_NULL(zap)) {
-			ret = (zap == NULL) ? -ENODEV : PTR_ERR(zap);
+			int zret = (zap == NULL) ? -ENODEV : PTR_ERR(zap);
+
 			zap = NULL;
-		} else
+			if (zret != -ENODEV)
+				return zret;
+			dev_info(KGSL_DEVICE(adreno_dev)->dev,
+				"zap shader (%s) unavailable (no PIL), continue\n",
+				a6xx_core->zap_name);
+		} else {
 			adreno_dev->zap_loaded = 1;
+		}
 	}
 
-	return ret;
+	return 0;
 }
 
 

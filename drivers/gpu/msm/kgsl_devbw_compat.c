@@ -33,16 +33,29 @@
  */
 
 #include <linux/device.h>
+#include <linux/msm_adreno_devfreq.h>
+#include <soc/qcom/devfreq_devbw.h>
 #include <linux/types.h>
 
-void devfreq_vbif_update_bw(void)
+/*
+ * 原型是 int devfreq_vbif_update_bw(void)（msm_adreno_devfreq.h:89），
+ * 返回 0 = 成功。
+ */
+int devfreq_vbif_update_bw(void)
 {
 	/* 空实现：不做 VBIF 带宽投票 */
+	return 0;
 }
 
-void devfreq_vbif_register_callback(void *p)
+/*
+ * 签名必须与 include/linux/msm_adreno_devfreq.h:90 的原型一致：
+ *     void devfreq_vbif_register_callback(getbw_func func, void *data);
+ * 之前写成 (void *p) 会让第二个实参被静默丢弃（aarch64 上落在 x1），
+ * 虽然当前不会崩，但 ABI 上是错的。
+ */
+void devfreq_vbif_register_callback(getbw_func func, void *data)
 {
-	/* 空实现：不注册回调 */
+	/* 空实现：不注册回调（mainline 没有 vbif 带宽 governor） */
 }
 
 int devfreq_suspend_devbw(struct device *dev)

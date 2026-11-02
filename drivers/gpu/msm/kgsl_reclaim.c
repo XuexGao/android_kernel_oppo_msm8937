@@ -65,7 +65,16 @@ void kgsl_reclaim_proc_sysfs_init(struct kgsl_process_private *process)
 
 void kgsl_reclaim_proc_private_init(struct kgsl_process_private *process)
 {
-	/* 空实现 */
+	/*
+	 * 虽然回收逻辑已去掉，但 struct kgsl_process_private 里的
+	 * 这几个字段仍然被其他代码读到（比如 sysfs 展示、状态判断），
+	 * 必须初始化，否则就是未初始化内存。
+	 * 特别是 reclaim_lock —— 它声明成了 struct mutex，
+	 * 不 mutex_init 的话将来任何加锁都是未定义行为。
+	 */
+	atomic_set(&process->reclaimed_page_count, 0);
+	mutex_init(&process->reclaim_lock);
+	set_bit(KGSL_PROC_PINNED_STATE, &process->state);
 }
 
 ssize_t kgsl_proc_max_reclaim_limit_store(struct device *dev,

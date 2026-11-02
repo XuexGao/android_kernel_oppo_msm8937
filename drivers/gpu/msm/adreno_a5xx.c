@@ -1840,13 +1840,38 @@ static int a5xx_microcode_load(struct adreno_device *adreno_dev)
 
 	}
 
-	/* Load the zap shader firmware through PIL if its available */
+	/*
+	 * Load the zap shader firmware through PIL if it's available.
+	 *
+	 * 注意 zap_name 是编译进 adreno-gpulist.h 的常量（A506 = "a506_zap"），
+	 * **不受 DTS 控制** —— 所以"删掉 DTS 里的 zap-shader 节点"并不能
+	 * 绕过这段逻辑。而 A506 带 ADRENO_CONTENT_PROTECTION，
+	 * 上面的 `if (!device->mmu.secured) return 0;` 拦不住它。
+	 *
+	 * 本仓库的 include/soc/qcom/subsystem_restart.h 是 stub
+	 * （subsystem_get 恒返回 ERR_PTR(-ENODEV)），因为 6.12 mainline
+	 * 没有 CAF 的 PIL 框架（对应的是 remoteproc）。
+	 *
+	 * 因此这里把 -ENODEV 视为"没有配置 PIL"而不是致命错误：
+	 * zap shader 的作用是在 secure 模式下由 TZ 加载并签名的 GPU 固件，
+	 * 非 DRM/非 secure 场景（本机日常使用）不需要它。
+	 * 其它错误（比如固件损坏）仍然照原样返回。
+	 */
 	if (a5xx_core->zap_name && !adreno_dev->zap_loaded) {
 		ptr = subsystem_get(a5xx_core->zap_name);
 
-		/* Return error if the zap shader cannot be loaded */
-		if (IS_ERR_OR_NULL(ptr))
-			return (ptr == NULL) ? -ENODEV : PTR_ERR(ptr);
+		if (IS_ERR_OR_NULL(ptr)) {
+			int zret = (ptr == NULL) ? -ENODEV : PTR_ERR(ptr);
+
+			if (zret == -ENODEV) {
+				dev_info(device->dev,
+					"zap shader (%s) unavailable (no PIL), "
+					"continue without it\n",
+					a5xx_core->zap_name);
+				return 0;
+			}
+			return zret;
+		}
 		adreno_dev->zap_loaded = 1;
 	}
 
