@@ -1140,12 +1140,22 @@
 				      "alwayson_clk";
 
 			/*
-			 * 指向 KGSL 的 SMMU 包装子节点（不是 mainline 的 gpu_iommu）。
-			 * KGSL 靠 kgsl_smmu 下的 gfx3d_user / gfx3d_secure 子节点
-			 * 完成匹配；这里的 iommus 让 platform 层把 GPU 设备
-			 * 关联到正确的 IOMMU 组。
+			 * GPU 自身也必须直接绑到真正的 IOMMU provider（gpu_iommu），
+			 * **不能**写 <&gfx3d_user> ——
+			 *
+			 * 实测报错（run 2abb9b3c 的 dmesg）：
+			 *   OF: /soc/kgsl-3d0@1c00000: could not get #iommu-cells
+			 *       for /soc/kgsl-smmu@1c40000/gfx3d_user
+			 *
+			 * 因为 gfx3d_user 只是 KGSL 的 cb 描述节点，本身不是
+			 * IOMMU provider（没有 #iommu-cells）。of_iommu_configure()
+			 * 解析 iommus 时要求 phandle 目标的节点是 provider。
+			 *
+			 * 真正承载 IOMMU 能力的是 gpu_iommu（qcom,msm-iommu-v2），
+			 * 它有 #iommu-cells = <1>。KGSL 的 cb 子节点也是靠各自的
+			 * iommus = <&gpu_iommu N> 拿到 IOMMU 的。
 			 */
-			iommus = <&gfx3d_user>;
+			iommus = <&gpu_iommu 0>;
 
 			/*
 			 * msm-bus 带宽表 —— **probe 必需**

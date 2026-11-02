@@ -2655,8 +2655,31 @@ static int _kgsl_iommu_cb_probe(struct kgsl_device *device,
 
 	ctx->kgsldev = device;
 
-	/* arm-smmu driver we'll have the right device pointer here. */
+	/*
+	 * arm-smmu driver we'll have the right device pointer here.
+	 *
+	 * 注意：of_find_device_by_node(node) 对**没有对应 platform driver**
+	 * 的节点会返回 NULL。我们的 gfx3d_user / gfx3d_secure 是纯描述节点
+	 * （compatible "qcom,smmu-kgsl-cb" 在 mainline 没有任何驱动），
+	 * of_platform_populate() 不会为它们建 platform device。
+	 *
+	 * 原代码在这里直接取 &pdev->dev，一旦 pdev 为 NULL 就是内核崩溃。
+	 * 改为：没有 platform device 时退回到 "iommus" phandle 指向的
+	 * 那个 IOMMU provider 的父设备（也就是 gpu_iommu 的 platform dev），
+	 * 它才是真正绑定了 IOMMU、能用于 iommu_attach_device() 的设备。
+	 */
 	if (of_find_property(node, "iommus", NULL)) {
+		if (!pdev) {
+			struct device_node *iommu_np =
+				of_parse_phandle(node, "iommus", 0);
+
+			if (!iommu_np)
+				return -ENODEV;
+			pdev = of_find_device_by_node(iommu_np);
+			of_node_put(iommu_np);
+			if (!pdev)
+				return -ENODEV;
+		}
 		ctx->dev = &pdev->dev;
 	} else {
 		ctx->dev = kgsl_mmu_get_ctx(ctx->name);
@@ -2691,6 +2714,19 @@ static int _kgsl_iommu_probe(struct kgsl_device *device,
 	struct platform_device *pdev = of_find_device_by_node(node);
 
 	memset(iommu, 0, sizeof(*iommu));
+
+	/*
+	 * qcom,kgsl-smmu-v2 在 mainline 没有任何驱动，of_platform_populate
+	 * 不会为它创建 platform device，所以 of_find_device_by_node(node)
+	 * 返回 NULL。原代码随后直接 devm_clk_get(&pdev->dev, ...) 和
+	 * of_platform_populate(node, ..., &pdev->dev)，NULL 解引用必崩。
+	 *
+	 * 这里退回到 GPU 设备本身（device->pdev->dev）作为宿主：
+	 * 它是 /soc 下真实存在的 platform device，用它取 clk 和 populate
+	 * 子节点都能正常工作。
+	 */
+	if (!pdev)
+		pdev = device->pdev;
 
 	if (of_property_read_u32_array(node, "reg", reg_val, 2)) {
 		dev_err(device->dev,
