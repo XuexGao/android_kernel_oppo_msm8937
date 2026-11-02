@@ -146,6 +146,7 @@ static void qcom_flash_led_set(int on)
 	struct cred *cred;
 	const char *val = on ? "255" : "0";
 	int len = on ? 3 : 1;
+	enum led_brightness lvl = LED_FULL;
 
 	if (torch_trigger) {
 		led_trigger_event(torch_trigger, on ? LED_FULL : LED_OFF);
@@ -179,11 +180,25 @@ static void qcom_flash_led_set(int on)
 			 * QPNP flash 有两级：switch 打开通路，torch 设电流。
 			 * 名字格式见 leds-qpnp-flash-v2.c 的 brightness_set。
 			 */
-			qcom_flash_switch = led_classdev_find_by_name("led:switch_0");
+			/*
+			 * PMI8950 的 DTS（pmi8950.dtsi:552）里这个节点的
+			 * qcom,led-name 就叫 "led:switch"（没有序号），
+			 * 带序号的只有 flash_0/1 和 torch_0/1。之前找
+			 * "led:switch_0" 一直找不到，日志里显示 switch=none。
+			 */
+			qcom_flash_switch = led_classdev_find_by_name("led:switch");
 			if (!qcom_flash_switch)
-				qcom_flash_switch = led_classdev_find_by_name("led:switch_1");
+				qcom_flash_switch = led_classdev_find_by_name("led:switch_0");
 			pr_info("%s: flash switch led_classdev '%s'\n", __func__,
 				qcom_flash_switch ? qcom_flash_switch->name : "none");
+			/*
+			 * V1 的 brightness_set 会把值 clamp 到
+			 * cdev.max_brightness（DTS 里 torch 是 200mA），
+			 * 这里直接取 cdev 自身最大值最稳妥。
+			 */
+			lvl = qcom_flash_cdev->max_brightness;
+			if (!lvl || lvl > LED_FULL)
+				lvl = LED_FULL;
 		} else {
 			pr_err("%s: no torch led_classdev found, fallback to sysfs\n",
 				__func__);
@@ -191,23 +206,30 @@ static void qcom_flash_led_set(int on)
 	}
 	if (qcom_flash_cdev) {
 		/*
-		 * QPNP 的 flash/torch 节点只负责设电流，光有它不会亮：
-		 * 还要先把 switch 节点打开（qpnp_flash_led_switch_set），
-		 * 否则 qpnp_flash_led_node_set() 写了也点不着。
-		 * 开灯顺序：switch -> torch；关灯反过来。
+		 * PMI8950 走的是 V1 驱动（leds-qpnp-flash.c，compatible
+		 * "qcom,qpnp-flash-led"），它只有一组节点：
+		 *     led:flash_0 / led:flash_1 / led:torch_0 / led:torch_1
+		 *     led:switch
+		 * switch 在同一颗 PMIC 上负责打开通路，torch 设电流。
+		 *
+		 * 亮度值语义：V1 的 brightness_set 会把它 clamp 到
+		 * cdev.max_brightness，而 DTS 里 torch 的 max-current 只有
+		 * 200mA。所以这里直接给 LED_FULL 会被压到 200 也够亮，
+		 * 但显式取 cdev 自身最大值更稳妥（不同机型 DTS 可能不同）。
 		 */
 		if (on) {
 			if (qcom_flash_switch)
-				led_set_brightness(qcom_flash_switch, LED_FULL);
-			led_set_brightness(qcom_flash_cdev, LED_FULL);
+				led_set_brightness(qcom_flash_switch, lvl);
+			led_set_brightness(qcom_flash_cdev, lvl);
 		} else {
 			led_set_brightness(qcom_flash_cdev, LED_OFF);
 			if (qcom_flash_switch)
 				led_set_brightness(qcom_flash_switch, LED_OFF);
 		}
-		pr_info("%s: torch %s via led_classdev (switch=%s)\n", __func__,
-			on ? "on" : "off",
-			qcom_flash_switch ? qcom_flash_switch->name : "none");
+		pr_info("%s: torch %s via led_classdev (switch=%s, max=%d)\n",
+			__func__, on ? "on" : "off",
+			qcom_flash_switch ? qcom_flash_switch->name : "none",
+			qcom_flash_cdev->max_brightness);
 		return;
 	}
 
