@@ -172,17 +172,22 @@ static void qcom_flash_led_set(int on)
 			if (qcom_flash_cdev)
 				break;
 		}
-		if (qcom_flash_cdev)
+		if (qcom_flash_cdev) {
 			pr_info("%s: using led_classdev '%s'\n", __func__,
 				qcom_flash_cdev->name);
-		qcom_flash_switch = led_classdev_find_by_name("led:switch_0");
-		if (!qcom_flash_switch)
-			qcom_flash_switch = led_classdev_find_by_name("led:switch_1");
-		pr_info("%s: flash switch led_classdev '%s'\n", __func__,
-			qcom_flash_switch ? qcom_flash_switch->name : "none");
-		else
+			/*
+			 * QPNP flash 有两级：switch 打开通路，torch 设电流。
+			 * 名字格式见 leds-qpnp-flash-v2.c 的 brightness_set。
+			 */
+			qcom_flash_switch = led_classdev_find_by_name("led:switch_0");
+			if (!qcom_flash_switch)
+				qcom_flash_switch = led_classdev_find_by_name("led:switch_1");
+			pr_info("%s: flash switch led_classdev '%s'\n", __func__,
+				qcom_flash_switch ? qcom_flash_switch->name : "none");
+		} else {
 			pr_err("%s: no torch led_classdev found, fallback to sysfs\n",
 				__func__);
+		}
 	}
 	if (qcom_flash_cdev) {
 		/*
