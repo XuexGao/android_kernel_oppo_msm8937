@@ -139,3 +139,6 @@ kernel/configs/android-*.cfg
 #Ignoring Android.bp link file
 #
 Android.bp
+
+# 本地构建输出（make O=out）
+/out/
