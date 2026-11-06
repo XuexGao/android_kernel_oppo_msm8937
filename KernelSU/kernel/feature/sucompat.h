@@ -14,16 +14,9 @@ void ksu_sucompat_init(void);
 void ksu_sucompat_exit(void);
 
 // Handler functions exported for hook_manager
-// The struct filename ** variants below only match kernels >= 6.1; on older
-// kernels (4.9 here) the syscall passes a plain const char __user **.
 #ifdef CONFIG_KSU_SUSFS
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
 int ksu_handle_faccessat(int *dfd, struct filename **filename, int *mode, int *__unused_flags);
 int ksu_handle_stat(int *dfd, struct filename **filename, int *flags);
-#else
-int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode, int *__unused_flags);
-int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags);
-#endif
 #else
 int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode, int *__unused_flags);
 int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags);
@@ -37,7 +30,7 @@ int ksu_handle_post_execve(int *fd, const char *filename, void *argv, void *envp
 // WARNING! THERE HAVE TRYING TO CALL SYSCALL INTERNALLY
 // ENSURE CALL IT ONLY IN TRACEPOINT SYSCALL REDIRECT
 long ksu_handle_faccessat_sucompat_internal(int orig_nr, struct pt_regs *regs);
-long ksu_handle_stat_sucompa_internal(int orig_nr, struct pt_regs *regs);
+long ksu_handle_stat_sucompat_internal(int orig_nr, struct pt_regs *regs);
 long ksu_handle_execve_sucompat_internal(const char __user **filename_user, int orig_nr, struct pt_regs *regs);
 long ksu_handle_execveat_sucompat_internal(const char __user **filename_user, int orig_nr, struct pt_regs *regs);
 

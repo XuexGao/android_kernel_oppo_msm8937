@@ -7,7 +7,8 @@ kernelsu-objs += feature/kernel_umount.o
 kernelsu-objs += feature/sulog.o
 kernelsu-objs += feature/adb_root.o
 kernelsu-objs += feature/selinux_hide.o
-kernelsu-objs += feature/module_load_filter.o
+kernelsu-objs += feature/shell_su_adb_only.o
+kernelsu-objs += feature/module_blacklist.o
 kernelsu-objs += hook/setuid_hook.o
 
 ifndef CONFIG_KSU_DISABLE_MANAGER
@@ -25,6 +26,8 @@ kernelsu-objs += infra/event_queue.o
 kernelsu-objs += runtime/boot_event.o
 kernelsu-objs += runtime/ksud_integration.o
 
+kernelsu-objs += infra/btf_parser.o
+kernelsu-objs += selinux/inode.o
 kernelsu-objs += selinux/selinux.o
 kernelsu-objs += selinux/sepolicy.o
 kernelsu-objs += selinux/rules.o
@@ -58,32 +61,28 @@ KDIR := $(KDIR)
 KSU_SRC := $(realpath $(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 
 # --- vendored source: no git dependency -------------------------------------
-# Upstream assumes it is checked out as a git submodule and that KernelSU/.git
-# exists: it aborts with `$(error ... use ... as a git submodule ...)` otherwise,
-# and it also tries to unshallow the checkout and to derive the version from the
-# local commit history at compile time.  In this tree the driver is vendored as
-# plain files under KernelSU/, so there is no .git: the $(error) would abort
-# every build and the history lookups would fail or reach the network.
-# All of that is removed and the version is pinned in-tree instead.
+# Upstream assumes the driver is checked out as a git submodule: it aborts with
+# `$(error ... use $(REPO_NAME) as a git submodule ...)` when KernelSU/.git is
+# missing, then fetches the full history and derives the version from the local
+# history at compile time.  Here the driver is vendored as plain files under
+# KernelSU/, so there is no .git: the $(error) would abort every build and the
+# lookups would fail.  All of it is removed and the version is pinned in-tree.
 #
-# Pinned to BakaSU main @ 157eaeea (2026-10-05, the latest commit on main
-# of this upgrade; ahead of tag v4.2.0-rc3 by 40 commits):
-#   KSU_VERSION = 30000 + <commit count> + 700 = 30000 + 4512 + 700 = 35212
-# The manager APK computes its versionCode with the same formula, and the
-# Build Manager workflow on main produces assets literally named
-# "BakaSU_v4.2.0-rc3_35212-*-release.apk", so kernel and manager agree.
+# Pinned to BakaSU main @ 516d3e87 (2026-10-31, the commit that also lifted the
+# "suspend susfs build" guard from tools/susfs_compat.mk):
+#   KSU_VERSION = 30000 + <commit count> + 700 = 30000 + 4557 + 700 = 35257
 $(info -- $(REPO_NAME): vendored source, using pinned version)
-$(info -- $(REPO_NAME): pinned to main @ e5423590 (KSU_VERSION 35212))
+$(info -- $(REPO_NAME): pinned to main @ 516d3e87 (KSU_VERSION 35257))
 
 ifdef KBUILD_EXTMOD
 include $(KSU_SRC)/tools/ddk_compatible.mk
 endif
 
-KSU_LOCAL_VERSION := 4512
-KSU_VERSION := 35212
+KSU_LOCAL_VERSION := 4557
+KSU_VERSION := 35257
 
 KSU_TAG_NAME    := v4.2.0-rc3
-KSU_COMMIT_SHA  := e5423590
+KSU_COMMIT_SHA  := 516d3e87
 KSU_BRANCH_NAME := main
 
 # call subst to process placeholders
@@ -163,7 +162,7 @@ ifdef CONFIG_KSU_TRACEPOINT_HOOK
     kernelsu-objs += hook/arm64/syscall_hook.o
   else ifeq ($(CONFIG_X86_64),y)
     kernelsu-objs += hook/x86_64/syscall_hook.o
-  else ifeq ($(CONFIG_RISCV),y
+  else ifeq ($(CONFIG_RISCV),y)
     kernelsu-objs += hook/riscv64/syscall_hook.o
   else
     ifeq ($(CONFIG_KSU), y)
@@ -221,6 +220,9 @@ ifndef CONFIG_KSU_TRACEPOINT_HOOK
 endif
 
 include $(KSU_SRC)/tools/kernel_compat.mk
+ifneq ($(CONFIG_KSU),)
+include $(KSU_SRC)/tools/code_generation/code_generation.mk
+endif
 
 # Custom Signs
 ifdef KSU_EXPECTED_SIZE
