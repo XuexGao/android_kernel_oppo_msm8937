@@ -3,13 +3,18 @@
 # (CONFIG_HEADERS_INSTALL, enabled by gki_defconfig).
 KSU_UAPI_INC := $(objtree)/usr/include
 
-ifeq ($(wildcard $(KSU_UAPI_INC)/linux/unistd.h),)
-KSU_HEADERS_INSTALL_OUTPUT := $(shell $(MAKE) -s -C "$(abspath $(srctree))" \
-	O="$(abspath $(objtree))" ARCH="$(ARCH)" \
-	headers_install INSTALL_HDR_PATH="$(abspath $(objtree))/usr")
-endif
+# --- local: preinit disabled on this 4.9 tree --------------------------------
+# Upstream compiles the freestanding runner with $(CC) but links it with $(LD).
+# Here the kernel is built with clang while $(LD) comes from the GCC cross
+# toolchain, so the runner object is emitted for the host (x86-64) and ld aborts
+# with "Relocations in generic ELF (EM: 62)".  runner.elf is therefore never
+# produced and preinit/blob.S fails its .incbin on the missing file.
+# preinit is optional (preinit.h supplies no-op stubs under KSU_NO_PREINIT), so
+# disable it instead of papering over the clang/GNU-ld mix; the else branch below
+# defines KSU_NO_PREINIT for the rest of the driver.
+KSU_PREINIT_ENABLED ?= 0
 
-ifneq ($(wildcard $(KSU_UAPI_INC)/linux/unistd.h),)
+ifeq ($(KSU_PREINIT_ENABLED),1)
 kernelsu-objs += preinit/preinit.o
 kernelsu-objs += preinit/blob.o
 
@@ -47,7 +52,7 @@ targets += preinit/runner.elf
 $(obj)/preinit/blob.o: $(KSU_RUNNER_TARGET)
 asflags-y += -DKSU_PREINIT_RUNNER_BIN=\"$(KSU_RUNNER_BIN)\"
 else
-$(warning -- $(REPO_NAME): $(KSU_UAPI_INC) not found, preinit disabled)
+$(warning -- $(REPO_NAME): preinit disabled (KSU_PREINIT_ENABLED=0))
 ccflags-y += -DKSU_NO_PREINIT
 endif
 
