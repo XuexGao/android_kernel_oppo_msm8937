@@ -1275,6 +1275,11 @@ static void qpnp_flash_led_work(struct work_struct *work)
 
 	mutex_lock(&led->flash_led_lock);
 
+	pr_info("%s: node name=%s id=%d type=%d brightness=%d flash_on=%d num_regs=%d\n",
+		__func__, flash_node->cdev.name, flash_node->id,
+		flash_node->type, brightness, flash_node->flash_on,
+		flash_node->num_regulators);
+
 	if (!brightness)
 		goto turn_off;
 

@@ -217,14 +217,29 @@ static void qcom_flash_led_set(int on)
 		 * 200mA。所以这里直接给 LED_FULL 会被压到 200 也够亮，
 		 * 但显式取 cdev 自身最大值更稳妥（不同机型 DTS 可能不同）。
 		 */
+		/*
+		 * 顺序很关键，不能反。
+		 *
+		 * leds-qpnp-flash.c::qpnp_flash_led_brightness_set 里：
+		 *      if (flash_node->type == TORCH)
+		 *          led->flash_node[num_leds-1].type = TORCH;
+		 * 也就是说 switch 节点自己的 type 是**由 torch 节点传过去的**。
+		 * 先设 switch 的话它 type 还是 0，work 里
+		 *      if (flash_node->type == TORCH) { ... }
+		 * 不成立，FLASH_TORCH / FLASH_MODULE_ENABLE 寄存器一个都不写，
+		 * 表现就是"调用链全对、日志全绿，但灯不亮"。
+		 *
+		 * 所以开灯必须先 torch（把 type 和电流写进 switch 节点）
+		 * 再 switch（真正使能模块）。关灯反过来：先 switch 断通路。
+		 */
 		if (on) {
+			led_set_brightness(qcom_flash_cdev, lvl);
 			if (qcom_flash_switch)
 				led_set_brightness(qcom_flash_switch, lvl);
-			led_set_brightness(qcom_flash_cdev, lvl);
 		} else {
-			led_set_brightness(qcom_flash_cdev, LED_OFF);
 			if (qcom_flash_switch)
 				led_set_brightness(qcom_flash_switch, LED_OFF);
+			led_set_brightness(qcom_flash_cdev, LED_OFF);
 		}
 		pr_info("%s: torch %s via led_classdev (switch=%s, max=%d)\n",
 			__func__, on ? "on" : "off",
