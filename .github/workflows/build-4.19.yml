@@ -33,11 +33,16 @@ on:
         options:
           - lineage-22.1-k4.19
           - bakasu-k4.19
-      targets:
-        description: '要构建的目标，逗号分隔（留空 = 全部）：base,R9s'
+      r9s:
+        description: 'R9s'
         required: false
-        type: string
-        default: 'base'
+        type: boolean
+        default: true
+      a57:
+        description: 'A57'
+        required: false
+        type: boolean
+        default: true
       publish_release:
         description: '是否发布到 GitHub Releases'
         required: false
@@ -101,12 +106,24 @@ jobs:
           # push 事件没有 inputs：改从仓库里的 ci/targets 读取要构建的目标，
           # 这样不碰默认分支也能手动控制跑哪些机型（改一行文件即触发）。
           # 文件不存在或为空时回退到 base 冒烟。
-          WANT="${{ inputs.targets }}"
-          if [ -z "${WANT}" ] && [ "${{ github.event_name }}" = "push" ]; then
-            if [ -f ci/targets ]; then
-              # 去掉注释与空行，多行合成逗号分隔
-              WANT="$(grep -vE '^\s*(#|$)' ci/targets | tr '\n' ',' | sed 's/,$//')"
-              echo "从 ci/targets 读到目标: '${WANT}'"
+          # 机型打勾 -> 目标名（bakasu 分支的产物名带 -bakasu 后缀）
+          WANT=""
+          if [ "${{ github.event_name }}" = "push" ] && [ -f ci/targets ]; then
+            WANT="$(grep -vE '^\s*(#|$)' ci/targets | tr '\n' ',' | sed 's/,$//')"
+            echo "从 ci/targets 读到目标: '${WANT}'"
+          fi
+          if [ -z "${WANT}" ]; then
+            if [ "${{ inputs.r9s }}" = "true" ]; then
+              case "${BUILD_REF}" in
+                bakasu-k4.19) WANT="R9s-bakasu" ;;
+                *)            WANT="R9s" ;;
+              esac
+            fi
+            if [ "${{ inputs.a57 }}" = "true" ]; then
+              case "${BUILD_REF}" in
+                bakasu-k4.19) WANT="${WANT:+${WANT},}A57-bakasu" ;;
+                *)            WANT="${WANT:+${WANT},}A57" ;;
+              esac
             fi
           fi
           [ -n "${WANT}" ] || WANT="base"
@@ -132,6 +149,8 @@ jobs:
           BPFC = "vendor/oppo-bpf-containers.config"
           # OPPO A57 (16061 / MSM8940) 机型片段
           A57 = "vendor/oppo-a57.config"
+          # BakaSU + SUSFS 片段（bakasu-k4.19 专用）
+          BAKASU = "vendor/oppo-bakasu-susfs.config"
           # 每个分支只构建自己的产物：lineage-22.1-k4.19 出纯净内核，
           # bakasu-k4.19 出 BakaSU + SUSFS。靠下面的 branch 字段过滤，
           # ci/targets 只是在**本分支的目标里**再选子集（可留空）。
@@ -171,10 +190,32 @@ jobs:
               "soc": "MSM8940", "snapdragon": "Snapdragon 435",
               "allow_fail": True,
             },
+            {
+              "target": "R9s-bakasu", "label": "R9s (BakaSU + SUSFS)",
+              "branch": "bakasu-k4.19",
+              "defconfig": "vendor/msm8953-perf_defconfig",
+              "fragments": BASE_FRAGMENTS + " " + COMMON + " " + R9S + " " + BPFC + " " + BAKASU,
+              "device_names": "r9s|R9s|16017|16027|msm8953",
+              "soc": "MSM8953", "snapdragon": "Snapdragon 625",
+              "allow_fail": True,
+            },
+            {
+              "target": "A57-bakasu", "label": "A57 (BakaSU + SUSFS)",
+              "branch": "bakasu-k4.19",
+              "defconfig": "vendor/msm8953-perf_defconfig",
+              "fragments": BASE_FRAGMENTS + " " + COMMON + " " + A57 + " " + BPFC + " " + BAKASU,
+              "device_names": "a57|A57|16061|msm8940|msm8937",
+              "soc": "MSM8940", "snapdragon": "Snapdragon 435",
+              "allow_fail": True,
+            },
           ]
 
           # 先按分支过滤：一个分支只出自己的产物
           on_branch = [t for t in targets if t.get("branch", "any") in ("any", BRANCH)]
+          if not on_branch:
+              # 分支上没有匹配目标时回退到全部，避免空矩阵让 job 直接失败
+              print("# 分支 %s 无目标，回退到全部" % BRANCH, file=sys.stderr)
+              on_branch = list(targets)
 
           # ci/targets 再选子集；若指定的目标不属于本分支（比如在 bakasu
           # 上写了 "R9s"），忽略它并构建本分支全部目标，避免静默出错。
