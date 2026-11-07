@@ -1260,6 +1260,40 @@ static int qpnp_flash_led_prepare_v1(struct led_trigger *trig, int options,
 	return 0;
 }
 
+/*
+ * 给相机闪光灯用的直接稳压器控制接口。
+ *
+ * 4.9 的 msm_flash.c 是在 FLASH_INIT 阶段调
+ *     qpnp_flash_led_prepare(switch_trigger, ENABLE_REGULATOR, NULL)
+ * 来给 flash LED 供电的。移植到 4.19 后 HAL 走的是 /proc/qcom_flash
+ * 直接设 brightness，绕过了 prepare，于是稳压器从来没被使能
+ * （qpnp_flash_led_work 里那句 !flash_on 的守卫在 brightness 设置后
+ *  永远为假），没有供电，寄存器写进去灯也不亮。
+ *
+ * prepare 原接口要 struct led_trigger *，而相机侧手里只有
+ * led_classdev（而且 LED_BLINK_SW 等情况下界面拿不到 trigger），
+ * 这里按 cdev 直接找到 driver data，不走 trigger 映射。
+ */
+int qpnp_flash_led_regulator_set(struct led_classdev *led_cdev, bool on)
+{
+	struct flash_node_data *flash_node;
+	struct qpnp_flash_led *led;
+
+	if (!led_cdev)
+		return -EINVAL;
+
+	flash_node = container_of(led_cdev, struct flash_node_data, cdev);
+	led = dev_get_drvdata(&flash_node->pdev->dev);
+	if (!led)
+		return -EINVAL;
+
+	if (flash_node->num_regulators == 0)
+		return 0;
+
+	return flash_regulator_enable(led, flash_node, on);
+}
+EXPORT_SYMBOL_GPL(qpnp_flash_led_regulator_set);
+
 static void qpnp_flash_led_work(struct work_struct *work)
 {
 	struct flash_node_data *flash_node = container_of(work,

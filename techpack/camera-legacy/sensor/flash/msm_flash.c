@@ -20,6 +20,7 @@
 #include <linux/fs.h>
 #include <linux/cred.h>
 #include <linux/leds.h>
+#include <linux/leds-qpnp-flash.h>
 #include "msm_flash.h"
 #include "msm_camera_dt_util.h"
 #include "msm_cci.h"
@@ -233,6 +234,21 @@ static void qcom_flash_led_set(int on)
 		 * 再 switch（真正使能模块）。关灯反过来：先 switch 断通路。
 		 */
 		if (on) {
+			/*
+			 * 必须先使能稳压器。4.9 的 msm_flash.c 在 FLASH_INIT
+			 * 阶段会调：
+			 *     qpnp_flash_led_prepare(switch_trigger,
+			 *                            ENABLE_REGULATOR, NULL)
+			 * 而 qpnp_flash_led_work() 里那段
+			 *     if (!flash_node->flash_on && num_regulators > 0)
+			 *         flash_regulator_enable(...)
+			 * 在 torch/switch 已经设过 brightness 之后
+			 * flash_on == true，条件永远不成立 —— 稳压器从来没被开过。
+			 * 没有供电，后面写再多寄存器灯也不会亮。
+			 * 这里显式补上这一步。
+			 */
+			if (qpnp_flash_led_regulator_set(qcom_flash_switch, true) < 0)
+				pr_err("%s: enable regulator failed\n", __func__);
 			led_set_brightness(qcom_flash_cdev, lvl);
 			if (qcom_flash_switch)
 				led_set_brightness(qcom_flash_switch, lvl);
@@ -240,6 +256,7 @@ static void qcom_flash_led_set(int on)
 			if (qcom_flash_switch)
 				led_set_brightness(qcom_flash_switch, LED_OFF);
 			led_set_brightness(qcom_flash_cdev, LED_OFF);
+			qpnp_flash_led_regulator_set(qcom_flash_switch, false);
 		}
 		pr_info("%s: torch %s via led_classdev (switch=%s, max=%d)\n",
 			__func__, on ? "on" : "off",
