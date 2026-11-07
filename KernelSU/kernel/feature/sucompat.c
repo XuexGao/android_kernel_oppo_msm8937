@@ -513,38 +513,21 @@ int ksu_handle_post_execveat_sucompat(int *fd, struct filename **filename_ptr, v
 #endif
 #endif
 
-#ifdef CONFIG_KSU_SUSFS
-int ksu_handle_faccessat(int *dfd, struct filename **filename, int *mode, int *__unused_flags)
-{
-    const struct cred *old_cred;
-
-    // we no need harden this check, susfs already complete in caller
-    // if (ksu_is_current_proc_unprivillege()) {
-    //     return 0;
-    // }
-
-    if (!static_branch_unlikely(&ksu_su_compat_enabled)) {
-        return 0;
-    }
-
-    if (unlikely(IS_ERR(*filename) || (*filename)->name == NULL))
-        return 0;
-
-    if (likely(memcmp((*filename)->name, su_path, sizeof(su_path))))
-        return 0;
-
-    old_cred = override_creds(ksu_cred);
-    if (is_ksud_exists()) {
-        pr_info("ksu_handle_faccessat su->sh!\n");
-        memcpy((void *)((*filename)->name), sh_path, sizeof(sh_path));
-    } else {
-        pr_info("no ksud found, don't process faccessat for su!");
-    }
-
-    revert_creds(old_cred);
-    return 0;
-}
-#else
+/*
+ * 4.19 hands ksu_handle_faccessat a plain user pointer (const char __user **),
+ * exactly like every kernel < 6.1.  Upstream selects the "struct filename **"
+ * variant purely on CONFIG_KSU_SUSFS (the trailing ">= 6.1.0" comment on the
+ * matching #endif is misleading -- there is no such version gate), so with
+ * inline SUSFS the wrong ABI is compiled: fs/open.c passes a user address and
+ * the driver dereferences it as a struct filename.  That does not warn at
+ * build time; it Oopses the first faccessat() after insmod, with
+ *
+ *   Unable to handle kernel access to user memory outside uaccess routines
+ *     pc : ksu_handle_faccessat+0x38/0xec
+ *   Kernel panic - not syncing: Attempted to kill init!
+ *
+ * and reboots the device.  Keep only the pre-6.1 variant.
+ */
 int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode, int *__unused_flags)
 {
     char path[sizeof(su_path) + 1] = { 0 };
@@ -585,9 +568,13 @@ int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode,
 
     return 0;
 }
-#endif
 
-#ifdef CONFIG_KSU_SUSFS
+/*
+ * Same reasoning as ksu_handle_faccessat above: gate the "struct filename **"
+ * variant on >= 6.1 so 4.19 keeps the const char __user ** form that fs/stat.c
+ * actually calls with.
+ */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0) && defined(CONFIG_KSU_SUSFS)
 int ksu_handle_stat(int *dfd, struct filename **filename, int *flags)
 {
     const struct cred *old_cred;

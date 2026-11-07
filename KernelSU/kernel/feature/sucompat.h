@@ -15,8 +15,10 @@ void ksu_sucompat_exit(void);
 
 // Handler functions exported for hook_manager
 #ifdef CONFIG_KSU_SUSFS
-int ksu_handle_faccessat(int *dfd, struct filename **filename, int *mode, int *__unused_flags);
-int ksu_handle_stat(int *dfd, struct filename **filename, int *flags);
+/* On < 6.1 the syscalls still hand over a plain user pointer; see the comment
+ * above ksu_handle_faccessat() in sucompat.c for why this ABI must not change. */
+int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode, int *__unused_flags);
+int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags);
 #else
 int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode, int *__unused_flags);
 int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags);
