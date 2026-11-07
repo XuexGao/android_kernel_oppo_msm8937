@@ -41,11 +41,26 @@ on:
         options:
           - bakasu-susfs-bpf
           - sukisu-susfs-bpf
-      devices:
-        description: '要构建的机型，逗号分隔（留空 = 全部 4 个）：R9s,A57,R9sPlus,R9Plus'
+      r9s:
+        description: 'R9s'
         required: false
-        type: string
-        default: ''
+        type: boolean
+        default: true
+      a57:
+        description: 'A57'
+        required: false
+        type: boolean
+        default: true
+      r9splus:
+        description: 'R9s Plus'
+        required: false
+        type: boolean
+        default: true
+      r9plus:
+        description: 'R9 Plus'
+        required: false
+        type: boolean
+        default: true
       publish_release:
         description: '是否发布到 GitHub Releases（否：仅上传构建产物）'
         required: false
@@ -113,7 +128,11 @@ jobs:
           esac
 
           # ---- 3. 机型矩阵（device / label / defconfig / 设备名 / 平台 / SoC 商用名）----
-          python3 - "${{ inputs.devices }}" <<'PYEOF' > matrix.json
+          PICK_R9S="${{ inputs.r9s }}" \
+          PICK_A57="${{ inputs.a57 }}" \
+          PICK_R9SPLUS="${{ inputs.r9splus }}" \
+          PICK_R9PLUS="${{ inputs.r9plus }}" \
+          python3 - <<'PYEOF' > matrix.json
           import json, os, sys
           devices = [
               {"device": "R9s",     "label": "R9s",       "defconfig": "lineageos_R9s_defconfig",
@@ -129,9 +148,15 @@ jobs:
                "device_names": "r9plus|R9Plus|15103|msm8976",   "soc": "MSM8976",
                "snapdragon": "Snapdragon 652"},
           ]
-          if len(sys.argv) > 1 and sys.argv[1].strip():
-              want = [s.strip() for s in sys.argv[1].split(",") if s.strip()]
-              devices = [d for d in devices if d["device"] in want]
+          # 机型打勾 -> 目标名；未勾选任何机型时回退到全部，避免空矩阵
+          picked = [name for name, on in (
+              ("R9s",     os.environ.get("PICK_R9S") == "true"),
+              ("A57",     os.environ.get("PICK_A57") == "true"),
+              ("R9sPlus", os.environ.get("PICK_R9SPLUS") == "true"),
+              ("R9Plus",  os.environ.get("PICK_R9PLUS") == "true"),
+          ) if on]
+          if picked:
+              devices = [d for d in devices if d["device"] in picked]
           print(json.dumps({"include": devices}))
           PYEOF
 
