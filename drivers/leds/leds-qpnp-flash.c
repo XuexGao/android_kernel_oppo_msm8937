@@ -1411,6 +1411,10 @@ static void qpnp_flash_led_work(struct work_struct *work)
 			val = (u8)(flash_node->prgm_current *
 						FLASH_TORCH_MAX_LEVEL
 						/ flash_node->max_current);
+			pr_info("%s: SWITCH torch: prgm=%d prgm2=%d max=%d val=%d\n",
+				__func__, flash_node->prgm_current,
+				flash_node->prgm_current2,
+				flash_node->max_current, val);
 			rc = qpnp_led_masked_write(led,
 						led->current_addr,
 						FLASH_CURRENT_MASK, val);
@@ -1473,6 +1477,10 @@ static void qpnp_flash_led_work(struct work_struct *work)
 				"Module enable reg write failed\n");
 			goto exit_flash_led_work;
 		}
+		pr_info("%s: TORCH ON node=%s id=%d prgm=%d max=%d trig=0x%x\n",
+			__func__, flash_node->cdev.name, flash_node->id,
+			flash_node->prgm_current, flash_node->max_current,
+			flash_node->trigger);
 
 		if (led->pdata->hdrm_sns_ch0_en ||
 						led->pdata->hdrm_sns_ch1_en) {
