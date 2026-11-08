@@ -1017,12 +1017,10 @@ CSID_TG:
 		slave_info->bypass_video_node_creation;
 
 	/*
-	 * Update the subdevice id of flash-src based on availability in kernel.
+	 * msm_sensor_fill_flash_subdevid_by_name() already sets this to -1
+	 * when the DT has no qcom,led-flash-src.  Do not erase the rear
+	 * camera's DT flash ID when the vendor HAL leaves flash_name empty.
 	 */
-	if (strlen(slave_info->flash_name) == 0) {
-		s_ctrl->sensordata->sensor_info->
-			subdev_id[SUB_MODULE_LED_FLASH] = -1;
-	}
 
 	/*
 	 * Create /dev/videoX node, comment for now until dummy /dev/videoX

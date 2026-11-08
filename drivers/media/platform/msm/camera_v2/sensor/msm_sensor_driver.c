@@ -363,9 +363,11 @@ static int32_t msm_sensor_fill_flash_subdevid_by_name(
 	if (flash_name_len >= MAX_SENSOR_NAME)
 		return -EINVAL;
 
-	if (flash_name_len == 0)
-		return 0;
-
+	/*
+	 * An empty HAL flash_name does not invalidate the DT flash source.
+	 * The rear sensor has qcom,led-flash-src while the front sensor does
+	 * not; retain that distinction when userspace omits flash_name.
+	 */
 	src_node = of_parse_phandle(of_node, "qcom,led-flash-src", 0);
 	if (!src_node) {
 		CDBG("%s:%d src_node NULL\n", __func__, __LINE__);
