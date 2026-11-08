@@ -2073,4 +2073,11 @@ CONFIG_SQUASHFS_FRAGMENT_CACHE_SIZE=3
 #
 # 先打开看具体错误，再逐个修。
 # ============================================================
-CONFIG_QCOM_KGSL=y
+# 已改走 DRM adreno（见 arch/arm64/boot/dts/qcom/msm8953.dtsi 的
+# gpu@1c00000 节点注释）。ACK 6.12 树里 a5xx 驱动是完整的（3023 行），
+# 不需要 KGSL，两者也不能同时开 —— 会抢同一个硬件。
+#
+# KGSL 的 47 处 4.19→6.12 API 差异（kgsl_iommu.c 里 QCOM 私有的
+# iommu_domain_set_attr / DOMAIN_ATTR_USE_LLC_NWA 等全部被上游删除）
+# 也就不需要再处理了。
+# CONFIG_QCOM_KGSL is not set
