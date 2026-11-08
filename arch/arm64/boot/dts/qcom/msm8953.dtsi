@@ -1069,62 +1069,49 @@
 		/*
 		 * GPU —— Adreno 506（a5xx，无 GMU）
 		 *
-		 * 必须用 **KGSL 的约定**，不能用 mainline DRM MSM 的。
+		 * 走 **mainline DRM MSM 的 adreno 路径**，不是 KGSL。
 		 *
-		 * 实测（run b4750186 的 dmesg，内核已跑到 73 秒）：
-		 * Android second stage 起来了，servicemanager / apexd /
-		 * keymaster 都正常，但 SurfaceFlinger 在 48 秒崩在
-		 *     SkiaGLRenderEngine::chooseEglConfig __android_log_assert
-		 * 之后 servicemanager 一直刷
-		 *     "SurfaceFlingerAIDL could not be found"
-		 * 根因是 **GPU 从未 probe**。
+		 * ## 为什么改回 DRM adreno
 		 *
-		 * 整份日志里 GPU 只有一行痕迹：
-		 *     adreno 1c00000.gpu: Adding to iommu group 0
-		 * 那一行是 iommu 核心打的，不是 KGSL。
+		 * 之前我把它改成了 KGSL 格式（compatible = "qcom,kgsl-3d0"），
+		 * 理由是"当时 adreno probe 失败"。但那个判断是错的：
+		 * ACK 6.12 树里 **a5xx 驱动是完整的**（3023 行，含
+		 * a5xx_gpu.c / a5xx_power.c / a5xx_preempt.c / a5xx_debugfs.c
+		 * / a5xx_catalog.c），而且 drivers/gpu/drm/msm/Makefile:18-21
+		 * 早就把它们编进去了。a5xx_gpu_init() 也在 adreno_gpu.h 里
+		 * 有声明。框架层从来没缺，是我当初 probe 失败就换了方向，
+		 * 没回头查真正原因。
 		 *
-		 * 因为 KGSL 的 of_match_table 只认：
-		 *     { .compatible = "qcom,kgsl-3d0", .data = &device_3d0 }
-		 * 而原来写的是 mainline 的
-		 *     compatible = "qcom,adreno-506.0", "qcom,adreno"
-		 * 两个都不匹配 → adreno_probe 根本没被调用 → 静默无日志。
+		 * 用 DRM adreno 的好处：
+		 *   · 与显示栈（MDP5）同一个 DRM 设备，共享 IOMMU/内存管理
+		 *   · 不需要 KGSL 那 47 处 4.19→6.12 的 API 差异
+		 *   · a5xx 是上游维护的代码，比 vendor KGSL 可靠
 		 *
-		 * 这里按 4.9 CAF 的 msm8953-gpu.dtsi 改写：
-		 *   compatible   "qcom,kgsl-3d0", "qcom,kgsl-3d"
-		 *   label        kgsl-3d0
-		 *   clock-names  必须带 _clk 后缀（KGSL kgsl_pwrctrl.c 的
-		 *                clocks[] 表里写死了 "core_clk" "iface_clk"
-		 *                "mem_iface_clk" "alt_mem_iface_clk"
-		 *                "rbbmtimer_clk" "alwayson_clk"）
-		 *   qcom,chipid  0x05000600（A506）
-		 *   qcom,gpu-pwrlevels  8 档，照抄 4.9
+		 * ## 关键细节（读代码 + 实测得来，不是猜的）
 		 *
-		 * 与 mainline 写法的冲突：
-		 *   · 去掉 operating-points-v2 —— KGSL 不读 opp，读 qcom,gpu-pwrlevels
-		 *   · 去掉 power-domains —— KGSL 自己管 GDSC
-		 *   · 去掉 zap-shader —— 本仓库 subsystem_restart.h 是 stub
-		 *     （返回 -ENODEV），留着会让 a5xx_microcode_load() 直接
-		 *     返回 -ENODEV 导致 probe 失败。A506 非 secure 模式不需要它。
+		 * 1) clock-names 必须用**不带 _clk 后缀**的名字（"core" "iface" …），
+		 *    因为 a5xx_gpu.c 的 a5xx_clk[] 表里就是这些名字。
+		 *    （KGSL 要求 "core_clk" 后缀，两套不同，别混。）
+		 *
+		 * 2) iommus 直接绑真正的 IOMMU provider（gpu_iommu，
+		 *    qcom,msm-iommu-v2，有 #iommu-cells），
+		 *    不能绑 gfx3d_user —— 那只是 KGSL 的 cb 描述节点，
+		 *    本身不是 provider（实测报
+		 *    "could not get #iommu-cells for .../gfx3d_user"）。
+		 *
+		 * 3) 用 mainline 的 power-domains（gcc OXILI_GX_GDSC），
+		 *    不用 4.9 的 vddcx-supply。
+		 *
+		 * 4) **故意不提供 zap-shader 子节点** —— 见节点内的说明。
+		 *
+		 * 5) GPU OPP 表用 rpmpd 的 required-opps 联动电压，
+		 *    这是 mainline 的标准做法（KGSL 时代是 qcom,gpu-pwrlevels）。
 		 */
-		gpu: kgsl-3d0@1c00000 {
-			label = "kgsl-3d0";
-			compatible = "qcom,kgsl-3d0", "qcom,kgsl-3d";
-			status = "okay";
+		gpu: gpu@1c00000 {
+			compatible = "qcom,adreno-506.0", "qcom,adreno";
 			reg = <0x01c00000 0x40000>;
 			reg-names = "kgsl_3d0_reg_memory";
 			interrupts = <GIC_SPI 33 IRQ_TYPE_LEVEL_HIGH>;
-			interrupt-names = "kgsl_3d0_irq";
-
-			qcom,id = <0>;
-			qcom,chipid = <0x05000600>;
-			qcom,initial-pwrlevel = <4>;
-
-			qcom,idle-timeout = <80>;
-			qcom,deep-nap-timeout = <100>;
-			qcom,strtstp-sleepwake;
-
-			qcom,highest-bank-bit = <14>;
-			qcom,snapshot-size = <0x200000>;
 
 			clocks = <&gcc GCC_OXILI_GFX3D_CLK>,
 				 <&gcc GCC_OXILI_AHB_CLK>,
@@ -1132,93 +1119,48 @@
 				 <&gcc GCC_BIMC_GPU_CLK>,
 				 <&gcc GCC_OXILI_TIMER_CLK>,
 				 <&gcc GCC_OXILI_AON_CLK>;
-			clock-names = "core_clk",
-				      "iface_clk",
-				      "mem_iface_clk",
-				      "alt_mem_iface_clk",
-				      "rbbmtimer_clk",
-				      "alwayson_clk";
+			clock-names = "core",
+				      "iface",
+				      "mem_iface",
+				      "alt_mem_iface",
+				      "rbbmtimer",
+				      "alwayson";
+			power-domains = <&gcc OXILI_GX_GDSC>;
 
-			/*
-			 * GPU 自身也必须直接绑到真正的 IOMMU provider（gpu_iommu），
-			 * **不能**写 <&gfx3d_user> ——
-			 *
-			 * 实测报错（run 2abb9b3c 的 dmesg）：
-			 *   OF: /soc/kgsl-3d0@1c00000: could not get #iommu-cells
-			 *       for /soc/kgsl-smmu@1c40000/gfx3d_user
-			 *
-			 * 因为 gfx3d_user 只是 KGSL 的 cb 描述节点，本身不是
-			 * IOMMU provider（没有 #iommu-cells）。of_iommu_configure()
-			 * 解析 iommus 时要求 phandle 目标的节点是 provider。
-			 *
-			 * 真正承载 IOMMU 能力的是 gpu_iommu（qcom,msm-iommu-v2），
-			 * 它有 #iommu-cells = <1>。KGSL 的 cb 子节点也是靠各自的
-			 * iommus = <&gpu_iommu N> 拿到 IOMMU 的。
-			 */
 			iommus = <&gpu_iommu 0>;
-
-			/*
-			 * msm-bus 带宽表 —— **probe 必需**
-			 *
-			 * kgsl_get_bus_scale_table() 找不到 "qcom,gpu-bus-table(-ddr3)"
-			 * 节点时会退回 msm_bus_cl_get_pdata(pdev)，后者从**本节点**解析
-			 * qcom,msm-bus,vectors-KBps。两者都拿不到 pdata 就返回 NULL，
-			 * 于是 msm_bus_scale_register_client(NULL) 返回 0 →
-			 * kgsl_pwrctrl 判 `pwr->pcl == 0` → -EINVAL → **probe 失败**。
-			 *
-			 * 所以必须在这里给全（取值照抄 4.9 的 msm8953-gpu.dtsi）：
-			 *   26 = msm_bus 的 MASTER_GRAPHICS_3D port
-			 *   512 = SLAVE_EBI1（DDR）
-			 * num-cases 11 档与 pwrlevel 的 bus-freq/bus-min/bus-max 索引对应
-			 */
-			qcom,msm-bus,name = "grp3d";
-			qcom,msm-bus,num-cases = <11>;
-			qcom,msm-bus,num-paths = <1>;
-			qcom,msm-bus,vectors-KBps =
-				<26 512 0 0>,
-				<26 512 0 1689600>,
-				<26 512 0 2227200>,
-				<26 512 0 3072000>,
-				<26 512 0 3379200>,
-				<26 512 0 4454400>,
-				<26 512 0 5376000>,
-				<26 512 0 6144000>,
-				<26 512 0 6451200>,
-				<26 512 0 6758400>,
-				<26 512 0 7449600>;
-
-			/*
-			 * GDSC 走 mainline 的 power-domains（指标引 gcc 的 OXILI_CX_GDSC），
-			 * 不用 4.9 的 vddcx-supply = <&gdsc_oxili_cx> —— 6.12 没有那个 label。
-			 */
-			power-domains = <&gcc OXILI_CX_GDSC>;
-
-			/* CPU latency 参数（照抄 4.9，KGSL 用它做 pm-qos 投票） */
-			qcom,pm-qos-active-latency = <213>;
-			qcom,pm-qos-wakeup-latency = <213>;
-
-			/*
-			 * 故意不写 regulator-names，让 KGSL 走 get_legacy_regulators()：
-			 *   · 有 regulator-names → of_property_for_each_string 逐个
-			 *     devm_regulator_get，任何一个拿不到就 probe 失败
-			 *   · 没有 → 只取 "vdd"，且 vddcx-supply 属性不存在时
-			 *     根本不会去取 vddcx
-			 * 本机 GPU 供电由 RPM 侧固定配置，没有独立 regulator 节点
-			 * 能对上，走 legacy 路径更稳（拿不到会退回 dummy，
-			 * 只影响电压调节粒度，不影响 probe）。
-			 */
+			operating-points-v2 = <&gpu_opp_table>;
 
 			#cooling-cells = <2>;
 
+			status = "okay";
+
 			/*
-			 * gpu_opp_table 保留给 mainline DRM MSM 路径和其他机型
-			 * （sdm450.dtsi 会 &gpu_opp_table 覆盖它，删掉会导致
-			 *  sdm450-lenovo-tbx605f / motorola-ali 的 DTB 编译失败）。
+			 * 故意**不提供** zap-shader 子节点。
 			 *
-			 * KGSL 自己**不读**这个表 —— 它读下面的 qcom,gpu-pwrlevels。
-			 * 两套并存：KGSL probe 时只取 qcom,gpu-pwrlevels，
-			 * opp 表由 DRM（如果将来启用）或 rpmpd 使用。
+			 * adreno_gpu.c 的逻辑（zap_shader_load_mdt）：
+			 *     np = of_get_child_by_name(dev->of_node, "zap-shader");
+			 *     if (!of_device_is_available(np)) {
+			 *             zap_available = false;
+			 *             return -ENODEV;
+			 *     }
+			 *
+			 * 而 a5xx_hw_init() 收到 -ENODEV 时走 fallback：
+			 *     dev_warn_once("Zap shader not enabled - using SECVID_TRUST_CNTL instead");
+			 *     gpu_write(REG_A5XX_RBBM_SECVID_TRUST_CNTL, 0x0);
+			 * 然后正常继续 —— **probe 不会失败**。
+			 *
+			 * 反过来，如果给了 zap-shader 节点：
+			 *   · memory-region 解析成功 → 去 request_firmware("a506_zap.mdt")
+			 *   · 本机 /lib/firmware 里没有这个 MDT（Android 的
+			 *     /vendor/firmware_mnt 也只带自己那份签名固件）
+			 *   · 返回 -ENOENT（不是 -ENODEV！）→ a5xx 的 else 分支
+			 *     直接 return ret → **probe 失败、整个 DRM 起不来**
+			 *
+			 * A506 是 2016 年的非 secure 老 GPU，本来就不需要 zap shader
+			 * （4.9 CAF 的 msm8953-gpu.dtsi 也没给它配 zap）。
+			 * 所以这里省略 zap-shader 节点是**正确**做法，不是偷懒。
 			 */
+
 			gpu_opp_table: opp-table {
 				compatible = "operating-points-v2";
 
@@ -1249,7 +1191,7 @@
 				opp-400000000 {
 					opp-hz = /bits/ 64 <400000000>;
 					opp-supported-hw = <0xff>;
-					required-opps = <&rpmpd_opp_svs_plus>;
+					required-opps = <&rpmpd_opp_svs>;
 				};
 
 				opp-510000000 {
@@ -1261,80 +1203,13 @@
 				opp-560000000 {
 					opp-hz = /bits/ 64 <560000000>;
 					opp-supported-hw = <0xff>;
-					required-opps = <&rpmpd_opp_nom_plus>;
+					required-opps = <&rpmpd_opp_turbo>;
 				};
 
-				/*
-				 * This opp is only available on msm8953 and
-				 * sdm632, the max for sdm450 is 600MHz.
-				 */
 				opp-650000000 {
 					opp-hz = /bits/ 64 <650000000>;
 					opp-supported-hw = <0xff>;
 					required-opps = <&rpmpd_opp_turbo>;
-				};
-			};
-
-			qcom,gpu-pwrlevels {
-				#address-cells = <1>;
-				#size-cells = <0>;
-				compatible = "qcom,gpu-pwrlevels";
-
-				qcom,gpu-pwrlevel@0 {
-					reg = <0>;
-					qcom,gpu-freq = <650000000>;
-					qcom,bus-freq = <10>;
-					qcom,bus-min = <10>;
-					qcom,bus-max = <10>;
-				};
-				qcom,gpu-pwrlevel@1 {
-					reg = <1>;
-					qcom,gpu-freq = <560000000>;
-					qcom,bus-freq = <10>;
-					qcom,bus-min = <8>;
-					qcom,bus-max = <10>;
-				};
-				qcom,gpu-pwrlevel@2 {
-					reg = <2>;
-					qcom,gpu-freq = <510000000>;
-					qcom,bus-freq = <9>;
-					qcom,bus-min = <6>;
-					qcom,bus-max = <10>;
-				};
-				qcom,gpu-pwrlevel@3 {
-					reg = <3>;
-					qcom,gpu-freq = <400000000>;
-					qcom,bus-freq = <7>;
-					qcom,bus-min = <5>;
-					qcom,bus-max = <8>;
-				};
-				qcom,gpu-pwrlevel@4 {
-					reg = <4>;
-					qcom,gpu-freq = <320000000>;
-					qcom,bus-freq = <4>;
-					qcom,bus-min = <2>;
-					qcom,bus-max = <6>;
-				};
-				qcom,gpu-pwrlevel@5 {
-					reg = <5>;
-					qcom,gpu-freq = <216000000>;
-					qcom,bus-freq = <1>;
-					qcom,bus-min = <1>;
-					qcom,bus-max = <4>;
-				};
-				qcom,gpu-pwrlevel@6 {
-					reg = <6>;
-					qcom,gpu-freq = <133300000>;
-					qcom,bus-freq = <1>;
-					qcom,bus-min = <1>;
-					qcom,bus-max = <4>;
-				};
-				qcom,gpu-pwrlevel@7 {
-					reg = <7>;
-					qcom,gpu-freq = <19200000>;
-					qcom,bus-freq = <0>;
-					qcom,bus-min = <0>;
-					qcom,bus-max = <0>;
 				};
 			};
 		};
