@@ -275,7 +275,7 @@ fg@4000       qcom,qpnp-fg
 | 音频 CPU 侧 | ✅ | 上游 `q6afe/q6asm/q6adm` |
 | 耳机 DAC | ✅ | `ak4376` |
 | OPPO 设备信息 | ✅ | `drivers/soc/oppo/` |
-| GPU (KGSL) | ❌ **WIP** | 源码在树里，47 处 API 差异待清，**配置关闭** |
+| GPU (Adreno 506) | 🔄 已接 DRM adreno | a5xx 驱动本就在 6.12 树里（3023 行），已改走路；**待真机验证** |
 | 外放 TFA98XX | ❌ | 2.5 万行独立栈，未开始 |
 | 相机 | ❌ | 未开始 |
 
@@ -609,7 +609,7 @@ dmesg | grep -iE "smbchg|qpnp"            # 充电
 |---|---|
 | SD 卡电源脚 | 4.19 有 `sdcard_vdd_enable`（gpio 64），mainline 的 `sdhci-msm` 无对应 DT 属性，可能要改驱动 |
 | 触摸 S3320 | 可能不走标准 RMI4 协议，是最大未知数 |
-| GPU (KGSL) | 47 处 API 差异未清，配置关闭中 |
+| GPU (Adreno 506) | 已接 DRM adreno（a5xx），待真机验证 |
 | 外放 TFA98XX | 2.5 万行独立栈，未开始 |
 | 相机 | 未开始 |
 
@@ -622,7 +622,7 @@ ACK 给了 Android **内核接口**，主线给了 MSM8953 **平台**，
 
 | 子系统 | 作用 | 缺了会怎样 |
 |---|---|---|
-| KGSL (`drivers/gpu/msm`) | 高通 GPU 驱动，gralloc/HWC 依赖 | 无硬件加速，SurfaceFlinger 起不来 |
+| GPU | **已改用 DRM adreno（a5xx）** —— ACK 6.12 本来就有完整 a5xx 驱动（3023 行），不需要 KGSL |
 | msm_ion (`ION_IOC_*`) | 高通 ION 内存分配 | 图形/相机 buffer 无法分配 |
 | CAMSS/CCI + OPPO 私有上电 | 摄像头 | 相机不可用 |
 | Q6 音频 (apr/q6asm + cal) | 音频路由 | 无声 |
@@ -630,18 +630,30 @@ ACK 给了 Android **内核接口**，主线给了 MSM8953 **平台**，
 | MDSS/DSI + OPPO 面板 | 显示控制器 | 只有 bootloader 留下的静态 framebuffer |
 | Synaptics s3320 / fpc1020 | 触摸、指纹 | 输入不可用 |
 
-**建议的移植顺序**（每步都能单独验证）：
+**移植状态**（原来的"建议顺序"已全部做完，这里改成实际状态）：
 
-1. **KGSL** —— 最关键，Android 图形栈的地基。4.19 的 `drivers/gpu/msm`
-   需要大改（`mmap_lock`、`dma_buf` API、`file_operations`），但结构还算接近
-2. **msm_ion → dmabuf heaps 桥接** —— 让 HAL 的 ION ioctl 落到主线 dmabuf heaps
-3. **MDSS/DSI** —— 参考 mainline 已有的 `msm` DRM 驱动，再叠加 OPPO 面板初始化序列
-   （`panel-oppo-ea8064` / `panel-oppo-jdi-r63452` 两个驱动已在
-   `oppo-r9s-mainline` 仓库写好，可以直接搬过来用）
-4. **qpnp 充电/电量计**
-5. **Q6 音频**
-6. **触摸/指纹**
-7. **相机**
+1. ~~KGSL~~ → **改用 DRM adreno（a5xx）**
+   ACK 6.12 树里 a5xx 驱动本来就是完整的（`a5xx_gpu.c` 1809 行 +
+   power/preempt/debugfs/catalog 共 3023 行，`Makefile:18-21` 早就编进去，
+   `adreno_gpu.h:670` 有声明）。不需要移植 KGSL，也不需要清那 47 处
+   `kgsl_iommu.c` 的 QCOM 私有 iommu 属性。
+   GPU 节点已改为 `compatible = "qcom,adreno-506.0"`，
+   KGSL 显式关闭，`kgsl_smmu` 包装节点已删除（它会和 GPU 抢
+   `gpu_iommu` 的 context 0）。
+   **待真机验证** probe 是否成功。
+
+2. **MDSS/DSI** ✅ 已完成（MDP5 + 两个面板驱动 + LM3697 背光）
+
+3. **qpnp 充电/电量计** ✅ 已完成（含 OPPO 外挂 BQ27541 + VOOC）
+
+4. **Q6 音频** ✅ CPU 侧完成（AK4376 已接，TFA98XX 外放未做）
+
+5. **触摸/指纹** ✅ 已完成（RMI4 + Synaptics，fpc1020 指纹）
+
+6. **相机** ❌ 未做（961 个文件的 vendor 栈）
+
+7. **msm_ion → dmabuf heaps 桥接** ❌ 未做 —— 这是跑 Android 用户态的
+   真正障碍，HAL 用 ION ioctl，6.12 只有 dma-buf heaps
 
 ---
 
