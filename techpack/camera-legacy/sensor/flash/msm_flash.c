@@ -340,10 +340,24 @@ static ssize_t qcom_flash_proc_write(struct file *file,
 		return -EINVAL;
 	}
 
-	qcom_flash_torch_state = val ? 1 : 0;
-
-	/* 非 0 一律给最亮，避免 HAL 传 1 时电流档为 0 反而看不到灯 */
-	qcom_flash_led_set(val ? 1 : 0);
+	/*
+	 * The vendor HAL writes 5 and 6 while opening/closing a camera;
+	 * neither is an LED-on request.  Its torch sequence is 5, 1 (on)
+	 * and 0, 6 (off).  Treating every nonzero write as full brightness
+	 * turned the torch on during ordinary camera preview and again after
+	 * the HAL had written 0.  Preserve the last real torch state across
+	 * these session markers.
+	 */
+	if (val == 0) {
+		qcom_flash_torch_state = 0;
+		qcom_flash_led_set(0);
+	} else if (val == 1 || val >= 100) {
+		qcom_flash_torch_state = 1;
+		qcom_flash_led_set(1);
+	} else if (val != 5 && val != 6) {
+		pr_warn_ratelimited("%s: ignoring unknown HAL torch value %ld\n",
+				    __func__, val);
+	}
 
 	return orig;
 }
