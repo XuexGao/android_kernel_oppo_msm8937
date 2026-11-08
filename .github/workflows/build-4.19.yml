@@ -516,7 +516,7 @@ jobs:
       BUILD_DATE: ${{ needs.setup.outputs.build_date }}
       TARGETS_JSON: ${{ needs.setup.outputs.targets_json }}
       BRANCH: ${{ inputs.build_ref || github.ref_name }}
-      OS_SUPPORT: 'LineageOS 22.1 (Android 15)'
+      OS_SUPPORT: 'LineageOS 22.1'
       ANDROID_SUPPORT: '15'
       # 日期式标题：与 4.9 工作流保持一致的风格。
       # ⚠️ tag 前缀必须与 4.9 的 BakaSU_<date> 区分开：4.9 的 release-action 开了
@@ -582,9 +582,13 @@ jobs:
           # base 是冒烟目标，不产出机型 zip，正文里不列
           devices = [t for t in targets if t.get("device_names", "").strip()]
 
-          def short(t):
-              """把矩阵 target 名（R9s-bakasu / A57-bakasu）还原成机型名。"""
+          def base_name(t):
+              """矩阵里的机型基名：R9s-bakasu -> R9s。"""
               return re.sub(r"-bakasu$", "", t["target"])
+
+          def zip_name(t):
+              """Release 资产里实际的文件名（保留 -bakasu 以区分变体）。"""
+              return f"v419_{t['target']}_{date}.zip"
 
           susfs_num = susfs.lstrip("v") if susfs != "unknown" else susfs
 
@@ -617,12 +621,14 @@ jobs:
           lines.append("| 机型 | 下载 | 平台 | 内核版本 |")
           lines.append("|---|---|---|---|")
           for d in devices:
-              name = short(d) if is_bakasu else d["target"]
-              lines.append(f"| OPPO {d['label']} | `v419_{d['target']}_{date}.zip` | {d['soc']} / {d['snapdragon']} | {kv} |")
+              label = re.sub(r"\s*\(.*(BakaSU|root).*\)$", "", d["label"]).strip()
+              lines.append(f"| OPPO {label} | `{zip_name(d)}` | {d['soc']} / {d['snapdragon']} | {kv} |")
           lines.append("")
           lines.append("### 共同信息")
           lines.append("")
-          dev_names = " / ".join(d["label"] for d in devices)
+          dev_names = " / ".join(
+              re.sub(r"\s*\(.*(BakaSU|root).*\)$", "", d["label"]).strip() for d in devices
+          )
           if dev_names:
               lines.append(f"- **设备**: OPPO {dev_names}")
           lines.append(f"- **系统**: {os_support} (Android {android})")
