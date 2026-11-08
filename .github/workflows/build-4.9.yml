@@ -708,14 +708,13 @@ jobs:
           fi
           echo "KV_FULL=${KV_FULL} | SUSFS_VERSION=${SUSFS_VERSION} | KSU_VERSION=${KSU_VERSION}"
 
-          # ---- Release 标题：SUSFS 版本取自源码，标题不写死 ----
-          # 形如 "4.9 Kernel BakaSU + SUSFS 2.3.0"（去掉 v 前缀，不加括号）
-          SUSFS_NUM="${SUSFS_VERSION#v}"
+          # ---- Release 标题：日期式，与 4.19 工作流风格统一 ----
+          # 形如 "4.9 Kernel BakaSU 20261108" / "4.9 Kernel SukiSU 20261108"
           # 标题按实际构建的分支区分（一个 action 覆盖 3 个 4.9 分支）
           BRANCH_USED="${{ inputs.build_ref }}"
           case "${BRANCH_USED}" in
-            sukisu-susfs-bpf)  RELEASE_TITLE="4.9 Kernel SukiSU + SUSFS ${SUSFS_NUM}" ;;
-            *)                 RELEASE_TITLE="4.9 Kernel BakaSU + SUSFS ${SUSFS_NUM}" ;;
+            sukisu-susfs-bpf)  RELEASE_TITLE="4.9 Kernel SukiSU ${BUILD_DATE}" ;;
+            *)                 RELEASE_TITLE="4.9 Kernel BakaSU ${BUILD_DATE}" ;;
           esac
           echo "RELEASE_TITLE=${RELEASE_TITLE}"
           echo "RELEASE_TITLE=${RELEASE_TITLE}" >> "$GITHUB_ENV"

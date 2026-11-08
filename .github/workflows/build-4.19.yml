@@ -400,11 +400,20 @@ jobs:
           KV="$(grep -E '^(VERSION|PATCHLEVEL|SUBLEVEL) =' Makefile | awk '{print $3}' | paste -sd.)"
           KV_FULL="${KV}$(grep -E '^EXTRAVERSION' Makefile | awk '{print $3}')"
           RELEASE="$(cat out/include/config/kernel.release 2>/dev/null || echo unknown)"
-          echo "内核版本: ${KV_FULL} (release=${RELEASE})"
+          SUSFS_VERSION="$(sed -n 's/^#define SUSFS_VERSION "\{0,1\}\(v[0-9.]*\)"\{0,1\}/\1/p' include/linux/susfs.h 2>/dev/null | head -1)"
+          [ -n "${SUSFS_VERSION}" ] || SUSFS_VERSION="unknown"
+          KSU_VERSION="$(grep -E '^KSU_VERSION[[:space:]]*:=' KernelSU/kernel/Kbuild 2>/dev/null | grep -oE '[0-9]+' | head -1)"
+          [ -n "${KSU_VERSION}" ] || KSU_VERSION="unknown"
+          echo "内核版本: ${KV_FULL} (release=${RELEASE}) | SUSFS: ${SUSFS_VERSION} | BakaSU: ${KSU_VERSION}"
           {
             echo "KV_FULL=${KV_FULL}"
             echo "KERNEL_RELEASE=${RELEASE}"
+            echo "SUSFS_VERSION=${SUSFS_VERSION}"
+            echo "KSU_VERSION=${KSU_VERSION}"
             echo "TARGET=${TARGET}"
+            echo "SOC=${SOC}"
+            echo "SNAPDRAGON=${SNAPDRAGON}"
+            echo "DEVICE_NAMES=${DEVICE_NAMES}"
           } > "${GITHUB_WORKSPACE}/${TARGET}-meta.env"
 
       - name: 打包 AnyKernel3 刷机包
@@ -505,31 +514,233 @@ jobs:
     runs-on: ubuntu-latest
     env:
       BUILD_DATE: ${{ needs.setup.outputs.build_date }}
-      # 标题按分支区分：同一个 workflow 被两个分支共用，
-      # 纯净版和 BakaSU 版必须能从 Release 标题上一眼分清。
+      TARGETS_JSON: ${{ needs.setup.outputs.targets_json }}
+      BRANCH: ${{ inputs.build_ref || github.ref_name }}
+      OS_SUPPORT: 'LineageOS 22.1 (Android 15)'
+      ANDROID_SUPPORT: '15'
+      # 日期式标题：与 4.9 工作流保持一致的风格。
+      # ⚠️ tag 前缀必须与 4.9 的 BakaSU_<date> 区分开：4.9 的 release-action 开了
+      #    allowUpdates + removeArtifacts，若这里也用同日期的 BakaSU_<date>，
+      #    会把 4.9 的 Release 连同其产物一起覆盖掉。故 4.19 用 BakaSU419_ 前缀。
       RELEASE_TITLE: >-
         ${{ (inputs.build_ref || github.ref_name) == 'bakasu-k4.19'
             && format('4.19 Kernel BakaSU {0}', needs.setup.outputs.build_date)
             || format('4.19 Kernel {0}', needs.setup.outputs.build_date) }}
+      TAG_NAME: >-
+        ${{ (inputs.build_ref || github.ref_name) == 'bakasu-k4.19'
+            && format('BakaSU419_{0}', needs.setup.outputs.build_date)
+            || format('Clean419_{0}', needs.setup.outputs.build_date) }}
     steps:
-      - name: 下载各目标产物
+      - name: 检出源码（用于生成 Changes）
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.build_ref || github.ref_name }}
+          fetch-depth: 50
+
+      - name: 下载各机型产物
         uses: actions/download-artifact@v4
         with:
           path: dist
 
-      - name: 列出产物
-        run: find dist -type f | sort
+      - name: 生成 Release 说明
+        run: |
+          set -euo pipefail
 
-      - name: 发布 Release
-        uses: softprops/action-gh-release@v2
+          # ---- 内核 / SUSFS / BakaSU 版本（取任一机型 meta）----
+          META="$(ls dist/*/*-meta.env 2>/dev/null | head -1)"
+          if [ -z "${META}" ]; then
+            echo "::error::未找到构建元信息 meta.env"; exit 1
+          fi
+          KV_FULL="$(grep '^KV_FULL=' "${META}" | cut -d= -f2-)"
+          SUSFS_VERSION="$(grep '^SUSFS_VERSION=' "${META}" | cut -d= -f2- || true)"
+          [ -n "${SUSFS_VERSION}" ] || SUSFS_VERSION="unknown"
+          KSU_VERSION="$(grep '^KSU_VERSION=' "${META}" | cut -d= -f2- || true)"
+          [ -n "${KSU_VERSION}" ] || KSU_VERSION="unknown"
+          echo "KV_FULL=${KV_FULL} | SUSFS=${SUSFS_VERSION} | BakaSU=${KSU_VERSION}"
+
+          git log -10 --pretty=format:'%s (%h)' > "${GITHUB_WORKSPACE}/changes.txt"
+
+          export KV_FULL SUSFS_VERSION KSU_VERSION BUILD_DATE BRANCH
+          export OS_SUPPORT ANDROID_SUPPORT TARGETS_JSON
+          export IS_BAKASU="${{ (inputs.build_ref || github.ref_name) == 'bakasu-k4.19' && 'true' || 'false' }}"
+          python3 - <<'PY'
+          import json, os, re
+
+          MANAGER_URL = "https://github.com/Baka-SU/BakaSU/actions/workflows/build-manager.yml?query=branch%3Amain"
+
+          def env(k):
+              return os.environ.get(k, "")
+
+          date = env("BUILD_DATE")
+          ksu = env("KSU_VERSION"); susfs = env("SUSFS_VERSION")
+          kv = env("KV_FULL"); br = env("BRANCH")
+          os_support = env("OS_SUPPORT"); android = env("ANDROID_SUPPORT")
+          is_bakasu = env("IS_BAKASU") == "true"
+          changes = open(os.path.join(env("GITHUB_WORKSPACE"), "changes.txt")).read()
+
+          targets = json.loads(env("TARGETS_JSON") or "[]")
+          # base 是冒烟目标，不产出机型 zip，正文里不列
+          devices = [t for t in targets if t.get("device_names", "").strip()]
+
+          def short(t):
+              """把矩阵 target 名（R9s-bakasu / A57-bakasu）还原成机型名。"""
+              return re.sub(r"-bakasu$", "", t["target"])
+
+          susfs_num = susfs.lstrip("v") if susfs != "unknown" else susfs
+
+          lines = []
+          if is_bakasu:
+              lines.append("> OPPO MSM8937 / MSM8953 系列的 **4.19** 内核（BakaSU + SUSFS）。")
+          else:
+              lines.append("> OPPO MSM8937 / MSM8953 系列的 **4.19** 内核（纯净版，无 root）。")
+          lines.append(">")
+          lines.append("> 与 4.9 系列并行维护：4.9 分支面向 LineageOS 21 / 22.0 / 22.1，")
+          lines.append("> 本 4.19 分支为更新的内核基线，面向 LineageOS 22.1。")
+          lines.append("")
+          lines.append("### 下载选择")
+          lines.append("")
+          lines.append("| 内核 | 特性 | 适用场景 | 管理器下载 |")
+          lines.append("|---|---|---|---|")
+          if is_bakasu:
+              lines.append(f"| **BakaSU + SUSFS** | BakaSU (main) / KSU_VERSION {ksu} + SUSFS {susfs} | 需要 SUSFS 隐藏功能、sus mount、sus path 等 | [BakaSU Manager]({MANAGER_URL}) |")
+          else:
+              lines.append(f"| **纯净内核** | 无 root / 无 KernelSU | 不需要 root，或想自行刷 Magisk | — |")
+          lines.append("")
+          lines.append("提供格式：")
+          lines.append("")
+          lines.append("- **.zip** — AnyKernel3 刷入包，通过 recovery (TWRP) 刷入")
+          if is_bakasu:
+              lines.append("- **.apk** — BakaSU 管理器（内核版本码与之一致），可选安装")
+          lines.append("")
+          lines.append("### 本次构建")
+          lines.append("")
+          lines.append("| 机型 | 下载 | 平台 | 内核版本 |")
+          lines.append("|---|---|---|---|")
+          for d in devices:
+              name = short(d) if is_bakasu else d["target"]
+              lines.append(f"| OPPO {d['label']} | `v419_{d['target']}_{date}.zip` | {d['soc']} / {d['snapdragon']} | {kv} |")
+          lines.append("")
+          lines.append("### 共同信息")
+          lines.append("")
+          dev_names = " / ".join(d["label"] for d in devices)
+          if dev_names:
+              lines.append(f"- **设备**: OPPO {dev_names}")
+          lines.append(f"- **系统**: {os_support} (Android {android})")
+          lines.append(f"- **内核版本**: {kv} (Non-GKI)")
+          lines.append("- **编译器**: ZyCromerZ Clang 13.0.1 + GCC (aarch64/arm)")
+          lines.append(f"- **分支**: {br}")
+          lines.append("")
+          if is_bakasu:
+              lines.append(f"### BakaSU (含 SUSFS {susfs_num})")
+              lines.append("")
+              lines.append("- root 方案: BakaSU（main 分支最新源码）")
+              lines.append(f"- KSU_VERSION (内核版本码): {ksu}，与所选管理器 APK 的 versionCode 一致")
+              lines.append("- hook 模式: SUSFS Inline Hook (`CONFIG_KSU_SUSFS=y`)")
+              lines.append(f"- SUSFS {susfs} (内核侧，保留)")
+              lines.append(f"- 管理器: 本页资产里的 `BakaSU_{ksu}_{date}.apk`（与内核 versionCode 一致）")
+              lines.append(f"  - 若本页没有该 apk，可从 [BakaSU Build Manager（main 分支）]({MANAGER_URL}) 的 Artifacts 取 `Manager-release`，")
+              lines.append(f"    解压后选 versionCode 为 **{ksu}** 的 `*universal-release.apk`；对不上时 Manager 会提示版本不匹配")
+              lines.append("")
+          lines.append("### 刷入方法")
+          lines.append("")
+          lines.append("#### 通过 Recovery (TWRP)")
+          lines.append("")
+          lines.append("1. 下载对应机型的 `v419_*.zip`")
+          if is_bakasu:
+              lines.append("2. 下载并安装 BakaSU Manager APK（见本页资产）")
+          lines.append("3. 重启到 recovery (TWRP)")
+          lines.append("4. 刷入对应机型的 zip")
+          lines.append("5. 重启")
+          if is_bakasu:
+              lines.append("6. 打开 Manager 验证驱动检测")
+          lines.append("")
+          lines.append("### Changes")
+          lines.append("")
+          lines.append(changes)
+          lines.append("")
+          lines.append("> 基于 [XuexGao/android_kernel_oppo_msm8937](https://github.com/XuexGao/android_kernel_oppo_msm8937) 自动构建")
+
+          with open(os.path.join(env("GITHUB_WORKSPACE"), "release-body.md"), "w") as f:
+              f.write("\n".join(lines) + "\n")
+          PY
+
+          echo "---- release-body.md ----"
+          cat "${GITHUB_WORKSPACE}/release-body.md"
+
+      # 下载与内核 KSU_VERSION 对齐的 BakaSU 管理器 APK（仅 bakasu 分支，尽力而为）。
+      # 与 4.9 工作流一致：从 BakaSU Build Manager 工作流的 Artifacts 取，
+      # 取不到只发 notice，绝不影响内核产物与发布。
+      - name: 下载 BakaSU 管理器 APK（尽力而为）
+        if: (inputs.build_ref || github.ref_name) == 'bakasu-k4.19'
+        env:
+          GH_TOKEN: ${{ secrets.BAKASU_TOKEN || secrets.GITHUB_TOKEN }}
+          HAS_PAT: ${{ secrets.BAKASU_TOKEN != '' }}
+        run: |
+          set -euo pipefail
+          META="$(ls dist/*/*-meta.env 2>/dev/null | head -1)"
+          APK_VER="$(grep '^KSU_VERSION=' "${META}" | cut -d= -f2- || echo 35257)"
+          OUT="${GITHUB_WORKSPACE}/BakaSU_${APK_VER}_${BUILD_DATE}.apk"
+          rm -rf /tmp/apk && mkdir -p /tmp/apk
+
+          RUN_ID="$(gh run list --repo Baka-SU/BakaSU \
+                      --workflow build-manager.yml --branch main \
+                      --status success --limit 1 \
+                      --json databaseId --jq '.[0].databaseId' 2>/dev/null || true)"
+          echo "Build Manager 最近成功运行: ${RUN_ID:-未找到}"
+
+          if [ -n "${RUN_ID}" ]; then
+            gh run download "${RUN_ID}" --repo Baka-SU/BakaSU \
+              --name Manager-release --dir /tmp/apk 2>/dev/null || true
+          fi
+
+          SRC="$(ls /tmp/apk/*universal-release.apk 2>/dev/null | head -1)"
+          if [ -n "${SRC}" ]; then
+            cp -v "${SRC}" "${OUT}"
+            echo "✅ 管理器 APK 已就绪: $(basename "${OUT}") ($(stat -c%s "${OUT}") bytes)"
+          elif [ "${HAS_PAT}" = "true" ]; then
+            echo "::warning::已配置 BAKASU_TOKEN 但仍未取到管理器 APK（上游可能没有成功的构建）"
+          else
+            echo "::notice::未附带管理器 APK，用户可从 BakaSU Build Manager 的 Artifacts 自行获取"
+          fi
+
+          ARTIFACTS="dist/**/v419_*.zip"
+          if [ -f "${OUT}" ]; then
+            ARTIFACTS="${ARTIFACTS},$(basename "${OUT}")"
+          fi
+          echo "ARTIFACTS=${ARTIFACTS}" >> "$GITHUB_ENV"
+          echo "发布资产: ${ARTIFACTS}"
+
+      - name: 对齐 tag 指向本次构建提交
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${TAG_NAME}"
+          SHA="${GITHUB_SHA}"
+          api="${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}"
+          if gh api "$api" --silent 2>/dev/null; then
+            CUR="$(gh api "$api" --jq '.object.sha')"
+            if [ "$CUR" = "$SHA" ]; then
+              echo "✅ tag ${TAG} 已指向本次提交 ${SHA:0:10}"
+            else
+              echo "⚠️ tag ${TAG} 原指向 ${CUR:0:10}，强制对齐到 ${SHA:0:10}"
+              gh api -X PATCH "$api" -f sha="$SHA" -F force=true --silent
+              echo "✅ tag ${TAG} 已对齐"
+            fi
+          else
+            echo "tag ${TAG} 尚不存在，交由 release-action 创建（commit=${SHA:0:10}）"
+          fi
+
+      - name: 发布到 GitHub Releases（合并全部机型 zip）
+        uses: ncipollo/release-action@v1
         with:
-          tag_name: >-
-            ${{ (inputs.build_ref || github.ref_name) == 'bakasu-k4.19'
-                && format('v419_bakasu_{0}', env.BUILD_DATE)
-                || format('v419_{0}', env.BUILD_DATE) }}
+          tag: ${{ env.TAG_NAME }}
           name: ${{ env.RELEASE_TITLE }}
-          body: |
-            > ⚠️ **实验分支（lineage-22.1-k4.19）**：4.9 → 4.19 移植过程中的构建产物，可能无法开机，仅供测试。
-          files: dist/**/v419_*.zip
-          fail_on_unmatched_files: false
-          draft: true
+          commit: ${{ github.sha }}
+          # 必须是小写字符串 "true"（action 内部用 latest === "true" 比较）
+          makeLatest: 'true'
+          bodyFile: release-body.md
+          artifacts: ${{ env.ARTIFACTS }}
+          allowUpdates: true
+          removeArtifacts: true
+          token: ${{ secrets.GITHUB_TOKEN }}
