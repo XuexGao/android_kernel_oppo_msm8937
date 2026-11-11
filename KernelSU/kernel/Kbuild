@@ -68,21 +68,26 @@ KSU_SRC := $(realpath $(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 # KernelSU/, so there is no .git: the $(error) would abort every build and the
 # lookups would fail.  All of it is removed and the version is pinned in-tree.
 #
-# Pinned to BakaSU main @ 516d3e87 (2026-10-31, the commit that also lifted the
-# "suspend susfs build" guard from tools/susfs_compat.mk):
-#   KSU_VERSION = 30000 + <commit count> + 700 = 30000 + 4557 + 700 = 35257
+# Pinned to BakaSU main @ 548d1dda (2026-11-09):
+#   KSU_VERSION = 30000 + <commit count> + 700 = 30000 + 4559 + 700 = 35259
+#
+# The bump from 516d3e87 is a pin refresh only: `git diff` over the upstream
+# kernel/ subtree is empty between the two commits (both have kernel tree
+# 082b0efc0b1653548f4998c1cea272e18a44fb6d); upstream's two newer commits are
+# manager-side (translations, card background alignment).  Latest tag is still
+# v4.2.0-rc3, which 548d1dda is past.
 $(info -- $(REPO_NAME): vendored source, using pinned version)
-$(info -- $(REPO_NAME): pinned to main @ 516d3e87 (KSU_VERSION 35257))
+$(info -- $(REPO_NAME): pinned to main @ 548d1dda (KSU_VERSION 35259))
 
 ifdef KBUILD_EXTMOD
 include $(KSU_SRC)/tools/ddk_compatible.mk
 endif
 
-KSU_LOCAL_VERSION := 4557
-KSU_VERSION := 35257
+KSU_LOCAL_VERSION := 4559
+KSU_VERSION := 35259
 
 KSU_TAG_NAME    := v4.2.0-rc3
-KSU_COMMIT_SHA  := 516d3e87
+KSU_COMMIT_SHA  := 548d1dda
 KSU_BRANCH_NAME := main
 
 # call subst to process placeholders
