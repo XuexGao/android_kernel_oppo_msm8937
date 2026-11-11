@@ -400,9 +400,16 @@ jobs:
           KV="$(grep -E '^(VERSION|PATCHLEVEL|SUBLEVEL) =' Makefile | awk '{print $3}' | paste -sd.)"
           KV_FULL="${KV}$(grep -E '^EXTRAVERSION' Makefile | awk '{print $3}')"
           RELEASE="$(cat out/include/config/kernel.release 2>/dev/null || echo unknown)"
-          SUSFS_VERSION="$(sed -n 's/^#define SUSFS_VERSION "\{0,1\}\(v[0-9.]*\)"\{0,1\}/\1/p' include/linux/susfs.h 2>/dev/null | head -1)"
+          # 纯净分支（lineage-22.1-k4.19）没有 KernelSU/ 与 susfs.h。
+          # 这里的 grep/sed 必须容忍文件不存在：本步骤是 set -euo pipefail，
+          # grep 找不到文件会返回非零，pipefail 把它当整条管道失败，
+          # 赋值失败后 set -e 直接退出（实测 exit code 2，编译本身是成功的）。
+          SUSFS_VERSION="$(sed -n 's/^#define SUSFS_VERSION "\{0,1\}\(v[0-9.]*\)"\{0,1\}/\1/p' include/linux/susfs.h 2>/dev/null | head -1 || true)"
           [ -n "${SUSFS_VERSION}" ] || SUSFS_VERSION="unknown"
-          KSU_VERSION="$(grep -E '^KSU_VERSION[[:space:]]*:=' KernelSU/kernel/Kbuild 2>/dev/null | grep -oE '[0-9]+' | head -1)"
+          KSU_VERSION=""
+          if [ -f KernelSU/kernel/Kbuild ]; then
+            KSU_VERSION="$(grep -E '^KSU_VERSION[[:space:]]*:=' KernelSU/kernel/Kbuild 2>/dev/null | grep -oE '[0-9]+' | head -1 || true)"
+          fi
           [ -n "${KSU_VERSION}" ] || KSU_VERSION="unknown"
           echo "内核版本: ${KV_FULL} (release=${RELEASE}) | SUSFS: ${SUSFS_VERSION} | BakaSU: ${KSU_VERSION}"
           {
