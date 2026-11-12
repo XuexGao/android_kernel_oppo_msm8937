@@ -246,4 +246,13 @@ config KSU_SUSFS_SUS_MAP
 
 endmenu
 
+
+config KSU_SUSFS_PRIORITY_UID_FILTER
+    bool "Enable to filter out priority uids for getpriority() syscall"
+    depends on KSU_SUSFS
+    default n
+    help
+        - v2.4.0 新增特性。需要配套 userspace（ksu_susfs 工具）下发
+          app_strings，本仓库不带该工具，故默认关闭。
+
 endmenu
