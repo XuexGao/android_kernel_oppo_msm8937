@@ -20,6 +20,14 @@
 
 #include <linux/uaccess.h>
 #include <asm/unistd.h>
+#ifdef CONFIG_KSU_SUSFS
+#include <linux/susfs_def.h>
+#endif
+
+#ifdef CONFIG_KSU
+extern int ksu_handle_stat(int *dfd, const char __user **filename_user,
+			   int *flags);
+#endif
 
 #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
 extern bool susfs_is_inode_sus_kstat(struct inode *inode, bool *out_is_fuse);
@@ -219,6 +227,17 @@ int vfs_statx(int dfd, const char __user *filename, int flags,
 	struct path path;
 	int error = -EINVAL;
 	unsigned int lookup_flags = LOOKUP_FOLLOW | LOOKUP_AUTOMOUNT;
+#ifdef CONFIG_KSU
+	/*
+	 * KernelSU：stat 系列查询拦截（隐藏特定路径的存在性）。
+	 * 放在 vfs_statx() 而不是 syscall 层，与本仓库 4.9 分支一致 ——
+	 * 这样 stat/lstat/newfstatat 所有入口都能覆盖到。
+	 * 上一版移植用整文件替换 SUSFS 参考版时把这段丢了，
+	 * BakaSU 的 inline_hook_check.mk 会因此报错。
+	 */
+	ksu_handle_stat(&dfd, &filename, &flags);
+#endif
+
 
 	if ((flags & ~(AT_SYMLINK_NOFOLLOW | AT_NO_AUTOMOUNT |
 		       AT_EMPTY_PATH | KSTAT_QUERY_FLAGS)) != 0)
