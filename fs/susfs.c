@@ -66,6 +66,14 @@ DEFINE_STATIC_KEY_TRUE(susfs_is_log_enabled);
 #else
 #define SUSFS_LOGI(fmt, ...) 
 #define SUSFS_LOGE(fmt, ...) 
+/*
+ * 上游 4.19 移植漏了 _RL 两个的 #else 兜底：它们在 .c 里被无条件调用
+ * （susfs_add_sus_type / avc 规则那两处），一旦像本仓库这样把
+ * CONFIG_KSU_SUSFS_ENABLE_LOG 关掉（defconfig 显式 not set，避免隐藏动作
+ * 打进 dmesg），编译就会因 implicit declaration 失败。
+ */
+#define SUSFS_LOGI_RL(fmt, ...) 
+#define SUSFS_LOGE_RL(fmt, ...) 
 #endif
 
 static DEFINE_MUTEX(susfs_mutex_lock_sus_type);
