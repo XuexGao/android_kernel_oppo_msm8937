@@ -72,17 +72,17 @@ KSU_SRC := $(realpath $(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 # "suspend susfs build" guard from tools/susfs_compat.mk):
 #   KSU_VERSION = 30000 + <commit count> + 700 = 30000 + 4557 + 700 = 35257
 $(info -- $(REPO_NAME): vendored source, using pinned version)
-$(info -- $(REPO_NAME): pinned to main @ 548d1dda (KSU_VERSION 35259))
+$(info -- $(REPO_NAME): pinned to main @ 516d3e87 (KSU_VERSION 35257))
 
 ifdef KBUILD_EXTMOD
 include $(KSU_SRC)/tools/ddk_compatible.mk
 endif
 
-KSU_LOCAL_VERSION := 4559
-KSU_VERSION := 35259
+KSU_LOCAL_VERSION := 4557
+KSU_VERSION := 35257
 
 KSU_TAG_NAME    := v4.2.0-rc3
-KSU_COMMIT_SHA  := 548d1dda
+KSU_COMMIT_SHA  := 516d3e87
 KSU_BRANCH_NAME := main
 
 # call subst to process placeholders
