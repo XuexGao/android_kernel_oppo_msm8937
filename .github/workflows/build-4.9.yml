@@ -2,7 +2,7 @@
 # BakaSU Kernel CI — OPPO MSM8937 系列（R9s / A57 / R9s Plus / R9 Plus）
 # ------------------------------------------------------------------------------
 # root 方案：BakaSU（main 分支最新源码）v4.2.0-rc3，源码 vendored 在 KernelSU/，
-#           保留内核侧 SUSFS v2.3.0（hook 模式走 CONFIG_KSU_SUSFS，即 SUSFS
+#           保留内核侧 SUSFS（hook 模式走 CONFIG_KSU_SUSFS，即 SUSFS
 #           Inline Hook；不选 KSU_MANUAL_HOOK —— 两者在 Kconfig 里是互斥 choice，
 #           而只有 SUSFS inline 模式才保留 SUSFS 的隐藏能力）。
 # 通用内核：同一个包同时适用于 LineageOS 21 / 22.0 / 22.1（Android 14 / 15）。
@@ -15,7 +15,7 @@
 #   · 命名：BakaSU_机型_8位日期.zip（例：BakaSU_R9s_20260817.zip）
 #   · TAG 同样用 BakaSU_ 前缀：旧的 SukiSU_<date> Release 必须保持原样，绝不能
 #     被本分支的 allowUpdates/removeArtifacts 覆盖掉（TAG_NAME 见 release 任务）
-#   · Release 标题不含系统版本号，形如「OPPO Kernel BakaSU + SUSFS 2.3.0」
+#   · Release 标题不含系统版本号，形如「OPPO Kernel BakaSU + SUSFS v2.x.y」
 #     （SUSFS 版本号从 include/linux/susfs.h 动态读取，升级后不会写死过时）
 #   · Release 正文：底部自动追加 Changes（最近提交，提交标题 (短哈希)）
 #
@@ -421,36 +421,55 @@ jobs:
             echo "KSU_VERSION=${KSU_REL}"
           } > "${GITHUB_WORKSPACE}/${DEVICE}-meta.env"
 
-      - name: 校验 SUSFS 版本（必须为 v2.3.0）
+      - name: 校验 SUSFS 版本与标志约定
         working-directory: kernel
         run: |
           set -euo pipefail
           DECL="$(sed -n 's/^#define SUSFS_VERSION "\(v[0-9.]*\)"/\1/p' include/linux/susfs.h | head -1)"
           echo "include/linux/susfs.h: SUSFS_VERSION=${DECL}"
-          [ "${DECL}" = "v2.3.0" ] || { echo "::error::SUSFS 版本应为 v2.3.0，实际 '${DECL}'"; exit 1; }
-          # 2.3.0 起 AS_FLAGS_* 一律存放在 inode->i_mapping->flags；
-          # 若仍有 i_state 存取，说明标志约定不一致（读写错位会让隐藏功能静默失效）
-          BAD="$(grep -rn 'AS_FLAGS_.*i_state\|i_state.*AS_FLAGS_' fs/ include/linux/susfs*.h 2>/dev/null || true)"
-          if [ -n "${BAD}" ]; then
-            echo "::error::仍有 AS_FLAGS_* 存在 inode->i_state 上（应为 i_mapping->flags）："
-            echo "${BAD}"
-            exit 1
-          fi
-          # 2.3.0 新增的 TIF 标志与辅助函数必须齐全
+          # 本工作流同时服务 bakasu-susfs-bpf 与 sukisu-susfs-bpf；
+          # 两个分支的 SUSFS 版本可能不同步（升级是分批做的），所以按版本分别校验
+          # 其标志约定，而不是写死一个版本号。
+          case "${DECL}" in
+            v2.3.0)
+              # 2.3.0：AS_FLAGS_* 存放在 inode->i_mapping->flags；
+              # open_redirect 由 susfs 侧自己持 SRCU 读锁，并返回字符串**拷贝**。
+              BAD="$(grep -rn 'AS_FLAGS_.*i_state\|i_state.*AS_FLAGS_' fs/ include/linux/susfs*.h 2>/dev/null || true)"
+              if [ -n "${BAD}" ]; then
+                echo "::error::v2.3.0 的 AS_FLAGS_* 不应出现在 inode->i_state 上："
+                echo "${BAD}"; exit 1
+              fi
+              grep -q 'strscpy(\*spoofed_name, entry->info.redirected_pathname' fs/susfs.c \
+                || { echo "::error::v2.3.0 open_redirect 返回的路径应为拷贝"; exit 1; }
+              ;;
+            v2.4.0)
+              # 2.4.0：AS_FLAGS_* 迁到 inode->i_state（bit 33+）；
+              # open_redirect 改为 _srcu 变体 —— 调用方持锁，返回值指向链表节点内部，
+              # 调用方**不得** kfree（hook 侧已同步为持锁且不释放的写法）。
+              BAD="$(grep -rn 'AS_FLAGS_.*i_mapping->flags\|i_mapping->flags.*AS_FLAGS_' fs/ include/linux/susfs*.h 2>/dev/null || true)"
+              if [ -n "${BAD}" ]; then
+                echo "::error::v2.4.0 的 AS_FLAGS_* 不应再出现在 inode->i_mapping->flags 上："
+                echo "${BAD}"; exit 1
+              fi
+              grep -q 'AS_FLAGS_.*i_state\|i_state.*AS_FLAGS_' include/linux/susfs_def.h \
+                || { echo "::error::v2.4.0 未在 i_state 上定义 AS_FLAGS_*"; exit 1; }
+              grep -q '\*out_spoofed_name = entry->info.redirected_pathname' fs/susfs.c \
+                || { echo "::error::v2.4.0 open_redirect 应返回内部指针（_srcu 变体）"; exit 1; }
+              ;;
+            *)
+              echo "::error::未知 SUSFS 版本 '${DECL}'（本工作流只认 v2.3.0 / v2.4.0）"; exit 1;;
+          esac
+          # TIF 标志与辅助函数：2.3.0 起引入，2.4.0 保留
           for sym in TIF_PROC_NO_SU TIF_PROC_UMOUNTED_FOR_ZYGOTE_NEXT susfs_set_current_proc_no_su susfs_clear_current_proc_umounted; do
             grep -q "${sym}" include/linux/susfs_def.h || { echo "::error::susfs_def.h 缺少 ${sym}"; exit 1; }
           done
           # open_redirect 的读侧用 SRCU；拆除侧必须用 synchronize_srcu 等待 SRCU 读者，
-          # 否则 synchronize_rcu() 不覆盖 SRCU 读者，会留下 UAF 窗口（上游 2.3.0 修复）。
+          # 否则 synchronize_rcu() 不覆盖 SRCU 读者，会留下 UAF 窗口。两个版本一致。
           grep -qE 'DEFINE_(STATIC_)?SRCU\(susfs_srcu_open_redirect\)' fs/susfs.c \
             || { echo "::error::open_redirect 缺少 SRCU 定义"; exit 1; }
           grep -q 'synchronize_srcu(&susfs_srcu_open_redirect)' fs/susfs.c \
             || { echo "::error::open_redirect 拆除侧缺少 synchronize_srcu"; exit 1; }
-          # 该函数自身持有 SRCU 读锁，返回的字符串必须是拷贝（不能指向链表内节点，
-          # 否则解锁后指针可能失效）
-          grep -q 'strscpy(\*spoofed_name, entry->info.redirected_pathname' fs/susfs.c \
-            || { echo "::error::open_redirect 返回的路径应为拷贝"; exit 1; }
-          echo "✅ SUSFS v2.3.0 结构与标志约定校验通过"
+          echo "✅ SUSFS ${DECL} 结构与标志约定校验通过"
 
       - name: 校验隐藏项（uname / 版本横幅 / config.gz / 日志）
         working-directory: kernel
