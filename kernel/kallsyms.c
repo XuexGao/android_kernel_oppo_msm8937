@@ -12,10 +12,6 @@
  *      compression (see scripts/kallsyms.c for a more complete description)
  */
 #include <linux/kallsyms.h>
-
-#ifdef CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
-#include <linux/susfs_def.h>
-#endif // #ifdef CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
 #include <linux/init.h>
 #include <linux/seq_file.h>
 #include <linux/fs.h>
@@ -28,6 +24,9 @@
 #include <linux/filter.h>
 #include <linux/ftrace.h>
 #include <linux/compiler.h>
+#ifdef CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+#include <linux/susfs_def.h>
+#endif // #ifdef CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
 
 /*
  * These will be re-linked against their real values
@@ -660,18 +659,11 @@ static int s_show(struct seq_file *m, void *p)
 		seq_printf(m, "%px %c %s\t[%s]\n", value,
 			   type, iter->name, iter->module_name);
 	} else
-
 #ifndef CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
 		seq_printf(m, "%px %c %s\n", value,
 			   iter->type, iter->name);
 #else
 	{
-		/*
-		 * SUSFS：从 /proc/kallsyms 里隐藏 KernelSU / SUSFS 相关符号，
-		 * 避免检测方直接通过符号表发现内核已打补丁。
-		 * 这里必须**逐条**判断前缀；任何一条命中的符号直接 return 0，
-		 * 不输出。符号清单与 4.9 分支保持一致。
-		 */
 		if (susfs_starts_with(iter->name, "ksu_") ||
 			susfs_starts_with(iter->name, "__ksu_") ||
 			susfs_starts_with(iter->name, "susfs_") ||
