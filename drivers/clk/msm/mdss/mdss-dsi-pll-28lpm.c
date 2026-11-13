@@ -531,14 +531,25 @@ int dsi_pll_clock_register_lpm(struct platform_device *pdev,
  * stale for such panels; let the clock manager inspect and re-program the
  * PLL before retrying the divider.
  */
+/*
+ * The clocks below are only filled in when this driver's own probe ran, and
+ * a phone whose secure PLL is the other kind never runs it. The display
+ * driver calls these without knowing which kind the phone has, so they have
+ * to say "not here" rather than reach into a clock with no resources behind
+ * it, which would fault the kernel on the way to the panel.
+ */
 unsigned long mdss_dsi_pll_lpm_get_vco_rate0(void)
 {
+	if (!dsi_pll0_vco_clk.priv)
+		return 0;
 	return clk_get_rate(&dsi_pll0_vco_clk.c);
 }
 EXPORT_SYMBOL(mdss_dsi_pll_lpm_get_vco_rate0);
 
 int mdss_dsi_pll_lpm_set_vco_rate0(unsigned long rate)
 {
+	if (!dsi_pll0_vco_clk.priv)
+		return -ENODEV;
 	return clk_set_rate(&dsi_pll0_vco_clk.c, rate);
 }
 EXPORT_SYMBOL(mdss_dsi_pll_lpm_set_vco_rate0);
@@ -559,6 +570,9 @@ int mdss_dsi_pll_lpm_force_indirect0(unsigned long byte_rate)
 {
 	unsigned long vco_rate = byte_rate * 8;
 	int rc;
+
+	if (!dsi_pll0_vco_clk.priv)
+		return -ENODEV;
 
 	rc = clk_set_rate(&dsi_pll0_vco_clk.c, vco_rate);
 	if (rc)
