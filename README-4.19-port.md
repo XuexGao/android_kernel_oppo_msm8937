@@ -1,10 +1,10 @@
-# 4.19-test — OPPO MSM8937/MSM8953 内核 4.9 → 4.19 移植
+# 4.19 — OPPO MSM8937/MSM8953 内核 4.9 → 4.19 移植
 
 本分支把 `bakasu-susfs-bpf`（4.9.337）上的 OPPO 机型支持，移植到
 **Linux 4.19.325-cip136** 基线上。目标机型是 **OPPO R9s（16017 / 16027，
 MSM8953 / 骁龙 625）**。
 
-> ⚠️ **状态：内核可以编出来，但尚未在真机上验证开机。** 详见下方「已验证 / 未验证」。
+> ✅ **状态：真机已验证可以开机。** 详见下方「已验证 / 待确认」。
 
 ## 基线来源
 
@@ -37,31 +37,45 @@ MSM8953 / 骁龙 625）**。
 
 用 GitHub Actions（`.github/workflows/build-4.19.yml`）。
 
-本分支不是默认分支，`workflow_dispatch` 需要工作流文件位于默认分支才会被
-GitHub 索引，所以工作流另外提供了一条 **push 触发通道**：
+`lineage-22.1-k4.19` 是仓库默认分支，`workflow_dispatch` 可直接触发，也可以走 gh CLI：
 
 ```sh
-# 改 ci/targets 决定要构建哪些目标，push 即触发
-printf 'base\nR9s\n' > ci/targets
-git add -f ci/targets && git commit -m "ci: build" && git push origin 4.19-test
+# 纯净内核（R9s + A57）
+gh workflow run build-4.19.yml --ref lineage-22.1-k4.19 \
+  -f build_ref=lineage-22.1-k4.19 -F r9s=true -F a57=true
+
+# BakaSU + SUSFS 内核（走 bakasu-k4.19 分支）
+gh workflow run build-4.19.yml --ref bakasu-k4.19 \
+  -f build_ref=bakasu-k4.19 -F r9s=true -F a57=true
 ```
 
-`ci/targets` 里可选的目标：
+> 两个 run 必须用**不同的 `--ref`**，否则会被 workflow 的 `concurrency`
+> （分组里含 `github.ref`）互相取消。
+
+`ci/targets` 只在 **push 事件**下生效——push 触发器只监听本默认分支的 `ci/**`
+改动，改这个文件并 push 即触发一次构建。
 
 | target | 说明 |
 |---|---|
 | `base` | 4.19 基线冒烟（`vendor/msm8953-perf_defconfig` + `vendor/mi8953.config`） |
-| `R9s` | OPPO R9s（基线 + `vendor/oppo-16017.config`），产 AnyKernel3 zip |
+| `R9s` | OPPO R9s 纯净内核（+ `oppo-common` / `oppo-r9s` / `oppo-no-ksu` / `oppo-bpf-containers`） |
+| `A57` | OPPO A57 纯净内核（+ `oppo-common` / `oppo-a57` / `oppo-no-ksu` / `oppo-bpf-containers`） |
+| `R9s-bakasu` / `A57-bakasu` | BakaSU + SUSFS，只在 `bakasu-k4.19` 分支上出 |
 
-> Release 默认 `draft: true`，不会自动对外发布。
+> ⚠️ `publish_release` 输入默认是 `true`，而 release 步骤用的
+> `ncipollo/release-action` **没有设 `draft`** —— 也就是会直接发一个公开 Release。
+> 只想验证编译时显式传 `-F publish_release=false`。
 
 ### 本地构建
 
 ```sh
-make O=out ARCH=arm64 \
+make O=out ARCH=arm64 -j1 \
      vendor/msm8953-perf_defconfig \
      vendor/mi8953.config \
-     vendor/oppo-16017.config
+     vendor/oppo-common.config \
+     vendor/oppo-r9s.config \
+     vendor/oppo-no-ksu.config \
+     vendor/oppo-bpf-containers.config
 make O=out ARCH=arm64 -j"$(nproc)" CC=clang \
      CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- \
      Image.gz-dtb
@@ -133,12 +147,13 @@ sed -i "/$CFG[ =]/d" $TMP_FILE
 从而让 `qpnp-fg.c` 编译失败。本项目实际踩过这个坑。
 
 **规则：描述某个符号时，句首不要紧跟 `CONFIG_`。**
-（`arch/arm64/configs/vendor/oppo-16017.config` 顶部有同样的警告。）
+（`arch/arm64/configs/vendor/oppo-r9s.config` 顶部有同样的警告。）
 
-## 已验证 / 未验证
+## 已验证 / 待确认
 
-### 已验证（有构建产物为证）
+### 已验证
 
+- **真机可以开机**（作者确认）
 - 4.19 基线在 CI 上编译通过
 - OPPO 驱动逐个目标编译通过（`soc/oppo` ×3、`power/supply/oppo` ×2、
   `synaptics_oppo` ×5、`oppo_touchscreen` ×3、含 OPPO 钩子的 `qpnp-fg.o`）
@@ -148,17 +163,17 @@ sed -i "/$CFG[ =]/d" $TMP_FILE
   且其内容（`oppo16027jdi_r63452`、`oppo16017samsung_ea8064`、
   `oppo,bq27541-battery`、`oppo,stm8s-vooc`、`synaptics,s1302`）
   已确认嵌进 `Image.gz-dtb`
+- CI 覆盖 R9s / A57 两个机型、纯净（`lineage-22.1-k4.19`）与
+  BakaSU + SUSFS（`bakasu-k4.19`）两条产物线，全部编译通过
 
-### 未验证（**没有真机证据，别当事实用**）
+### 待确认（以下项目缺逐项实测记录）
 
-- **能否开机**：完全没有真机测试。4.19 与 4.9 的 SoC 级 `msm8953.dtsi`
-  差异很大（968 行），下游驱动（显示、充电、WLAN）行为需实机确认。
 - **面板**：据 `XuexGao/oppo-r9s-mainline` 的实机记录，真机是 **16027 / JDI
-  R63452**（不是 16017 的 Samsung EA8064 AMOLED）。两个 DTB 都已编出，
-  但没有实测点亮。
-- **未移植的 4.9 驱动**（4.19 基线里没有，暂缓）：
-  `BACKLIGHT_LM3697`（16027 背光）、`KTD2026_SLED`、`INPUT_FPC1020`（指纹）、
-  `SND_SOC_AK4376`、`SND_SOC_TFA98XX`。这些在 `oppo-16017.config` 里以注释记录。
+  R63452**（不是 16017 的 Samsung EA8064 AMOLED）。两个 DTB 都已编出且能开机，
+  但「哪块 DTB 对应哪一批次的屏」还要逐台核对。
+- **仍未移植的驱动**：`KTD2026_SLED`（指示灯）——4.19 基线没有对应驱动，
+  所以 `oppo-r9s.config` 里没有声明（该文件末尾有说明）。其余
+  `AK4376` / `TFA98XX` / `FPC1020` / `LM3697` 都已移植并在 config 里打开。
 - **root 方案版本不一致**：基线自带 KernelSU `KSU_VERSION=32567`，
   而 4.9 分支用的是 BakaSU 35212 + SUSFS。管理器版本码需与内核对齐。
 - **`vooc_charger.c` 的既有缺陷**（4.9 分支就有，非本次引入）：
