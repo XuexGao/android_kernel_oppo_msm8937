@@ -20,9 +20,10 @@
 name: Build 4.19 Kernel
 
 on:
-  # workflow_dispatch 需要工作流文件位于**默认分支**才会被 GitHub 索引；
-  # 本分支不是默认分支，所以同时提供 push 触发（改 ci/targets 即触发一次构建），
-  # 这样无需改动默认分支就能手动控制构建。
+  # workflow_dispatch 需要工作流文件位于**默认分支**才会被 GitHub 索引。
+  # 默认分支是 lineage-22.1-k4.19，所以这里可以直接 dispatch 任意 4.19 分支
+  # （用 inputs.build_ref 指定目标）。push 触发通道保留作兜底：改 ci/targets
+  # 并 push 即触发一次构建。
   workflow_dispatch:
     inputs:
       build_ref:
