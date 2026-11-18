@@ -11,6 +11,9 @@ extern void susfs_spoof_cmdline_or_bootconfig(struct seq_file *m);
 static int cmdline_proc_show(struct seq_file *m, void *v)
 {
 #ifdef CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
+	/* 4.9 这版 cmdline_proc_show 直接用 saved_command_line（补丁假设的
+	 * CONFIG_INITRAMFS_IGNORE_SKIP_FLAG/proc_command_line 分支本树没有），
+	 * spoof 命中时直接返回伪造内容。 */
 	if (static_branch_likely(&susfs_is_fake_cmdline_or_bootconfig_buffer_set)) {
 		susfs_spoof_cmdline_or_bootconfig(m);
 		seq_putc(m, '\n');

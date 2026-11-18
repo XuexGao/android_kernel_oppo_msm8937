@@ -141,6 +141,16 @@ config KSU_SUSFS_SUS_MAP
 	  - It may not be able to evade detections by apps that implement a good injection detection.
 	  - Effective only on zygote spawned umounted user app process >= 10000.
 
+config KSU_SUSFS_PRIORITY_UID_FILTER
+	bool "Enable to filter out priority uids for getpriority() syscall"
+	depends on KSU_SUSFS
+	default n
+	help
+	  - v2.4.0 新增特性：对滥用 getpriority() 的进程隐藏指定 uid。
+	  - 需要配套 userspace（ksu_susfs 工具）下发 app_strings；本仓库不带
+	    该工具，故默认关闭。关闭时 susfs.c 里对应分支整段编译掉。
+	  - 生效范围与 SUS_KSTAT / SUS_MAP 一致（zygote 衍生的、已 umount 的进程）。
+
 endmenu
 
 endmenu
