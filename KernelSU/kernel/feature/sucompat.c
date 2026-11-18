@@ -298,6 +298,17 @@ int ksu_handle_stat(int *dfd, struct filename **filename, int *flags) {
 #endif /* 6.1+ ABI 结束 */
 
 
+/*
+ * fs/devpts/inode.c 在 CONFIG_KSU_SUSFS 下会调用 ksu_handle_devpts()。
+ * 上游把它的定义放在 #else（非 SUSFS）分支里，SUSFS 模式下就没有符号，
+ * 链接期报 "undefined reference to `ksu_handle_devpts'"。
+ * 这个函数本来就是无副作用的空实现，提到 SUSFS 分支里无条件提供。
+ */
+int __maybe_unused ksu_handle_devpts(struct inode *inode)
+{
+    return 0;
+}
+
 #else
 #if 0 /* 原 4.9 实现已上移到 SUSFS 分支共用，见文件前部 */
 __attribute__((hot)) static __always_inline bool __is_su_allowed(const void **ptr_to_check)
@@ -450,11 +461,6 @@ int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv, voi
     return ksu_handle_execveat_sucompat(fd, filename_ptr, argv, envp, flags);
 }
 
-// dead code
-int __maybe_unused ksu_handle_devpts(struct inode *inode)
-{
-    return 0;
-}
 #endif
 
 // sucompat: permitted process can execute 'su' to gain root access.
