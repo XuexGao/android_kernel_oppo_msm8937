@@ -139,8 +139,10 @@ static __u32 ksu_sulog_flatten_argv(struct user_arg_ptr *argv_user, char *dst, _
         if (IS_ERR(arg_user))
             return ksu_sulog_copy_empty_string(dst);
 
+        /* 走 kernel_compat.h 的封装：4.9 内核没有 strncpy_from_user_nofault，
+         * 该封装在 <5.8 上会用 probe_kernel_read / copy_from_user 兜底。 */
         copied =
-            strncpy_from_user_nofault(arg, (const void __user *)untagged_addr((unsigned long)arg_user), sizeof(arg));
+            ksu_strncpy_from_user_nofault(arg, (const void __user *)untagged_addr((unsigned long)arg_user), sizeof(arg));
         if (copied <= 0)
             return ksu_sulog_copy_empty_string(dst);
 

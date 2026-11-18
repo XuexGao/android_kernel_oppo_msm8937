@@ -7,6 +7,22 @@ bool __maybe_unused is_ksu_transition(const struct task_security_struct *old_tse
 #endif
 
 /*
+ * current_sid() compat for kernels < 4.10.
+ * 在 4.10+ 里 current_sid() 是 security/selinux/include/objsec.h 的 inline，
+ * 4.9 上还没有，直接调用会 implicit-declaration（-Werror 下直接编译失败）。
+ * 这里的写法与旧版 SukiSU 的 4.9 移植一致：从 current 的 task_security_struct
+ * 里取 sid。
+ */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 10, 0) && !defined(current_sid)
+static inline u32 ksu_current_sid(void)
+{
+    struct task_security_struct *tsec = selinux_cred(current_cred());
+    return tsec ? tsec->sid : 0;
+}
+#define current_sid ksu_current_sid
+#endif
+
+/*
  * Cached SID values for frequently checked contexts.
  * These are resolved once at init and used for fast u32 comparison
  * instead of expensive string operations on every check.

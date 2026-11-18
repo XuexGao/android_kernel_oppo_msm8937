@@ -166,7 +166,10 @@ DEFINE_MEMBER(task_struct, thread_info)
 #ifdef CONFIG_CGROUPS
 DEFINE_MEMBER(task_struct, cgroups)
 #endif
-#ifdef CONFIG_SECURITY
+/* task_struct->security 是 4.14 引入的（此前由 cred->security 承载）。
+ * 4.9 上不能列出该成员，否则 DYNAMIC_STRUCT 展开时会因为
+ * "no member named 'security' in 'struct task_struct'" 直接编译失败。 */
+#if defined(CONFIG_SECURITY) && LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0)
 DEFINE_MEMBER(task_struct, security)
 #endif
 DEFINE_MEMBER(task_struct, thread)

@@ -24,12 +24,13 @@
 
 // kvmalloc_array 是 4.12 引入的；4.9 上用 kzalloc 兜底即可 ——
 // 这里的表很小（内核符号地址表），不需要 vmalloc 的大块回退。
+// 注意：宏名不能和函数同名，否则函数定义处会被宏就地展开成递归调用。
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 12, 0)
-static void *ksu_kvmalloc_array(size_t n, size_t size, gfp_t flags)
+static void *ksu_kvmalloc_array_shim(size_t n, size_t size, gfp_t flags)
 {
 	return kzalloc(n * size, flags);
 }
-#define kvmalloc_array(n, size, flags) ksu_kvmalloc_array((n), (size), (flags))
+#define kvmalloc_array(n, size, flags) ksu_kvmalloc_array_shim((n), (size), (flags))
 #endif
 
 #if !USE_KCFI

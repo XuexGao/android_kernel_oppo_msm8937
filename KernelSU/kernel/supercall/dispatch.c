@@ -621,8 +621,10 @@ static int do_lookup_symbols(void __user *arg)
     if (!cmd.count || cmd.count > KSU_LOOKUP_SYMBOLS_MAX)
         return -EINVAL;
 
-    names = kvcalloc(cmd.count, sizeof(*names), GFP_KERNEL);
-    addrs = kvcalloc(cmd.count, sizeof(*addrs), GFP_KERNEL);
+    /* kvcalloc 是 4.12 引入的；4.9 上用 kcalloc 即可（count 已由
+     * KSU_LOOKUP_SYMBOLS_MAX 限住，不会是大块分配）。 */
+    names = kcalloc(cmd.count, sizeof(*names), GFP_KERNEL);
+    addrs = kcalloc(cmd.count, sizeof(*addrs), GFP_KERNEL);
     if (!names || !addrs) {
         ret = -ENOMEM;
         goto out;
