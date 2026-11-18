@@ -81,7 +81,11 @@ GITHUB_COMMITS   := $(shell $(CURL_BIN) -sI "$(GITHUB_API_BASE)/commits?sha=$(RE
 LOCAL_COUNT     := $(if $(GITHUB_COMMITS),$(GITHUB_COMMITS),$(git_commit_count))
 KSU_VERSION     := $(if $(LOCAL_COUNT),$(shell expr $(VERSION_BASE) + $(LOCAL_COUNT) - $(VERSION_OFFSET)),13000)
 VERSION_TAG     := $(or $(KSU_GITHUB_VER),$(git_latest_tag),3.0.0)
-KSU_VERSION_FULL := $(if $(call git_short_sha),v$(VERSION_TAG)-$(call git_short_sha)@$(call git_branch),v$(VERSION_TAG)-$(REPO_NAME)-unknown@unknown)
+# 版本串里不带分支名：本仓库的构建分支就叫 sukisu-susfs-bpf，
+# 一旦拼进 KSU_VERSION_FULL 就会把 "sukisu-susfs" 写进 ksu.o，
+# CI 的隐藏性校验（grep 'sukisu-susfs|bakasu-susfs|SukiSU-Ultra|...'）会直接拦下。
+# 只保留 tag 与短哈希，既能对上 manager 版本，又不泄露工作分支。
+KSU_VERSION_FULL := $(if $(call git_short_sha),v$(VERSION_TAG)-$(call git_short_sha),v$(VERSION_TAG)-unknown)
 $(info -- $(REPO_NAME) version: $(KSU_VERSION) [$(KSU_VERSION_FULL)])
 
 ccflags-y += -DKSU_VERSION=$(KSU_VERSION)
