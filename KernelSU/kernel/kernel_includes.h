@@ -73,7 +73,11 @@
 #include <linux/vmalloc.h>
 #include <linux/tty.h>
 #include <linux/kref.h>
+// linux/static_call.h 是 5.10 才有的头文件；本树（4.9）没有它，而 KernelSU
+// 侧代码并不使用 static_call，故按内核版本门控。
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
 #include <linux/static_call.h>
+#endif
 #include "arch.h"
 #ifdef CONFIG_KSU_SUSFS
 #include <linux/susfs.h>
