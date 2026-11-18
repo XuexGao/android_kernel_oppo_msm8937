@@ -132,3 +132,12 @@ Android.bp
 *.img
 Image.gz-dtb
 build.log
+
+# 构建产物（曾被误提交，见 chore 提交）
+/modules.builtin.modinfo
+/vmlinux.symvers
+/usr/initramfs_inc_data
+/kernel/config_data
+/lib/gen_crc64table
+/scripts/sorttable
+/scripts/dtc/fdtoverlay

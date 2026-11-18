@@ -513,7 +513,17 @@ int ksu_handle_post_execveat_sucompat(int *fd, struct filename **filename_ptr, v
 #endif
 #endif
 
-#ifdef CONFIG_KSU_SUSFS
+/*
+ * 4.9 只有 <6.1 的 ABI 会被调用：fs/open.c 的 SYSCALL_DEFINE3(faccessat) 传的是
+ * `const char __user *filename`。上游用 #ifdef CONFIG_KSU_SUSFS 在「6.1+ 的
+ * struct filename **」与「<6.1 的 const char __user **」之间选实现，但我们启用了
+ * CONFIG_KSU_SUSFS=y，于是这里会编出 6.1+ 那版 —— 两边都能零警告编过，运行期却把
+ * 用户态路径字符串的首 8 字节当 struct filename 解引用，
+ * 表现为「Unable to handle kernel paging request at virtual address 0x2f0074696e692f」
+ * （= "/init" 的 ASCII）、PC 在 ksu_handle_faccessat，init 直接挂掉。
+ * 故此处无条件走 <6.1 实现。
+ */
+#if 0 /* 6.1+ ABI：4.9 上不可用，见上 */
 int ksu_handle_faccessat(int *dfd, struct filename **filename, int *mode, int *__unused_flags)
 {
     const struct cred *old_cred;
@@ -544,7 +554,8 @@ int ksu_handle_faccessat(int *dfd, struct filename **filename, int *mode, int *_
     revert_creds(old_cred);
     return 0;
 }
-#else
+#endif /* 6.1+ ABI 结束 */
+
 int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode, int *__unused_flags)
 {
     char path[sizeof(su_path) + 1] = { 0 };
@@ -585,9 +596,8 @@ int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode,
 
     return 0;
 }
-#endif
 
-#ifdef CONFIG_KSU_SUSFS
+#if 0 /* 6.1+ ABI：4.9 上不可用（fs/stat.c 传 const char __user **），见 faccessat 上方说明 */
 int ksu_handle_stat(int *dfd, struct filename **filename, int *flags)
 {
     const struct cred *old_cred;
@@ -623,7 +633,8 @@ int ksu_handle_stat(int *dfd, struct filename **filename, int *flags)
     revert_creds(old_cred);
     return 0;
 }
-#else
+#endif /* 6.1+ ABI 结束 */
+
 int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags)
 {
     const struct cred *old_cred;
@@ -670,7 +681,6 @@ int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags)
 
     return 0;
 }
-#endif // #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
 
 // dead code: devpts handling
 int __maybe_unused ksu_handle_devpts(struct inode *inode)

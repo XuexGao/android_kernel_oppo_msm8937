@@ -14,12 +14,17 @@ void ksu_sucompat_init(void);
 void ksu_sucompat_exit(void);
 
 // Handler functions exported for hook_manager
-#ifdef CONFIG_KSU_SUSFS
-int ksu_handle_faccessat(int *dfd, struct filename **filename, int *mode, int *__unused_flags);
-int ksu_handle_stat(int *dfd, struct filename **filename, int *flags);
-#else
+//
+// faccessat / stat 只有 <6.1 的 ABI 形态：本仓库 fs/open.c 与 fs/stat.c 传的是
+// `const char __user **`。上游用 CONFIG_KSU_SUSFS 去选 6.1+ 的
+// `struct filename **` 版本，在 4.9 上会解引用用户态字符串（开机 init 崩）。
+// 详见 sucompat.c 里 faccessat 上方的说明。
 int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode, int *__unused_flags);
 int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags);
+
+#ifdef CONFIG_KSU_SUSFS
+// SUSFS 模式下的 execveat 变体，签名本来就是 struct filename **，与 fs/exec.c 一致。
+#else
 int ksu_handle_post_execve(int *fd, const char *filename, void *argv, void *envp, int *flags, int *retval);
 #endif // #ifdef CONFIG_KSU_SUSFS
 
