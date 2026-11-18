@@ -1,4 +1,5 @@
 obj-$(CONFIG_KSU) := ksu.o
+ksu-y := ksu_main.o
 
 ccflags-y += -I$(srctree)/security/selinux -I$(srctree)/security/selinux/include
 ccflags-y += -I$(objtree)/security/selinux -include $(srctree)/include/uapi/asm-generic/errno.h
@@ -19,48 +20,69 @@ endif
 
 MDIR    := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
-# Force-include the logging header into every object of this directory, so that
-# CONFIG_KSU_QUIET_LOG covers the call sites in the files that patch core kernel
-# code as well - most of them never include include/klog.h themselves.
-ccflags-y += -include $(MDIR)include/klog.h
+# ===== preinit runner =====
+KSU_UAPI_INC := $(objtree)/usr/include
+ifneq ($(wildcard $(KSU_UAPI_INC)/linux/unistd.h),)
+ksu-y += preinit/preinit.o preinit/blob.o
 
-REPO_OWNER  := SukiSU-Ultra
-REPO_NAME   := SukiSU-Ultra
+KSU_RUNNER_CFLAGS := $(CLANG_FLAGS) -std=gnu11 -Os -Wall \
+	-nostdinc -isystem $(shell $(CC) -print-file-name=include) \
+	-I$(KSU_KERNEL_DIR)/preinit/runner/nolibc -I$(KSU_UAPI_INC) \
+	-I$(KSU_KERNEL_DIR)/include \
+	-ffreestanding -fno-stack-protector -fno-pic -fno-pie \
+	-fno-asynchronous-unwind-tables -fno-unwind-tables \
+	-ffunction-sections -fdata-sections
+
+quiet_cmd_ksu_runner = RUNNER  $@
+      cmd_ksu_runner = $(CC) $(KSU_RUNNER_CFLAGS) -c -o $@.o $< && \
+		$(LD) -static -nostdlib -e _start --gc-sections -s -o $@ $@.o && \
+		rm -f $@.o
+
+$(obj)/preinit/runner.elf: $(KSU_KERNEL_DIR)/preinit/runner/runner.c \
+		$(wildcard $(KSU_KERNEL_DIR)/preinit/runner/nolibc/*.h \
+			   $(KSU_KERNEL_DIR)/preinit/runner/nolibc/sys/*.h \
+			   $(KSU_KERNEL_DIR)/include/uapi/*.h) FORCE
+	$(call if_changed,ksu_runner)
+
+targets += preinit/runner.elf
+
+$(obj)/preinit/blob.o: $(obj)/preinit/runner.elf
+asflags-y += -DKSU_PREINIT_RUNNER_BIN=\"$(abspath $(obj)/preinit/runner.elf)\"
+
+else
+$(warning -- KernelSU: $(KSU_UAPI_INC) not found, preinit disabled)
+ccflags-y += -DKSU_NO_PREINIT
+endif
+# ===== end preinit runner =====
+
+REPO_OWNER  := SukiSU-Nova
+REPO_NAME   := SukiSU-Nova
 REPO_BRANCH := main
 
-VERSION_BASE    := 40000
-VERSION_OFFSET  := 2815
+VERSION_BASE    := 30000
+VERSION_OFFSET  := 4001
 
-# --- release identity -------------------------------------------------------
-# Pinned in-tree on purpose. The old block resolved the version at build time
-# from `git` in the kernel checkout and from api.github.com:
-#   * the CI rate limit silently downgraded the reported version (4.1.2/13000)
-#   * `git_branch` leaked the build branch name into KSU_VERSION_FULL
-# Keep the three values below in sync with the vendored source when it is
-# refreshed. KSU_GIT_COMMITS is deliberately NOT the commit count of the v4.2.0
-# tag (that is 3714): the manager derives its own versionCode with the same
-# formula - 4*10000 + commit count - 2815 - evaluated at the commit its release
-# build ran from, and the shipped 4.2.0 manager was built one commit past the
-# tag, i.e. 3715 -> 40900. Pin the tag's own number here and the kernel reports
-# 40899 and disagrees with the manager.
-# No trailing comments on these lines - make keeps the whitespace, and a space
-# inside KSU_VERSION_FULL would split -D... into two clang arguments.
-KSU_GIT_COMMITS ?= 3715
-KSU_RELEASE ?= 4.2.0
-KSU_GIT_SHA ?= 85eb4a95
+GIT_BIN  := /usr/bin/env PATH="$$PATH":/usr/bin:/usr/local/bin git
+CURL_BIN := /usr/bin/env PATH="$$PATH":/usr/bin:/usr/local/bin curl
 
-KSU_VERSION := $(shell expr $(VERSION_BASE) + $(strip $(KSU_GIT_COMMITS)) - $(VERSION_OFFSET))
-VERSION_TAG := $(strip $(KSU_RELEASE))
-KSU_VERSION_FULL := v$(VERSION_TAG)-$(strip $(KSU_GIT_SHA))@$(REPO_BRANCH)
+KSU_SRC := $(if $(filter $(srctree),$(src)),$(src),$(srctree)/$(src))
+KSU_SRC := $(if $(wildcard $(KSU_SRC)/../.git),$(KSU_SRC),$(MDIR))
 
-# Both end up in -D... flags, so a stray space would split them into separate
-# compiler arguments and fail the build with a confusing "no such file" error.
-ifneq ($(words $(KSU_VERSION)),1)
-$(error KSU_VERSION must be a single token, got '$(KSU_VERSION)')
-endif
-ifneq ($(words $(KSU_VERSION_FULL)),1)
-$(error KSU_VERSION_FULL must not contain whitespace, got '$(KSU_VERSION_FULL)')
-endif
+git_short_sha    = $(shell cd $(KSU_SRC) && $(GIT_BIN) rev-parse --short=8 HEAD 2>/dev/null)
+git_branch       = $(shell cd $(KSU_SRC) && $(GIT_BIN) rev-parse --abbrev-ref HEAD 2>/dev/null)
+git_commit_count = $(shell cd $(KSU_SRC) && $(GIT_BIN) rev-list --count $(REPO_BRANCH) 2>/dev/null)
+git_latest_tag   = $(shell cd $(KSU_SRC) && $(GIT_BIN) describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')
+
+$(shell cd $(KSU_SRC) 2>/dev/null && [ -f ../.git/shallow ] && $(GIT_BIN) fetch --unshallow 2>/dev/null)
+
+GITHUB_API_BASE  := https://api.github.com/repos/$(REPO_OWNER)/$(REPO_NAME)
+KSU_GITHUB_VER   := $(shell $(CURL_BIN) -s "$(GITHUB_API_BASE)/releases/latest" 2>/dev/null | grep '"tag_name":' | sed -E 's/.*"v?([^"]+)".*/\1/')
+GITHUB_COMMITS   := $(shell $(CURL_BIN) -sI "$(GITHUB_API_BASE)/commits?sha=$(REPO_BRANCH)&per_page=1" 2>/dev/null | grep -i "link:" | sed -n 's/.*page=\([0-9]*\)>; rel="last".*/\1/p')
+LOCAL_COUNT     := $(if $(GITHUB_COMMITS),$(GITHUB_COMMITS),$(git_commit_count))
+KSU_VERSION     := $(if $(LOCAL_COUNT),$(shell expr $(VERSION_BASE) + $(LOCAL_COUNT) - $(VERSION_OFFSET)),13000)
+VERSION_TAG     := $(or $(KSU_GITHUB_VER),$(git_latest_tag),3.0.0)
+KSU_VERSION_FULL := $(if $(call git_short_sha),v$(VERSION_TAG)-$(call git_short_sha)@$(call git_branch),v$(VERSION_TAG)-$(REPO_NAME)-unknown@unknown)
+$(info -- $(REPO_NAME) version: $(KSU_VERSION) [$(KSU_VERSION_FULL)])
 
 ccflags-y += -DKSU_VERSION=$(KSU_VERSION)
 ccflags-y += -DKSU_VERSION_FULL=\"$(KSU_VERSION_FULL)\"
@@ -80,9 +102,9 @@ $(info -- KERNEL_VERSION: $(KERNEL_VERSION))
 $(info -- KERNEL_TYPE: $(KERNEL_TYPE))
 
 ifeq ($(CONFIG_KSU_SUSFS), y)
-$(info -- ksu: using SUSFS_INLINE_HOOK)
+$(info -- $(REPO_NAME): using SUSFS_INLINE_HOOK)
 else
-$(info -- ksu: using inline hook)
+$(info -- $(REPO_NAME): using Unknown)
 endif
 
 ifeq ($(CONFIG_KPM), y)
@@ -146,38 +168,36 @@ endif
 
 # https://github.com/torvalds/linux/commit/11276d5306b8e5b438a36bbff855fe792d7eaa61
 ifeq ($(shell grep -q "DEFINE_STATIC_KEY_TRUE" $(srctree)/include/linux/jump_label.h 2>/dev/null; echo $$?),0)
-$(info -- ksu/compat: modern static_key_interface found)
+$(info -- $(REPO_NAME)/compat: modern static_key_interface found)
 ccflags-y += -DKSU_HAS_MODERN_STATIC_KEY_INTERFACE
 endif
 
-ifdef KSU_MANAGER_PACKAGE
-ccflags-y += -DKSU_MANAGER_PACKAGE=\"$(KSU_MANAGER_PACKAGE)\"
-$(info -- KernelSU Manager package name: $(KSU_MANAGER_PACKAGE))
+# Vendor backports may change these fields independently of LINUX_VERSION_CODE.
+# Inspect the actual target source header, not the host kernel or KMI label.
+ksu_netlink_cfg := $(shell sed -n '/struct netlink_kernel_cfg {/,/^};/p' $(srctree)/include/linux/netlink.h)
+ifneq ($(findstring cb_mutex,$(ksu_netlink_cfg)),)
+ccflags-y += -DKSU_NETLINK_CFG_HAS_CB_MUTEX=1
 endif
+ifneq ($(findstring compare,$(ksu_netlink_cfg)),)
+ccflags-y += -DKSU_NETLINK_CFG_HAS_COMPARE=1
+endif
+
+KSU_PACKAGE_NAME ?= com.sukisu.nova
+
+ccflags-y += -DKSU_PACKAGE_NAME=\"$(KSU_PACKAGE_NAME)\"
 
 ## For susfs stuff ##
 ifeq ($(shell test -e $(srctree)/fs/susfs.c; echo $$?),0)
 $(eval SUSFS_VERSION=$(shell cat $(srctree)/include/linux/susfs.h | grep -E '^#define SUSFS_VERSION' | cut -d' ' -f3 | sed 's/"//g'))
 $(info )
-$(info -- susfs version: $(SUSFS_VERSION))
+$(info -- SUSFS_VERSION: $(SUSFS_VERSION))
 else
-$(info -- susfs: not integrated)
-
+$(info -- You have not integrated susfs in your kernel yet.)
+$(info -- Read: https://gitlab.com/simonpunk/susfs4ksu)
 endif
 
 ccflags-y += -Wno-strict-prototypes -Wno-int-conversion -Wno-gcc-compat -Wno-missing-prototypes
 ccflags-y += -Wno-declaration-after-statement -Wno-unused-function
 
-# Manager APK signature (SukiSU-Ultra official manager)
-ifndef KSU_EXPECTED_SIZE
-KSU_EXPECTED_SIZE := 0x35c
-endif
-
-ifndef KSU_EXPECTED_HASH
-KSU_EXPECTED_HASH := 947ae944f3de4ed4c21a7e4f7953ecf351bfa2b36239da37a34111ad29993eef
-endif
-
-ccflags-y += -DEXPECTED_SIZE=$(KSU_EXPECTED_SIZE)
-ccflags-y += -DEXPECTED_HASH=\"$(KSU_EXPECTED_HASH)\"
 
 # Keep a new line here!! Because someone may append config

@@ -1,6 +1,10 @@
 #ifndef __KSU_H_KERNEL_COMPAT
 #define __KSU_H_KERNEL_COMPAT
 
+#ifndef __nocfi
+#define __nocfi
+#endif
+
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 9, 0)) && (LINUX_VERSION_CODE < KERNEL_VERSION(4, 10, 0)) ||              \
     (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0)) && (LINUX_VERSION_CODE < KERNEL_VERSION(4, 15, 0))
 #ifdef HISI_SELINUX_EBITMAP_RO
@@ -154,7 +158,16 @@ static inline void ksu_kvfree(void *buf)
     else
         kfree(buf);
 }
+
+static inline void *ksu_kvmalloc_array(size_t n, size_t size, gfp_t flags)
+{
+    if (size && n > ((size_t)-1) / size)
+        return NULL;
+    return ksu_kvmalloc(n * size, flags);
+}
+
 #define kvmalloc ksu_kvmalloc
+#define kvmalloc_array ksu_kvmalloc_array
 #define kvfree ksu_kvfree
 #endif
 
@@ -253,25 +266,19 @@ __weak void groups_sort(struct group_info *group_info)
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 3, 0) || defined(KSU_HAS_MODERN_STATIC_KEY_INTERFACE)
 #define KSU_COMPAT_USE_STATIC_KEY
-
 #endif
 
-// fallthrough attribute for older kernels (introduced in 5.10)
-#ifndef fallthrough
-#if defined(__has_attribute)
-#if __has_attribute(fallthrough)
-#define fallthrough __attribute__((fallthrough))
-#else
-#define fallthrough do {} while (0) /* fallthrough */
+/*
+ * KPM (extension/kpm) and the CPU spoof extension rely on kernel interfaces
+ * that are only supported on 5.10+. Compile their call sites out entirely
+ * below that, regardless of CONFIG_KPM, so 3.x/4.x/5.4 trees never pull in
+ * their headers, code or runtime hooks.
+ */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
+#define KSU_CAN_USE_CPU_SPOOF
 #endif
-#else
-#define fallthrough do {} while (0) /* fallthrough */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0)
+#define KSU_CAN_USE_KPM
 #endif
-#endif
-
-// current_sid() compat for kernels < 4.10
-// In newer kernels, current_sid() is defined in security/selinux/include/objsec.h
-// We can't define it here because objsec.h hasn't been included yet at this point.
-// Instead, selinux.c defines it directly after objsec.h is available.
 
 #endif

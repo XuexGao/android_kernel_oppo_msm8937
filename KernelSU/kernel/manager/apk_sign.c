@@ -7,20 +7,13 @@ static struct apk_sign_key {
     unsigned size;
     const char *sha256;
 } apk_sign_keys[] = {
+    { 0x35c, "947ae944f3de4ed4c21a7e4f7953ecf351bfa2b36239da37a34111ad29993eef" }, // SukiSU
     { 0x396, "f415f4ed9435427e1fdf7f1fccd4dbc07b3d6b8751e4dbcec6f19671f427870b" }, // RKSU
     { 0x033b, "c371061b19d8c7d7d6133c6a9bafe198fa944e50c1b31c9d8daa8d7f1fc2d2d6" }, // KSU
     { 0x381, "52d52d8c8bfbe53dc2b6ff1c613184e2c03013e090fe8905d8e3d5dc2658c2e4" }, // WKSU
     { 0x375, "484fcba6e6c43b1fb09700633bf2fb4758f13cb0b2f4457b80d075084b26c588" }, // KowSU
     { 0x3e6, "79e590113c4c4c0c222978e413a5faa801666957b1212a328e46c00c69821bf7" }, // KSUN
     { 384, "7e0c6d7278a3bb8e364e0fcba95afaf3666cf5ff3c245a3b63c8833bd0445cc4" }, // MKSU
-#if defined(EXPECTED_SIZE) && defined(EXPECTED_HASH)
-    /* What the build was configured to trust (Makefile: KSU_EXPECTED_SIZE /
-     * KSU_EXPECTED_HASH). Upstream checks those two in is_manager_apk(); this
-     * port kept the table above and never read the defines, so the knobs had
-     * no effect. Adding the entry keeps every manager that used to be accepted
-     * working and honours the build-time setting on top. */
-    { EXPECTED_SIZE, EXPECTED_HASH },
-#endif
 };
 
 static struct sdesc *init_sdesc(struct crypto_shash *alg)
@@ -68,14 +61,6 @@ static int ksu_sha256(const unsigned char *data, unsigned int datalen, unsigned 
     return ret;
 }
 
-/*
- * Every read below is bounded by the container it lives in. That is the point
- * of upstream 7edae738 ("check kernel_read() results when verifying the APK
- * signing block") and 4a47b5fc ("align signature block parsing with AOSP"):
- * the parser this replaces ignored kernel_read()'s return value, so a truncated
- * or deliberately crafted APK could walk the position past the end of the file,
- * and a zero-length pair made the scan loop in place.
- */
 static bool read_exact(struct file *fp, void *buffer, size_t size, loff_t *pos, loff_t end)
 {
     if (*pos < 0 || *pos > end || size > (size_t)(end - *pos))
@@ -97,18 +82,11 @@ static bool read_length_prefixed_end(struct file *fp, loff_t *pos, loff_t contai
     return true;
 }
 
-/*
- * Walk one 0x7109871a (APK signature scheme v2) pair down to its leaf
- * certificate and match it against apk_sign_keys[]. The certificate is read
- * and hashed once, then compared against every accepted entry that carries its
- * length - upstream verifies against a single expected pair, this port accepts
- * the whole table, hence the two separate loops.
- */
-static bool check_block(struct file *fp, loff_t *pos, loff_t block_end)
+static bool check_block(struct file *fp, loff_t *pos, loff_t block_end, unsigned expected_size,
+                        const char *expected_sha256)
 {
     loff_t signers_end, signer_end, signed_data_end, digests_end, certificates_end;
     u32 certificate_size;
-    int i;
 
     // v2 block: signers sequence -> first signer -> signed data -> digests
     if (!read_length_prefixed_end(fp, pos, block_end, &signers_end) ||
@@ -126,20 +104,13 @@ static bool check_block(struct file *fp, loff_t *pos, loff_t block_end)
         return false;
 
 #define CERT_MAX_LENGTH 1024
+    if (certificate_size != expected_size)
+        return false;
+
     if (certificate_size > CERT_MAX_LENGTH) {
         pr_info("cert length overlimit\n");
         return false;
     }
-
-    bool size_seen = false;
-    for (i = 0; i < ARRAY_SIZE(apk_sign_keys); i++) {
-        if (apk_sign_keys[i].size == certificate_size) {
-            size_seen = true;
-            break;
-        }
-    }
-    if (!size_seen)
-        return false;
 
     char cert[CERT_MAX_LENGTH];
     if (!read_exact(fp, cert, certificate_size, pos, certificates_end))
@@ -155,18 +126,11 @@ static bool check_block(struct file *fp, loff_t *pos, loff_t block_end)
     hash_str[SHA256_DIGEST_SIZE * 2] = '\0';
 
     bin2hex(hash_str, digest, SHA256_DIGEST_SIZE);
-
-    for (i = 0; i < ARRAY_SIZE(apk_sign_keys); i++) {
-        if (apk_sign_keys[i].size != certificate_size)
-            continue;
-        pr_info("sha256: %s, expected: %s\n", hash_str, apk_sign_keys[i].sha256);
-        if (strcmp(apk_sign_keys[i].sha256, hash_str) == 0)
-            return true;
-    }
-    return false;
+    pr_info("sha256: %s, expected: %s\n", hash_str, expected_sha256);
+    return strcmp(expected_sha256, hash_str) == 0;
 }
 
-static __always_inline bool check_v2_signature(char *path)
+static __always_inline bool check_v2_signature(char *path, unsigned expected_size, const char *expected_sha256)
 {
     unsigned char buffer[0x10] = { 0 };
     u32 cd_offset, cd_size;
@@ -177,18 +141,13 @@ static __always_inline bool check_v2_signature(char *path)
 
     bool v2_signing_valid = false;
     int v2_signing_blocks = 0;
-    bool v3_signing_exist = false;
-    bool v3_1_signing_exist = false;
 
     int i;
-    struct file *fp = filp_open(path, O_RDONLY, 0);
+    struct file *fp = ksu_filp_open_nonotify(path, O_RDONLY | O_NOATIME);
     if (IS_ERR(fp)) {
         pr_err("open %s error.\n", path);
         return false;
     }
-
-    // disable inotify for this file
-    fp->f_mode |= FMODE_NONOTIFY;
 
     file_size = generic_file_llseek(fp, 0, SEEK_END);
     if (file_size < 0)
@@ -256,7 +215,7 @@ static __always_inline bool check_v2_signature(char *path)
     if (size_of_block_at_head != size_of_block)
         goto clean;
 
-    // Scan every length-prefixed pair, matching AOSP's signing block parser.
+    // Scan every length-prefixed pair, matching AOSP's signing block parser
     // Each valid pair consumes an 8-byte length plus at least a 4-byte ID, so
     // malformed entries fail below instead of spinning in place.
     while (pos < pairs_end) {
@@ -275,17 +234,13 @@ static __always_inline bool check_v2_signature(char *path)
 
         if (id == 0x7109871au) {
             v2_signing_blocks++;
-            v2_signing_valid = check_block(fp, &pos, pair_end);
-        } else if (id == 0xf05368c0u) {
-            // http://aospxref.com/android-14.0.0_r2/xref/frameworks/base/core/java/android/util/apk/ApkSignatureSchemeV3Verifier.java#73
-            v3_signing_exist = true;
-        } else if (id == 0x1b93ad61u) {
-            // http://aospxref.com/android-14.0.0_r2/xref/frameworks/base/core/java/android/util/apk/ApkSignatureSchemeV3Verifier.java#74
-            v3_1_signing_exist = true;
-        } else {
+            v2_signing_valid = check_block(fp, &pos, pair_end, expected_size, expected_sha256);
+        } else if (id != 0x42726577u) { // APK verity padding
+            // https://cs.android.com/android/platform/superproject/+/android-latest-release:tools/apksig/src/main/java/com/android/apksig/internal/apk/ApkSigningBlockUtils.java;l=102;drc=ebe4dfd4fd6550c949a6c7c2427484bf5e96500b
 #ifdef CONFIG_KSU_DEBUG
-            pr_info("Unknown id: 0x%08x\n", id);
+            pr_info("Unexpected signature block id: 0x%08x\n", id);
 #endif
+            goto invalid;
         }
         pos = pair_end;
     }
@@ -303,19 +258,6 @@ invalid:
     v2_signing_valid = false;
 clean:
     filp_close(fp, 0);
-
-    /*
-     * Upstream 685a208e ("drop v1 signature verification") also removed the
-     * META-INF/MANIFEST.MF probe that ran whenever a v2 block checked out: a
-     * v2-signed APK that still carries a v1 manifest is normal for
-     * compatibility, so finding one said nothing about the signature. Only the
-     * v2 plus v3 mix is still rejected, because the manager APKs accepted here
-     * are v2-only.
-     */
-    if (v2_signing_valid && (v3_signing_exist || v3_1_signing_exist)) {
-        pr_err("Unexpected v3 signature scheme found!\n");
-        return false;
-    }
 
     return v2_signing_valid;
 }
@@ -343,42 +285,27 @@ module_param_cb(ksu_debug_manager_appid, &expected_size_ops, &ksu_debug_manager_
 
 #endif
 
-int get_pkg_from_apk_path(char *pkg, const char *path)
+// /data/app/XXXXX/<PACKAGE_NAME>-YYY, which contains base.apk
+int get_pkg_from_apk_dir_path(char *pkg, const char *path)
 {
     int len = strlen(path);
     if (len >= KSU_MAX_PACKAGE_NAME || len < 1)
         return -1;
 
-    const char *last_slash = NULL;
-    const char *second_last_slash = NULL;
-
-    int i;
-    for (i = len - 1; i >= 0; i--) {
-        if (path[i] == '/') {
-            if (!last_slash) {
-                last_slash = &path[i];
-            } else {
-                second_last_slash = &path[i];
-                break;
-            }
-        }
-    }
-
-    if (!last_slash || !second_last_slash)
+    const char *last_slash = strrchr(path, '/');
+    if (!last_slash)
         return -1;
 
-    const char *last_hyphen = strchr(second_last_slash, '-');
-    if (!last_hyphen || last_hyphen > last_slash)
+    const char *last_hyphen = strchr(last_slash, '-');
+    if (!last_hyphen)
         return -1;
 
-    int pkg_len = last_hyphen - second_last_slash - 1;
+    int pkg_len = last_hyphen - last_slash - 1;
     if (pkg_len >= KSU_MAX_PACKAGE_NAME || pkg_len <= 0)
         return -1;
 
     // Copying the package name
-    // Upstream d2afad2e removed strncpy() from the kernel side; pkg_len is
-    // bounds-checked above, so this is just a bounded copy.
-    memcpy(pkg, second_last_slash + 1, pkg_len);
+    memcpy(pkg, last_slash + 1, pkg_len);
     pkg[pkg_len] = '\0';
 
     return 0;
@@ -386,18 +313,21 @@ int get_pkg_from_apk_path(char *pkg, const char *path)
 
 bool is_manager_apk(char *path)
 {
-#ifdef KSU_MANAGER_PACKAGE
-    char pkg[KSU_MAX_PACKAGE_NAME];
-    if (get_pkg_from_apk_path(pkg, path) < 0) {
-        pr_err("Failed to get package name from apk path: %s\n", path);
-        return false;
+    int i;
+
+    for (i = 0; i < ARRAY_SIZE(apk_sign_keys); i++) {
+        if (check_v2_signature(path, apk_sign_keys[i].size, apk_sign_keys[i].sha256)) {
+            pr_info("Manager APK verified with key: %s (size: 0x%x)\n", 
+                    apk_sign_keys[i].sha256, apk_sign_keys[i].size);
+            return true;
+        }
     }
 
-    // pkg is `<real package>`
-    if (strncmp(pkg, KSU_MANAGER_PACKAGE, sizeof(KSU_MANAGER_PACKAGE))) {
-        return false;
-    }
-#endif
+    pr_err("Manager APK signature verification failed for %s\n", path);
+    return false;
+}
 
-    return check_v2_signature(path);
+bool ksu_check_apk_signature(char *path, unsigned int size, const char *hash)
+{
+    return check_v2_signature(path, size, hash);
 }

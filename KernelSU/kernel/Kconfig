@@ -22,22 +22,6 @@ config KSU_DEBUG
 	help
 	  Enable KernelSU debug mode.
 
-config KSU_QUIET_LOG
-	bool "Keep the feature set out of the kernel log"
-	depends on KSU
-	default y
-	help
-	  Fold every pr_*() of this feature set into no_printk(): the format
-	  strings are still type checked and the call sites keep their side
-	  effects, but nothing is written to the kernel ring buffer.
-
-	  Without it, dmesg shows the feature name plus one line per hooked
-	  system call at boot, which is the cheapest way for a detector to tell
-	  this kernel from a stock build. It also keeps a device-side console
-	  or a ramoops dump from leaking what the mount/path spoofing did.
-
-	  Say Y for a shipping build. Say N only while debugging the device.
-
 config KPM
     bool "Enable SukiSU KPM"
     depends on KSU && 64BIT
@@ -67,15 +51,17 @@ config KSU_SUSFS_SUS_PATH
 	  - Use "add_sus_path_loop" instead of "add_sus_path" if the user-defined path is frequently modified.
 	  - Use with cautious as it may cause performance loss and will be vulnerable to side channel attacks,
 	  	just disable this feature if it doesn't work for you or you don't need it at all.
-	  - Effective only on zygote spawned user app process with uid >= 10000.
+	  - Effective only on zygote/zygote_next spawned user app process that is marked with TIF_PROC_UMOUNTED.
 
 config KSU_SUSFS_SUS_MOUNT
 	bool "Enable to hide suspicious mounts"
 	depends on KSU_SUSFS
 	default y
 	help
-	  - Automatically assign fake mnt_id and fake mnt_group_id for mounts mounted by ksu process until /sdcard is  decrypted, this is to evade from mnt_id/mnt_group_id gap detections.
+	  - Automatically assign fake mnt_id and fake mnt_group_id for mounts mounted by ksu process until
+	    /sdcard is  decrypted, this is to evade from mnt_id/mnt_group_id gap detections.
 	  - Allow hiding all sus mounts from /proc/self/[mounts|mountinfo|mountstat] for non-su processes.
+	  - Effective only on zygote/zygote_next spawned user app process that is marked with TIF_PROC_UMOUNTED.
 
 config KSU_SUSFS_SUS_KSTAT
 	bool "Enable to spoof suspicious kstat"
@@ -83,7 +69,7 @@ config KSU_SUSFS_SUS_KSTAT
 	default y
 	help
 	  - Allow spoofing the kstat of user-defined file/directory.
-	  - Effective only on zygote spawned user app process with uid >= 10000.
+	  - Effective on all processes with (uid % 100000) >= 10000.
 
 config KSU_SUSFS_SPOOF_UNAME
 	bool "Enable to spoof uname"
@@ -96,12 +82,9 @@ config KSU_SUSFS_SPOOF_UNAME
 config KSU_SUSFS_ENABLE_LOG
 	bool "Enable logging susfs log to kernel"
 	depends on KSU_SUSFS
-	default n
+	default y
 	help
 	  - Allow logging susfs log to kernel, uncheck it to completely disable all susfs log.
-	  - Leave this off for a shipping build: every line it emits carries the
-	    "susfs" marker, which is exactly what a detection script greps for in
-	    dmesg. Turn it on only while setting up sus path / sus mount rules.
 
 config KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
 	bool "Enable to automatically hide ksu and susfs symbols from /proc/kallsyms"
@@ -127,7 +110,7 @@ config KSU_SUSFS_OPEN_REDIRECT
 	  - Allow redirecting a target path to be opened with another user-defined path.
 	  - Both target path and redirected path must be existed before they can be added to the kernel.
 	  - Users have to take care of the selinux permission of both target path and redirected path by themselves.
-	  - OPEN_REDIRECT does not bypass detections, but users may try other feature like SUS_KSTAT to bypass some of them.
+	  - OPEN_REDIRECT does not bypass some detections by default, but users can work with SUS_KSTAT to bypass them.
 	  - Effective only on processes with pre-defined uid scheme.
 
 config KSU_SUSFS_SUS_MAP
@@ -139,17 +122,15 @@ config KSU_SUSFS_SUS_MAP
 	  - It does NOT support hiding for anon memory.
 	  - It does NOT hide any inline hooks or plt hooks cause by the injected library itself.
 	  - It may not be able to evade detections by apps that implement a good injection detection.
-	  - Effective only on zygote spawned umounted user app process >= 10000.
+	  - Effective only on zygote/zygote_next spawned user app process that is marked with TIF_PROC_UMOUNTED
 
 config KSU_SUSFS_PRIORITY_UID_FILTER
-	bool "Enable to filter out priority uids for getpriority() syscall"
+	bool "Enable to allow adding user-defined uids that will be hidden from getpriority/setpriority/ioprio_get/ioprio_set syscall"
 	depends on KSU_SUSFS
-	default n
+	default y
 	help
-	  - v2.4.0 新增特性：对滥用 getpriority() 的进程隐藏指定 uid。
-	  - 需要配套 userspace（ksu_susfs 工具）下发 app_strings；本仓库不带
-	    该工具，故默认关闭。关闭时 susfs.c 里对应分支整段编译掉。
-	  - 生效范围与 SUS_KSTAT / SUS_MAP 一致（zygote 衍生的、已 umount 的进程）。
+	  - Allow hiding user-defined uids from syscalls like getpriority/setpriority/ioprio_get/ioprio_set.
+	  - Effective on all processes with uid >= 10000.
 
 endmenu
 

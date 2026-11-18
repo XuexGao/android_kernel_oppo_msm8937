@@ -5,6 +5,7 @@
 #include <linux/types.h>
 
 #include "uapi/app_profile.h"
+#include "uapi/manager.h"
 
 #ifdef __BINDGEN__
 #define DECLARE(type, name, val) static const type name = val
@@ -12,8 +13,12 @@
 #define DECLARE(type, name, val) enum { name = val }
 #endif
 
-// 2: allowlist v4 root profile flag
-DECLARE(__u32, KERNEL_SU_UAPI_VERSION, 2);
+// 2: allowlist v4 root profile flags
+// 3: scoped su-session driver fd
+// 4: add KSU_GET_INFO_FLAG_BUNDLED
+// 5: add EVENT_SERVICES with a start/skip result
+// 6: add KSU_IOCTL_LOOKUP_SYMBOLS and KSU_GET_INFO_FLAG_PREINIT
+DECLARE(__u32, KERNEL_SU_UAPI_VERSION, 6);
 
 /* Magic numbers for reboot hook to install fd */
 DECLARE(__u32, KSU_INSTALL_MAGIC1, 0xDEADBEEF);
@@ -27,11 +32,15 @@ struct ksu_become_daemon_cmd {
 DECLARE(__u32, EVENT_POST_FS_DATA, 1);
 DECLARE(__u32, EVENT_BOOT_COMPLETED, 2);
 DECLARE(__u32, EVENT_MODULE_MOUNTED, 3);
+DECLARE(__u32, EVENT_SERVICES, 4);
 
 DECLARE(__u32, KSU_GET_INFO_FLAG_LKM, (1U << 0));
 DECLARE(__u32, KSU_GET_INFO_FLAG_MANAGER, (1U << 1));
 DECLARE(__u32, KSU_GET_INFO_FLAG_LATE_LOAD, (1U << 2));
 DECLARE(__u32, KSU_GET_INFO_FLAG_PR_BUILD, (1U << 3));
+DECLARE(__u32, KSU_GET_INFO_FLAG_BUNDLED, (1U << 4));
+/* The preinit runner will run module preinit actions on boot */
+DECLARE(__u32, KSU_GET_INFO_FLAG_PREINIT, (1U << 5));
 
 struct ksu_get_info_cmd {
     __u32 version; /* Output: KERNEL_SU_VERSION */
@@ -113,8 +122,12 @@ struct ksu_set_app_profile_cmd {
 struct ksu_get_feature_cmd {
     __u32 feature_id; /* Input: feature ID (enum ksu_feature_id) */
     __u64 value; /* Output: feature value/state */
-    __u8 supported; /* Output: true if feature is supported, false otherwise */
+    __u8 supported; /* Output: KSU_FEATURE_FLAG_* bits, 0 if feature is not supported */
 };
+
+#define KSU_FEATURE_FLAG_SUPPORTED (1 << 0)
+/* Value is forced by boot config (force_feature param), SET_FEATURE is refused */
+#define KSU_FEATURE_FLAG_FORCED (1 << 1)
 
 struct ksu_set_feature_cmd {
     __u32 feature_id; /* Input: feature ID (enum ksu_feature_id) */
@@ -147,19 +160,29 @@ struct ksu_add_try_umount_cmd {
     __u8 mode; /* denotes what to do with it 0:wipe_list 1:add_to_list 2:delete_entry */
 };
 
+DECLARE(__u8, KSU_UMOUNT_WIPE, 0); /* ignore everything and wipe list */
+DECLARE(__u8, KSU_UMOUNT_ADD, 1); /* add entry (path + flags) */
+DECLARE(__u8, KSU_UMOUNT_DEL, 2); /* delete entry, strcmp */
+
 struct ksu_get_sulog_fd_cmd {
     __u32 flags; /* Input: reserved for future use, must be 0 */
 };
 
-// List current umount entries
-struct ksu_list_try_umount_cmd {
-    __aligned_u64 arg; // User buffer
-    __u32 buf_size; // Buffer size provided by userspace
+/*
+ * Batch kernel image symbol lookup. Returns the number of symbols found; the
+ * address of a symbol that does not exist in the running kernel is set to 0.
+ * Matches like ksuinit's /proc/kallsyms walk: a kernel symbol name is cut at
+ * its first '$', else at ".llvm.", and the first match in kallsyms order wins.
+ * Module symbols are never returned.
+ */
+struct ksu_lookup_symbols_cmd {
+    __aligned_u64 names; /* Input: user pointer to `count` user pointers to null-terminated names */
+    __aligned_u64 addrs; /* Output: user pointer to `count` __u64 symbol addresses */
+    __u32 count; /* Input: number of symbols, at most KSU_LOOKUP_SYMBOLS_MAX */
+    __u32 flags; /* Input: reserved for future use, must be 0 */
 };
 
-DECLARE(__u8, KSU_UMOUNT_WIPE, 0); /* ignore everything and wipe list */
-DECLARE(__u8, KSU_UMOUNT_ADD, 1); /* add entry (path + flags) */
-DECLARE(__u8, KSU_UMOUNT_DEL, 2); /* delete entry, strcmp */
+DECLARE(__u32, KSU_LOOKUP_SYMBOLS_MAX, 1024);
 
 // Other command structures
 struct ksu_get_full_version_cmd {
@@ -168,25 +191,6 @@ struct ksu_get_full_version_cmd {
 
 struct ksu_hook_type_cmd {
     char hook_type[32]; // Output: hook type string
-};
-
-struct ksu_enable_kpm_cmd {
-    __u8 enabled; // Output: true if KPM is enabled
-};
-
-DECLARE(__u32, SUKISU_KPM_LOAD, 1);
-DECLARE(__u32, SUKISU_KPM_UNLOAD, 2);
-DECLARE(__u32, SUKISU_KPM_NUM, 3);
-DECLARE(__u32, SUKISU_KPM_LIST, 4);
-DECLARE(__u32, SUKISU_KPM_INFO, 5);
-DECLARE(__u32, SUKISU_KPM_CONTROL, 6);
-DECLARE(__u32, SUKISU_KPM_VERSION, 7);
-
-struct ksu_kpm_cmd {
-    __aligned_u64 __user control_code;
-    __aligned_u64 __user arg1;
-    __aligned_u64 __user arg2;
-    __aligned_u64 __user result_code;
 };
 
 /* IOCTL command definitions */
@@ -217,11 +221,9 @@ DECLARE(__u32, KSU_IOCTL_ADD_TRY_UMOUNT, _IOC(_IOC_WRITE, 'K', 18, 0));
 DECLARE(__u32, KSU_IOCTL_SET_INIT_PGRP, _IO('K', 19));
 DECLARE(__u32, KSU_IOCTL_GET_SULOG_FD, _IOW('K', 20, struct ksu_get_sulog_fd_cmd));
 DECLARE(__u32, KSU_IOCTL_DISABLE_ESCAPE_TO_ROOT, _IO('K', 21));
+DECLARE(__u32, KSU_IOCTL_LOOKUP_SYMBOLS, _IOW('K', 22, struct ksu_lookup_symbols_cmd));
 // Other IOCTL command definitions
 DECLARE(__u32, KSU_IOCTL_GET_FULL_VERSION, _IOC(_IOC_READ, 'K', 100, 0));
 DECLARE(__u32, KSU_IOCTL_HOOK_TYPE, _IOC(_IOC_READ, 'K', 101, 0));
-DECLARE(__u32, KSU_IOCTL_ENABLE_KPM, _IOC(_IOC_READ, 'K', 102, 0));
-DECLARE(__u32, KSU_IOCTL_LIST_TRY_UMOUNT, _IOC(_IOC_READ | _IOC_WRITE, 'K', 103, 0));
-DECLARE(__u32, KSU_IOCTL_KPM, _IOC(_IOC_READ | _IOC_WRITE, 'K', 200, 0));
 
 #endif

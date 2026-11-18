@@ -11,28 +11,17 @@ extern int avc_ss_reset(u32 seqno);
 extern int avc_ss_reset(struct selinux_avc *avc, u32 seqno);
 #endif
 // reset avc cache table, otherwise the new rules will not take effect if already denied
-//
-// Only the in-kernel caches are invalidated here. The two userspace
-// advertisements upstream sends alongside them are deliberately not sent:
-// selinux_status_update_policyload() writes the mmap'd /sys/fs/selinux/status
-// page, and on this tree it does so with seqno == 0, i.e. it leaves
-// sequence > 0 together with policyload == 0. security/selinux/ss/status.c
-// documents the opposite invariant ("the next policyload event shall set a
-// positive value ... but never zero"), and a stock boot of this kernel reports
-// policyload == 1 from security_load_policy(). Publishing 0 therefore tells any
-// process that mapped the status page that the policy state was updated without
-// a policy ever being loaded - which is exactly what it is.
-//
-// Nothing needs those events: the rules we add are enforced by the kernel AVC
-// that avc_ss_reset() just flushed, and userspace caches keeping the decisions
-// of the original policy is the behaviour we want to preserve.
-static void reset_avc_cache(void)
+static void reset_avc_cache(u32 seqno)
 {
 #if ((!defined(KSU_COMPAT_USE_SELINUX_STATE)) || LINUX_VERSION_CODE >= KERNEL_VERSION(6, 4, 0))
-    avc_ss_reset(0);
+    avc_ss_reset(seqno);
+    selnl_notify_policyload(seqno);
+    selinux_status_update_policyload(seqno);
 #else
     struct selinux_avc *avc = selinux_state.avc;
-    avc_ss_reset(avc, 0);
+    avc_ss_reset(avc, seqno);
+    selnl_notify_policyload(seqno);
+    selinux_status_update_policyload(&selinux_state, seqno);
 #endif
     selinux_xfrm_notify_policyload();
 }
@@ -162,6 +151,7 @@ static int apply_kernelsu_rules_fn(void *ptr)
 
 void apply_kernelsu_rules(void)
 {
+    struct selinux_policy *pol, *old_pol;
     struct policydb *db;
 
     if (!getenforce()) {
@@ -169,10 +159,10 @@ void apply_kernelsu_rules(void)
     }
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
-    struct selinux_policy *pol, *old_pol = selinux_state.policy;
     mutex_lock(&selinux_state.policy_mutex);
-    backup_sepolicy =
-        ksu_dup_sepolicy(rcu_dereference_protected(old_pol, lockdep_is_held(&selinux_state.policy_mutex)));
+
+    old_pol = rcu_dereference_protected(selinux_state.policy, lockdep_is_held(&selinux_state.policy_mutex));
+    backup_sepolicy = ksu_dup_sepolicy(old_pol);
     if (IS_ERR(backup_sepolicy)) {
         pr_err("failed to create backup sepolicy: %ld\n", PTR_ERR(backup_sepolicy));
         backup_sepolicy = NULL;
@@ -194,12 +184,16 @@ void apply_kernelsu_rules(void)
             }
         }
     }
-    pol = ksu_dup_sepolicy(rcu_dereference_protected(old_pol, lockdep_is_held(&selinux_state.policy_mutex)));
+    pol = ksu_dup_sepolicy(old_pol);
     if (IS_ERR(pol)) {
         pr_err("failed to dup selinux_policy: %ld\n", PTR_ERR(pol));
         goto out_unlock;
     }
     db = &pol->policydb;
+
+    pol->latest_granting = old_pol->latest_granting + 1;
+    if (!ksu_set_original_types(db, &old_pol->policydb, pol->latest_granting))
+        pr_warn("failed to save original type metadata, use backup lookups\n");
 
     apply_kernelsu_rules_fn((void *)db);
 
@@ -207,7 +201,7 @@ void apply_kernelsu_rules(void)
     synchronize_rcu();
     ksu_destroy_sepolicy(old_pol);
 
-    reset_avc_cache();
+    reset_avc_cache(pol->latest_granting);
 #ifdef CONFIG_KSU_SUSFS
     susfs_set_batch_sid();
 #endif
@@ -264,7 +258,10 @@ do_stop_machine:
 
 out_flush:
     smp_mb();
-    reset_avc_cache();
+    reset_avc_cache(0);
+#ifdef CONFIG_KSU_SUSFS
+    susfs_set_batch_sid();
+#endif
 #endif
 }
 
@@ -568,8 +565,8 @@ int handle_sepolicy(void __user *user_data, u64 data_len)
 
     mutex_lock(&selinux_state.policy_mutex);
 
-    old_pol = selinux_state.policy;
-    pol = ksu_dup_sepolicy(rcu_dereference_protected(old_pol, lockdep_is_held(&selinux_state.policy_mutex)));
+    old_pol = rcu_dereference_protected(selinux_state.policy, lockdep_is_held(&selinux_state.policy_mutex));
+    pol = ksu_dup_sepolicy(old_pol);
     if (IS_ERR(pol)) {
         ret = PTR_ERR(pol);
         pr_err("ksu_dup_sepolicy err: %d\n", ret);
@@ -619,11 +616,15 @@ int handle_sepolicy(void __user *user_data, u64 data_len)
         cmd_index++;
     }
 
+    pol->latest_granting = old_pol->latest_granting + 1;
+    if (!ksu_advance_original_types(db, &old_pol->policydb, old_pol->latest_granting, pol->latest_granting))
+        pr_warn("failed to carry original type metadata, use backup lookups\n");
+
     rcu_assign_pointer(selinux_state.policy, pol);
     synchronize_rcu();
     ksu_destroy_sepolicy(old_pol);
 
-    reset_avc_cache();
+    reset_avc_cache(pol->latest_granting);
     ret = success_cmd_count;
     goto out_unlock;
 
@@ -778,7 +779,7 @@ out_done:
         goto out_free;
 
     smp_mb();
-    reset_avc_cache();
+    reset_avc_cache(0);
     ret = success_cmd_count;
 
 out_free:

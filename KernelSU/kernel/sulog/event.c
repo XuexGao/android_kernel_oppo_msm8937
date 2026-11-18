@@ -17,9 +17,7 @@ struct ksu_sulog_identity {
     __u32 euid;
 };
 
-#ifdef CONFIG_KSU_SUSFS
-extern const char __user *get_user_arg_ptr(struct user_arg_ptr argv, int nr);
-#else
+#ifndef CONFIG_KSU_SUSFS
 static const char __user *ksu_sulog_get_user_arg_ptr(struct user_arg_ptr argv, int nr)
 {
     const char __user *native;
@@ -142,7 +140,7 @@ static __u32 ksu_sulog_flatten_argv(struct user_arg_ptr *argv_user, char *dst, _
             return ksu_sulog_copy_empty_string(dst);
 
         copied =
-            ksu_strncpy_from_user_nofault(arg, (const void __user *)untagged_addr((unsigned long)arg_user), sizeof(arg));
+            strncpy_from_user_nofault(arg, (const void __user *)untagged_addr((unsigned long)arg_user), sizeof(arg));
         if (copied <= 0)
             return ksu_sulog_copy_empty_string(dst);
 
@@ -373,10 +371,11 @@ static struct ksu_sulog_pending_event *ksu_sulog_capture_grant_root(const struct
     struct ksu_sulog_pending_event *pending;
     struct ksu_sulog_event *event;
 
-    // This is actually stupid fix
-    #define USER_ARG_NULL user_arg_null_ptr()
-
-    pending = ksu_sulog_capture(KSU_SULOG_EVENT_IOCTL_GRANT_ROOT, NULL, USER_ARG_NULL, gfp);
+#ifdef CONFIG_KSU_SUSFS
+    pending = ksu_sulog_capture(KSU_SULOG_EVENT_IOCTL_GRANT_ROOT, NULL, user_arg_null_ptr(), gfp);
+#else
+    pending = ksu_sulog_capture(KSU_SULOG_EVENT_IOCTL_GRANT_ROOT, NULL, *user_arg_null_ptr(), gfp);
+#endif
     if (!pending)
         return NULL;
 

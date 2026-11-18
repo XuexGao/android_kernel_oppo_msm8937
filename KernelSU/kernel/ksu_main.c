@@ -6,13 +6,17 @@
 #include "include/uapi/selinux.h"
 #include "include/uapi/supercall.h"
 #include "include/uapi/sulog.h"
+#include "include/uapi/manager.h"
+#include "include/uapi/extension.h"
 
 // includes
+#include "include/arch.h"
 #include "include/klog.h"
 #include "include/ksu.h"
 
-// kernel compat, lite ones
-#include "infra/kernel_compat.h"
+// kernel compat
+#include "kernel_compat.h"
+#include "include/util.h"
 
 #include "policy/app_profile.h"
 #include "policy/allowlist.h"
@@ -26,13 +30,16 @@
 #include "infra/su_mount_ns.h"
 #include "infra/file_wrapper.h"
 #include "infra/event_queue.h"
+#include "infra/symbol_resolver.h"
 #include "feature/adb_root.h"
 #include "feature/kernel_umount.h"
 #include "feature/sucompat.h"
 #include "feature/sulog.h"
+#include "feature/mount_hide.h"
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
 #include "feature/selinux_hide.h"
 #endif
+#include "feature/shell_su_adb_only.h"
 #include "runtime/ksud.h"
 #include "sulog/event.h"
 #include "sulog/fd.h"
@@ -50,16 +57,50 @@
 #include "avc.h"
 #endif
 
-#ifdef CONFIG_KPM
-#include "kpm/kpm.h"
-#include "kpm/compact.h"
-#include "kpm/super_access.h"
-#include "kpm/kpm.c"
-#include "kpm/compact.c"
-#include "kpm/super_access.c"
+#include "extension/extension.h"
+#ifdef KSU_CAN_USE_CPU_SPOOF
+#include "extension/cpu_spoof.h"
+#endif
+#include "extension/umount_paths.h"
+#include "extension/dynamic_manager.h"
+#ifdef KSU_CAN_USE_KPM
+#include "extension/kpm.h"
+#include "extension/kpm/kpm.h"
+#include "extension/kpm/compact.h"
+#include "extension/kpm/super_access.h"
+#endif
+#include "extension/susfs_extension.h"
+#include "extension/dynamic_sig_fallback.h"
+#include "extension/version_spoof.h"
+
+#ifdef CONFIG_KSU_SUSFS
+#include "preinit/preinit.h"
+#else
+#include "preinit/common/preinit.h"
 #endif
 
 // unity build
+#include "extension/extension.c"
+#ifdef KSU_CAN_USE_CPU_SPOOF
+#include "extension/cpu_spoof.c"
+#endif
+#include "extension/umount_paths.c"
+#include "extension/dynamic_manager.c"
+#ifdef KSU_CAN_USE_KPM
+#include "extension/kpm.c"
+#include "extension/kpm/kpm.c"
+#include "extension/kpm/compact.c"
+#include "extension/kpm/super_access.c"
+#endif
+#include "extension/susfs_extension.c"
+#include "extension/dynamic_sig_fallback.c"
+#include "extension/version_spoof.c"
+
+#if !defined(KSU_NO_PREINIT) && !defined(CONFIG_KSU_SUSFS)
+#include "preinit/common/runner/runner_xxd.h"
+#include "preinit/common/preinit.c"
+#endif
+
 #include "policy/allowlist.c"
 #include "policy/app_profile.c"
 #include "policy/feature.c"
@@ -84,6 +125,8 @@
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
 #include "feature/selinux_hide.c"
 #endif
+#include "feature/shell_su_adb_only.c"
+#include "feature/mount_hide.c"
 #include "runtime/ksud.c"
 
 #include "sulog/event.c"
@@ -95,7 +138,8 @@
 #include "selinux/sepolicy.c"
 #include "selinux/rules.c"
 
-#include "infra/kernel_compat.c"
+#include "kernel_compat.c"
+#include "infra/symbol_resolver.c"
 
 struct cred *ksu_cred;
 
@@ -133,6 +177,12 @@ int __init kernelsu_init(void)
 
     ksu_feature_init();
 
+    ksu_extension_init();
+
+    ksu_extension_register_all();
+
+    ksu_init_symbol_resolver();
+
     ksu_supercalls_init();
 
     ksu_lsm_hook_init();
@@ -143,19 +193,35 @@ int __init kernelsu_init(void)
 
     ksu_adb_root_init();
 
+    ksu_shell_su_adb_only_init();
+
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
     ksu_selinux_hide_init();
 #endif
 
     ksu_kernel_umount_init();
 
+	ksu_mount_hide_init();
+
     ksu_allowlist_init();
+
+    ksu_dynamic_manager_load();
+
+    ksu_sig_fallback_init();
 
     ksu_throne_tracker_init();
 
     ksu_ksud_init();
 
+#ifndef KSU_NO_PREINIT
+    ksu_preinit_init();
+#endif
+
     ksu_file_wrapper_init();
+
+    ksu_feature_apply_forced();
+
+    ksu_extension_apply_forced();
 
     return 0;
 }

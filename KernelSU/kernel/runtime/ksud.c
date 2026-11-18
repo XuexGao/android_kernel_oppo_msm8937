@@ -51,19 +51,16 @@ void on_post_fs_data(void)
     pr_info("on_post_fs_data!\n");
 
     ksu_load_allow_list();
+    ksu_dynamic_manager_load();
     ksu_observer_init();
     // sanity check, this may influence the performance
-#if defined(CONFIG_KSU_SUSFS) && defined(KSU_COMPAT_USE_STATIC_KEY)
-    if (static_key_enabled(&ksu_is_input_hook_enabled)) {
-        static_branch_disable(&ksu_is_input_hook_enabled);
-        pr_info("ksu_input_hook is disabled\n");
-    }
-#else
     stop_input_hook();
-#endif
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
     ksu_selinux_hide_handle_post_fs_data();
 #endif
+    // retry forced features which failed at second stage
+    ksu_feature_apply_forced();
+    ksu_extension_apply_forced();
 }
 
 extern void ext4_unregister_sysfs(struct super_block *sb);
@@ -106,27 +103,6 @@ void on_boot_completed(void)
 }
 
 #define MAX_ARG_STRINGS 0x7FFFFFFF
-
-const char __user *get_user_arg_ptr(struct user_arg_ptr argv, int nr)
-{
-    const char __user *native;
-
-#ifdef CONFIG_COMPAT
-    if (unlikely(argv.is_compat)) {
-        compat_uptr_t compat;
-
-        if (get_user(compat, argv.ptr.compat + nr))
-            return ERR_PTR(-EFAULT);
-
-        return compat_ptr(compat);
-    }
-#endif
-
-    if (get_user(native, argv.ptr.native + nr))
-        return ERR_PTR(-EFAULT);
-
-    return native;
-}
 
 /*
  * count() counts the number of strings in array ARGV.
@@ -225,12 +201,18 @@ int ksu_handle_execveat_ksud(int *fd, struct filename **filename_ptr,
             char buf[16];
             if (check_argv(*argv, 1, "second_stage", buf, sizeof(buf))) {
                 pr_info("/system/bin/init second_stage executed\n");
+#ifndef KSU_NO_PREINIT
+                ksu_preinit_release();
+#endif
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
                 ksu_selinux_hide_handle_second_stage();
 #endif
                 apply_kernelsu_rules();
                 cache_sid();
                 setup_ksu_cred();
+                // after apply_kernelsu_rules, so that selinux_hide has its sepolicy backup
+                ksu_feature_apply_forced();
+                ksu_extension_apply_forced();
 #ifdef KSU_COMPAT_USE_STATIC_KEY
                 static_branch_disable(&is_init_second_stage_not_executed);
 #else
@@ -299,6 +281,9 @@ int ksu_handle_execveat_ksud(int *fd, struct filename **filename_ptr, struct use
         char buf[16];
         if (!init_second_stage_executed && check_argv(*argv, 1, "second_stage", buf, sizeof(buf))) {
             pr_info("/system/bin/init second_stage executed\n");
+#ifndef KSU_NO_PREINIT
+            ksu_preinit_release();
+#endif
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
             ksu_selinux_hide_handle_second_stage();
 #endif
@@ -345,6 +330,9 @@ int ksu_handle_execveat_ksud(int *fd, struct filename **filename_ptr, struct use
                         apply_kernelsu_rules();
                         cache_sid();
                         setup_ksu_cred();
+                        // after apply_kernelsu_rules, so that selinux_hide has its sepolicy backup
+                        ksu_feature_apply_forced();
+                        ksu_extension_apply_forced();
                         init_second_stage_executed = true;
                     }
                 }
@@ -581,14 +569,7 @@ bool ksu_is_safe_mode(void)
         return true;
 
     // stop hook first!
-#if defined(CONFIG_KSU_SUSFS) && defined(KSU_COMPAT_USE_STATIC_KEY)
-    if (static_key_enabled(&ksu_is_input_hook_enabled)) {
-        static_branch_disable(&ksu_is_input_hook_enabled);
-        pr_info("ksu_input_hook is disabled\n");
-    }
-#else
     stop_input_hook();
-#endif
 
     if (!safe_mode_flag)
         return false;
@@ -698,14 +679,30 @@ static struct input_handler vol_detector_handler = {
     .id_table = vol_detector_ids,
 };
 
+static bool vol_detector_registered = false;
+
 static int vol_detector_init()
 {
+    int ret;
+
     pr_info("vol_detector: init\n");
-    return input_register_handler(&vol_detector_handler);
+    ret = input_register_handler(&vol_detector_handler);
+    if (ret) {
+        pr_err("vol_detector: register failed: %d\n", ret);
+        return ret;
+    }
+
+    vol_detector_registered = true;
+    return 0;
 }
 
 static int vol_detector_exit(void)
 {
+    if (!vol_detector_registered) {
+        return 0;
+    }
+    vol_detector_registered = false;
+
     pr_info("vol_detector: exit\n");
     input_unregister_handler(&vol_detector_handler);
     return 0;
@@ -729,6 +726,14 @@ static void stop_input_hook(void)
         return;
     }
     ksu_input_hook = false;
+
+#if defined(CONFIG_KSU_SUSFS) && defined(KSU_COMPAT_USE_STATIC_KEY)
+    if (static_key_enabled(&ksu_is_input_hook_enabled)) {
+        static_branch_disable(&ksu_is_input_hook_enabled);
+        pr_info("ksu_input_hook is disabled\n");
+    }
+#endif
+
     pr_info("stop input_hook\n");
     vol_detector_exit();
 }
