@@ -231,17 +231,34 @@ jobs:
         working-directory: kernel
         run: |
           set -euo pipefail
-          REQUIRED=(
-            KernelSU/kernel/manager/apk_sign.c
-            KernelSU/kernel/manager/apk_sign.h
-            KernelSU/kernel/manager/manager.c
-            KernelSU/kernel/manager/manager_identity.h
-            KernelSU/kernel/manager/manager_observer.h
-            KernelSU/kernel/manager/manager_sign.h
-            KernelSU/kernel/manager/pkg_observer.c
-            KernelSU/kernel/manager/throne_tracker.c
-            KernelSU/kernel/manager/throne_tracker.h
-          )
+          # 两个 4.9 分支的 KernelSU 源码布局不同，必填清单必须分开，
+          # 否则会拿 BakaSU 的文件表去卡 SukiSU（manager.c / manager_sign.h
+          # 只存在于 BakaSU 的 manager/ 布局里）。
+          if [ "${{ inputs.build_ref }}" = "sukisu-susfs-bpf" ]; then
+            REQUIRED=(
+              KernelSU/kernel/manager/apk_sign.c
+              KernelSU/kernel/manager/apk_sign.h
+              KernelSU/kernel/manager/manager_identity.h
+              KernelSU/kernel/manager/manager_observer.h
+              KernelSU/kernel/manager/pkg_observer.c
+              KernelSU/kernel/manager/throne_tracker.c
+              KernelSU/kernel/manager/throne_tracker.h
+            )
+            LAYOUT="SukiSU"
+          else
+            REQUIRED=(
+              KernelSU/kernel/manager/apk_sign.c
+              KernelSU/kernel/manager/apk_sign.h
+              KernelSU/kernel/manager/manager.c
+              KernelSU/kernel/manager/manager_identity.h
+              KernelSU/kernel/manager/manager_observer.h
+              KernelSU/kernel/manager/manager_sign.h
+              KernelSU/kernel/manager/pkg_observer.c
+              KernelSU/kernel/manager/throne_tracker.c
+              KernelSU/kernel/manager/throne_tracker.h
+            )
+            LAYOUT="BakaSU"
+          fi
           MISSING=""
           for f in "${REQUIRED[@]}"; do
             [ -f "$f" ] || MISSING="$MISSING $f"
@@ -251,7 +268,7 @@ jobs:
             echo "::error::请将 KernelSU/kernel/manager/ 与 KernelSU 源码一同提交进仓库（本仓库为 vendored，勿从上游拉取，版本不匹配会编译失败）"
             exit 1
           fi
-          echo "✅ KernelSU manager 目录完整（9 个必需文件）"
+          echo "✅ KernelSU manager 目录完整（${LAYOUT} 布局，${#REQUIRED[@]} 个必需文件）"
 
       - name: 安装编译依赖
         timeout-minutes: 20
