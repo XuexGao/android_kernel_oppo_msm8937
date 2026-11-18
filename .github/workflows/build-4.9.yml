@@ -422,14 +422,20 @@ jobs:
                 | awk '{print $3}' | paste -sd.)"
           KV_FULL="${KV}$(grep -E '^EXTRAVERSION' Makefile | awk '{print $3}')"
 
-          [ -f include/linux/susfs.h ] && \
-            SUSFS_VERSION="$(sed -n 's/^#define SUSFS_VERSION "\{0,1\}\(v[0-9.]*\)"\{0,1\}/\1/p' include/linux/susfs.h | head -1)" || \
-            SUSFS_VERSION=""
+          SUSFS_VERSION=""
+          if [ -f include/linux/susfs.h ]; then
+            SUSFS_VERSION="$(sed -n 's/^#define SUSFS_VERSION "\{0,1\}\(v[0-9.]*\)"\{0,1\}/\1/p' include/linux/susfs.h | head -1)"
+          fi
           [ -n "${SUSFS_VERSION}" ] || SUSFS_VERSION="unknown"
-          # root 方案的版本钉在 Kbuild 里（上游的 KSU_RELEASE 变量已不存在）。
-          [ -f KernelSU/kernel/Kbuild ] && \
-            KSU_REL="$(grep -E '^KSU_VERSION[[:space:]]*:=' KernelSU/kernel/Kbuild | grep -oE '[0-9]+' | head -1)" || \
-            KSU_REL=""
+          # root 方案版本码的来源随源码布局不同：
+          #   BakaSU -> KernelSU/kernel/Kbuild 里钉死的 `KSU_VERSION :=`
+          #   SukiSU -> 没有 Kbuild，用 setup 阶段算好并传进来的 KSU_VERSION
+          # 用 if 而不是 `[ -f ] && ... || ...`：后者在文件不存在时仍会去执行
+          # grep，报 "No such file or directory" 并在 pipefail 下污染退出码。
+          KSU_REL=""
+          if [ -f KernelSU/kernel/Kbuild ]; then
+            KSU_REL="$(grep -E '^KSU_VERSION[[:space:]]*:=' KernelSU/kernel/Kbuild | grep -oE '[0-9]+' | head -1)"
+          fi
           [ -n "${KSU_REL}" ] || KSU_REL="${KSU_VERSION}"
           echo "内核版本: ${KV_FULL} | SUSFS: ${SUSFS_VERSION} | root方案: ${KSU_REL}"
           {
@@ -561,31 +567,40 @@ jobs:
             echo "::error::SUSFS 内核日志仍开着（会往 dmesg 写 susfs: 标记，易被检测）"; FAIL=1
           fi
 
-          # 6) 版本码必须与对外发布的 manager APK 一致。
-          #    BakaSU 的公式（Kbuild 与 manager/build.gradle.kts 一致）：
-          #      KSU_VERSION = 30000 + git commit count + 700
-          #    main @ 516d3e87 的提交数为 4557 -> 35257，且 Build Manager 工作流
-          #    产出的资产文件名本身就是 BakaSU_v4.2.0-rc3_35257-*-release.apk，
-          #    证明 manager 的实际 versionCode 也是 35257。
-          #    Kbuild 里必须已经钉死、不得再依赖 git。
-          KSU_PIN="$(grep -E '^KSU_VERSION[[:space:]]*:=' KernelSU/kernel/Kbuild | grep -oE '[0-9]+' | head -1)"
-          echo "钉死值: KSU_VERSION=${KSU_PIN}"
-          [ "${KSU_PIN}" = "35257" ] || { echo "::error::KernelSU/kernel/Kbuild 里 KSU_VERSION 应为 35257，实际 '${KSU_PIN}'"; FAIL=1; }
-          if grep -Eq 'rev-list|--unshallow|GIT_BIN|LOCAL_GIT_EXISTS' KernelSU/kernel/Kbuild; then
-            echo "::error::Kbuild 仍依赖 git（vendored 源码下必须全部去除）"; FAIL=1
-          fi
+          # 6)/7) 版本码与版本串校验。两条 root 方案的源码布局与版本方案都不同，
+          #       不能共用一套断言：
+          #   BakaSU —— 版本钉在 KernelSU/kernel/Kbuild 的 `KSU_VERSION :=`，
+          #             与 manager/build.gradle.kts 的 versionCode 一致（35257），
+          #             对外版本串形如 v4.2.0-rc3-<commit>。
+          #   SukiSU —— 没有 Kbuild（用 Makefile 的 obj-$(CONFIG_KSU) := ksu.o），
+          #             版本由 setup 阶段的 KSU_VERSION 输出与 manager APK 对齐，
+          #             这里只做健全性检查：产物里能取到非空版本串。
+          if [ "${{ inputs.build_ref }}" = "sukisu-susfs-bpf" ]; then
+            VERFULL="$(grep -rhoa 'v[0-9]\+\.[0-9]\+\.[0-9]\+[^"]*' out/drivers/kernelsu 2>/dev/null | head -1 || true)"
+            echo "KSU_VERSION_FULL = ${VERFULL:-未找到}"
+            [ -n "${VERFULL}" ] || { echo "::error::SukiSU 产物里没找到版本串"; FAIL=1; }
+          else
+            #    BakaSU 的公式（Kbuild 与 manager/build.gradle.kts 一致）：
+            #      KSU_VERSION = 30000 + git commit count + 700
+            #    main @ 516d3e87 的提交数为 4557 -> 35257，且 Build Manager 工作流
+            #    产出的资产文件名本身就是 BakaSU_v4.2.0-rc3_35257-*-release.apk，
+            #    证明 manager 的实际 versionCode 也是 35257。
+            #    Kbuild 里必须已经钉死、不得再依赖 git。
+            KSU_PIN="$(grep -E '^KSU_VERSION[[:space:]]*:=' KernelSU/kernel/Kbuild | grep -oE '[0-9]+' | head -1)"
+            echo "钉死值: KSU_VERSION=${KSU_PIN}"
+            [ "${KSU_PIN}" = "35257" ] || { echo "::error::KernelSU/kernel/Kbuild 里 KSU_VERSION 应为 35257，实际 '${KSU_PIN}'"; FAIL=1; }
+            if grep -Eq 'rev-list|--unshallow|GIT_BIN|LOCAL_GIT_EXISTS' KernelSU/kernel/Kbuild; then
+              echo "::error::Kbuild 仍依赖 git（vendored 源码下必须全部去除）"; FAIL=1
+            fi
 
-          # 7) 上报给 userspace 的 BakaSU 版本串（Manager 里那一行）
-          #    由 CONFIG_KSU_FULL_NAME_FORMAT 决定（main 上默认已改为
-          #    "%TAG_NAME%-%COMMIT_SHA%"，不再带 @REPO_NAME）。这里只要求
-          #    「非空且与钉死的 commit 对得上」，避免上游改格式时误报。
-          VERFULL="$(grep -rhoa 'v4\.2\.0-rc3[^"]*' out/drivers/kernelsu 2>/dev/null | head -1 || true)"
-          echo "KSU_VERSION_FULL = ${VERFULL:-未找到}"
-          [ -n "${VERFULL}" ] || { echo "::error::没找到含 v4.2.0-rc3 的 KSU_VERSION_FULL"; FAIL=1; }
-          case "${VERFULL}" in
-            *516d3e87*) : ;;
-            *) echo "::error::KSU_VERSION_FULL='${VERFULL}' 未含钉死的 commit 516d3e87"; FAIL=1 ;;
-          esac
+            VERFULL="$(grep -rhoa 'v4\.2\.0-rc3[^"]*' out/drivers/kernelsu 2>/dev/null | head -1 || true)"
+            echo "KSU_VERSION_FULL = ${VERFULL:-未找到}"
+            [ -n "${VERFULL}" ] || { echo "::error::没找到含 v4.2.0-rc3 的 KSU_VERSION_FULL"; FAIL=1; }
+            case "${VERFULL}" in
+              *516d3e87*) : ;;
+              *) echo "::error::KSU_VERSION_FULL='${VERFULL}' 未含钉死的 commit 516d3e87"; FAIL=1 ;;
+            esac
+          fi
 
           [ "${FAIL}" = "0" ] || { echo "::error::隐藏性校验未通过，见上面的 ::error 行"; exit 1; }
           echo "✅ 隐藏项校验全部通过"
