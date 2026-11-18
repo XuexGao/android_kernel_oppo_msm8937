@@ -525,9 +525,17 @@ jobs:
           else
             echo "✅ 产物对象内无分支名 / fork 标识"
           fi
-          # BakaSU 的 KSU 驱动产物对象名是 kernelsu.o（旧 SukiSU 是 ksu.o）
-          test -f out/drivers/kernelsu/kernelsu.o \
-            || { echo "::error::未找到 out/drivers/kernelsu/kernelsu.o（BakaSU 的产物名应为 kernelsu.o）"; FAIL=1; }
+          # KSU 驱动产物对象名随 root 方案不同：
+          #   BakaSU  -> out/drivers/kernelsu/kernelsu.o（Kbuild: kernelsu-objs）
+          #   SukiSU  -> out/drivers/kernelsu/ksu.o      （Makefile: obj-$(CONFIG_KSU) := ksu.o）
+          if [ -f out/drivers/kernelsu/kernelsu.o ]; then
+            KSU_OBJ=kernelsu.o
+          elif [ -f out/drivers/kernelsu/ksu.o ]; then
+            KSU_OBJ=ksu.o
+          else
+            echo "::error::未找到 KSU 驱动产物对象（既无 kernelsu.o 也无 ksu.o）"; FAIL=1; KSU_OBJ=missing
+          fi
+          [ "${KSU_OBJ}" = "missing" ] || echo "✅ KSU 驱动产物：${KSU_OBJ}"
           # BakaSU 下 dmesg 无法像 SukiSU 那样靠一个总开关完全静默：
           # 只能保证 debug 日志与 SUSFS 日志两个已知开关都关闭。
           if grep -q '^CONFIG_KSU_DEBUG=y$' out/.config; then
