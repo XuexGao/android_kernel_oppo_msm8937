@@ -566,7 +566,17 @@ jobs:
           [ -n "${KSU_VERSION}" ] || KSU_VERSION="unknown"
           echo "KV_FULL=${KV_FULL} | SUSFS=${SUSFS_VERSION} | BakaSU=${KSU_VERSION}"
 
-          git log -10 --pretty=format:'%s (%h)' > "${GITHUB_WORKSPACE}/changes.txt"
+          # 只取相对上一版 Release 的提交；找不到上一版就退回最近 20 条。
+          PREV_TAG="$(gh release list --repo "${GITHUB_REPOSITORY}" --limit 30 \
+                        --json tagName --jq '.[].tagName' 2>/dev/null \
+                      | grep -E '^BakaSU419_[0-9]{8}$' | head -1 || true)"
+          echo "上一版 tag: ${PREV_TAG:-无}"
+          if [ -n "${PREV_TAG}" ]; then
+            git log "${PREV_TAG}..HEAD" --pretty=format:'%s' > "${GITHUB_WORKSPACE}/changes.txt" 2>/dev/null \
+              || git log -20 --pretty=format:'%s' > "${GITHUB_WORKSPACE}/changes.txt"
+          else
+            git log -20 --pretty=format:'%s' > "${GITHUB_WORKSPACE}/changes.txt"
+          fi
 
           export KV_FULL SUSFS_VERSION KSU_VERSION BUILD_DATE BRANCH
           export OS_SUPPORT ANDROID_SUPPORT TARGETS_JSON
@@ -587,8 +597,19 @@ jobs:
           changes = open(os.path.join(env("GITHUB_WORKSPACE"), "changes.txt")).read()
 
           targets = json.loads(env("TARGETS_JSON") or "[]")
-          # base 是冒烟目标，不产出机型 zip，正文里不列
-          devices = [t for t in targets if t.get("device_names", "").strip()]
+          # base 是冒烟目标，不产出机型 zip，正文里不列。
+          # 另外按当前构建的分支过滤变体：矩阵里同时存在纯净目标（R9s）和
+          # BakaSU 目标（R9s-bakasu），但一次构建只会产出其中一套 ——
+          # 原先把两者都列出来，导致纯净版的 Release 里出现 -bakasu 的包，
+          # 同一个机型还会重复两行。
+          def _is_bakasu_target(t):
+              return t["target"].endswith("-bakasu")
+
+          devices = [
+              t for t in targets
+              if t.get("device_names", "").strip()
+              and _is_bakasu_target(t) == is_bakasu
+          ]
 
           def base_name(t):
               """矩阵里的机型基名：R9s-bakasu -> R9s。"""
@@ -600,79 +621,117 @@ jobs:
 
           susfs_num = susfs.lstrip("v") if susfs != "unknown" else susfs
 
+          # ---- 更改：把约定式提交翻成中文分组条目 ----
+          GROUP_NAMES = [
+              ("feat",     "新增功能"),
+              ("fix",      "问题修复"),
+              ("kernelsu", "KernelSU / root 方案"),
+              ("susfs",    "SUSFS"),
+              ("config",   "机型配置"),
+              ("ci",       "构建与发布"),
+              ("chore",    "仓库维护"),
+              ("docs",     "文档"),
+              ("perf",     "性能优化"),
+              ("refactor", "重构"),
+          ]
+          ALIAS = {
+              "configs": "config", "kernel-su": "kernelsu", "ksu": "kernelsu",
+              "sus_fs": "susfs", "actions": "ci", "build": "ci", "release": "ci",
+              "revert": "fix", "hotfix": "fix", "style": "chore",
+          }
+
+          buckets, seen = {}, set()
+          for line in changes.splitlines():
+              line = line.strip()
+              if not line:
+                  continue
+              m = re.match(r"^([a-zA-Z]+)(\([^)]*\))?!?:\s*(.+)$", line)
+              if m:
+                  typ = ALIAS.get(m.group(1).lower(), m.group(1).lower())
+                  desc = m.group(3).strip()
+              else:
+                  typ, desc = "other", line
+              if desc.lower() in seen:
+                  continue
+              seen.add(desc.lower())
+              buckets.setdefault(typ, []).append(desc)
+
+          name_of = dict(GROUP_NAMES); name_of["other"] = "其他"
+          blocks = []
+          for typ in [g[0] for g in GROUP_NAMES] + ["other"]:
+              items = buckets.get(typ)
+              if not items:
+                  continue
+              blocks.append(f"**{name_of[typ]}**")
+              blocks.append("")
+              blocks.extend(f"- {it}" for it in items[:12])
+              blocks.append("")
+          change_text = "\n".join(blocks).rstrip() if blocks else "本次没有需要单独说明的改动。"
+
+          # ---- 正文 ----
           lines = []
+          kind = "BakaSU + SUSFS" if is_bakasu else "纯净版"
+          lines.append(f"OPPO MSM8937 / MSM8953 系列的 **4.19** 内核（{kind}），基于 Linux {kv}。")
+          lines.append("")
           if is_bakasu:
-              lines.append("> OPPO MSM8937 / MSM8953 系列的 **4.19** 内核（BakaSU + SUSFS）。")
+              lines.append(f"面向 LineageOS 22.1。带 root，版本码 {ksu}，配 BakaSU 管理器使用。")
           else:
-              lines.append("> OPPO MSM8937 / MSM8953 系列的 **4.19** 内核（纯净版，无 root）。")
-          lines.append(">")
-          lines.append("> 与 4.9 系列并行维护：4.9 分支面向 LineageOS 21 / 22.0 / 22.1，")
-          lines.append("> 本 4.19 分支为更新的内核基线，面向 LineageOS 22.1。")
+              lines.append("面向 LineageOS 22.1。不含 root，需要 Magisk 的话自行刷入。")
           lines.append("")
-          lines.append("### 下载选择")
+          lines.append("## 下载")
           lines.append("")
-          lines.append("| 内核 | 特性 | 适用场景 | 管理器下载 |")
-          lines.append("|---|---|---|---|")
-          if is_bakasu:
-              lines.append(f"| **BakaSU + SUSFS** | BakaSU (main) / KSU_VERSION {ksu} + SUSFS {susfs} | 需要 SUSFS 隐藏功能、sus mount、sus path 等 | [BakaSU Manager]({MANAGER_URL}) |")
-          else:
-              lines.append(f"| **纯净内核** | 无 root / 无 KernelSU | 不需要 root，或想自行刷 Magisk | — |")
-          lines.append("")
-          lines.append("提供格式：")
-          lines.append("")
-          lines.append("- **.zip** — AnyKernel3 刷入包，通过 recovery (TWRP) 刷入")
-          if is_bakasu:
-              lines.append("- **.apk** — BakaSU 管理器（内核版本码与之一致），可选安装")
-          lines.append("")
-          lines.append("### 本次构建")
-          lines.append("")
-          lines.append("| 机型 | 下载 | 平台 | 内核版本 |")
-          lines.append("|---|---|---|---|")
+          lines.append("| 机型 | 平台 | 刷机包 |")
+          lines.append("|---|---|---|")
           for d in devices:
               label = re.sub(r"\s*\(.*(BakaSU|root).*\)$", "", d["label"]).strip()
-              lines.append(f"| OPPO {label} | `{zip_name(d)}` | {d['soc']} / {d['snapdragon']} | {kv} |")
+              lines.append(f"| OPPO {label} | {d['snapdragon']} | `{zip_name(d)}` |")
           lines.append("")
-          lines.append("### 共同信息")
+
+          if is_bakasu:
+              lines.append("## 管理器")
+              lines.append("")
+              lines.append(f"需要 versionCode 为 {ksu} 的 BakaSU 管理器。")
+              lines.append(f"本页有 `BakaSU_{ksu}_{date}.apk` 就直接装，没有的话去 [BakaSU Manager]({MANAGER_URL}) 找。")
+              lines.append("")
+
+          lines.append("## 刷入")
           lines.append("")
+          lines.append("1. 下好对应机型的 `v419_*.zip`")
+          if is_bakasu:
+              lines.append("2. 装好上面的管理器 APK")
+              lines.append("3. 重启进 recovery（TWRP）")
+              lines.append("4. 刷入 zip 后重启")
+              lines.append("5. 打开管理器，确认已识别到 root")
+          else:
+              lines.append("2. 重启进 recovery（TWRP）")
+              lines.append("3. 刷入 zip 后重启")
+          lines.append("")
+
+          lines.append("## 信息")
+          lines.append("")
+          lines.append("| 项目 | 值 |")
+          lines.append("|---|---|")
           dev_names = " / ".join(
               re.sub(r"\s*\(.*(BakaSU|root).*\)$", "", d["label"]).strip() for d in devices
           )
           if dev_names:
-              lines.append(f"- **设备**: OPPO {dev_names}")
-          lines.append(f"- **系统**: {os_support} (Android {android})")
-          lines.append(f"- **内核版本**: {kv} (Non-GKI)")
-          lines.append("- **编译器**: ZyCromerZ Clang 13.0.1 + GCC (aarch64/arm)")
-          lines.append(f"- **分支**: {br}")
-          lines.append("")
+              lines.append(f"| 机型 | OPPO {dev_names} |")
+          lines.append(f"| 内核 | {kv} |")
+          lines.append(f"| 系统 | {os_support}（Android {android}） |")
           if is_bakasu:
-              lines.append(f"### BakaSU (含 SUSFS {susfs_num})")
-              lines.append("")
-              lines.append("- root 方案: BakaSU（main 分支最新源码）")
-              lines.append(f"- KSU_VERSION (内核版本码): {ksu}，与所选管理器 APK 的 versionCode 一致")
-              lines.append("- hook 模式: SUSFS Inline Hook (`CONFIG_KSU_SUSFS=y`)")
-              lines.append(f"- SUSFS {susfs} (内核侧，保留)")
-              lines.append(f"- 管理器: 本页资产里的 `BakaSU_{ksu}_{date}.apk`（与内核 versionCode 一致）")
-              lines.append(f"  - 若本页没有该 apk，可从 [BakaSU Build Manager（main 分支）]({MANAGER_URL}) 的 Artifacts 取 `Manager-release`，")
-              lines.append(f"    解压后选 versionCode 为 **{ksu}** 的 `*universal-release.apk`；对不上时 Manager 会提示版本不匹配")
-              lines.append("")
-          lines.append("### 刷入方法")
+              lines.append(f"| root 方案 | BakaSU，版本码 {ksu} |")
+              lines.append(f"| SUSFS | {susfs} |")
+          else:
+              lines.append("| root | 无（纯净内核） |")
+          lines.append("| 编译器 | ZyCromerZ Clang 13.0.1 |")
           lines.append("")
-          lines.append("#### 通过 Recovery (TWRP)")
+          lines.append("## 更改")
           lines.append("")
-          lines.append("1. 下载对应机型的 `v419_*.zip`")
-          if is_bakasu:
-              lines.append("2. 下载并安装 BakaSU Manager APK（见本页资产）")
-          lines.append("3. 重启到 recovery (TWRP)")
-          lines.append("4. 刷入对应机型的 zip")
-          lines.append("5. 重启")
-          if is_bakasu:
-              lines.append("6. 打开 Manager 验证驱动检测")
+          lines.append(change_text)
           lines.append("")
-          lines.append("### Changes")
+          lines.append("---")
           lines.append("")
-          lines.append(changes)
-          lines.append("")
-          lines.append("> 基于 [XuexGao/android_kernel_oppo_msm8937](https://github.com/XuexGao/android_kernel_oppo_msm8937) 自动构建")
+          lines.append("由 GitHub Actions 自动构建。")
 
           with open(os.path.join(env("GITHUB_WORKSPACE"), "release-body.md"), "w") as f:
               f.write("\n".join(lines) + "\n")
