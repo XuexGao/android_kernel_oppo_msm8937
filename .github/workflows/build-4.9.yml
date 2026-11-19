@@ -929,11 +929,22 @@ jobs:
           fi
           OUT="${GITHUB_WORKSPACE}/${PREFIX}_${APK_VER}_${BUILD_DATE}.apk"
 
-          RUN_ID="$(gh run list --repo "${REPO}" \
-                      --workflow "${WORKFLOW}" --branch main \
-                      --status success --limit 1 \
-                      --json databaseId --jq '.[0].databaseId' 2>/dev/null || true)"
-          echo "${PREFIX} Manager 最近成功运行: ${RUN_ID:-未找到}"
+          # 取上游最近的 manager 构建。注意这里必须整体容错：
+          #   · 跨仓库查询在权限不足/限流时会非零退出（原写法靠 || true 兜底）
+          #   · jq 在空数组上会输出 "null" 字面量，不是空串
+          # 两者都会让 `set -euo pipefail` 下的整步失败。这里统一收敛成空串 +
+          # 非零退出视为"没有"，后面只在 RUN_ID 非空且非 null 时才去下载。
+          RUN_ID=""
+          if RAW_ID="$(gh run list --repo "${REPO}" \
+                        --workflow "${WORKFLOW}" --branch main \
+                        --status success --limit 1 \
+                        --json databaseId --jq '.[0].databaseId // empty' 2>/dev/null)"; then
+            case "${RAW_ID}" in
+              ""|null) RUN_ID="" ;;
+              *)       RUN_ID="${RAW_ID}" ;;
+            esac
+          fi
+          echo "${PREFIX} Manager 最近成功运行: ${RUN_ID:-未找到（将不附带 APK）}"
 
           if [ -n "${RUN_ID}" ]; then
             gh run download "${RUN_ID}" --repo "${REPO}" \
