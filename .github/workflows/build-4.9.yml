@@ -121,11 +121,24 @@ jobs:
           #      BakaSU 的 KSU_VERSION 已在 KernelSU/kernel/Kbuild 里钉死为 35257
           #      （= 30000 + main @ 516d3e87 的 4557 个提交 + 700，与 Build Manager
           #      工作流产出的 APK 的 versionCode 一致）。
-          #      SukiSU 跟随正式版 v4.2.0（versionCode 40900）。
-          #      SukiSU-Nova builtin 的版本码由 Makefile 按上游提交数算，
-          #      当前主线算出来是 30007（v3.0.0-<sha>）。这里给与之一致的兜底值。
+          #      SukiSU-Nova：版本码必须以官方发行版管理器 APK 的 versionCode 为准，
+          #      否则内核与 APK 对不上、管理器会报版本不匹配。上游资产名形如
+          #      SukiSU_Nova_v3.0.0_35000-arm64-v8a-release.apk，35000 就是那个值。
+          #      这里现取，取不到才退到本地公式的历史值 —— 上游以后发新版会自动跟上。
           case "${BRANCH}" in
-            sukisu-susfs-bpf) KSU_VERSION="30007" ;;
+            sukisu-susfs-bpf)
+              UP_CODE="$(curl -sf --max-time 20 \
+                  https://api.github.com/repos/SukiSU-Nova/SukiSU-Nova/releases/latest 2>/dev/null \
+                  | grep -oE '_v[0-9.]+_[0-9]+-' | head -1 \
+                  | grep -oE '[0-9]+-$' | tr -d '-' || true)"
+              if [ -n "${UP_CODE}" ]; then
+                KSU_VERSION="${UP_CODE}"
+                echo "SukiSU-Nova versionCode from upstream release: ${KSU_VERSION}"
+              else
+                KSU_VERSION="30007"
+                echo "::warning::取不到 SukiSU-Nova 发行版的 versionCode，暂用兜底值 ${KSU_VERSION}"
+              fi
+              ;;
             *)                KSU_VERSION="35257" ;;
           esac
 
@@ -785,8 +798,20 @@ jobs:
           echo "RELEASE_TITLE=${RELEASE_TITLE}"
           echo "RELEASE_TITLE=${RELEASE_TITLE}" >> "$GITHUB_ENV"
 
-          # ---- Changes（最近提交，提交标题 (短哈希)）----
-          git log -10 --pretty=format:'%s (%h)' > "${GITHUB_WORKSPACE}/changes.txt"
+          # ---- Changes ----
+          # 只取「本次发布相对上一版」的提交，并按类型归类，写成中文条目。
+          # 上一版：同分支最近一个 Release 的 tag；找不到就退到最近 20 条。
+          PREV_TAG="$(gh release list --repo "${GITHUB_REPOSITORY}" --limit 30 \
+                        --json tagName --jq '.[].tagName' 2>/dev/null \
+                      | grep -E "^${ZIP_PREFIX:-SukiSU}_[0-9]{8}$" | head -1 || true)"
+          echo "上一版 tag: ${PREV_TAG:-无}"
+          if [ -n "${PREV_TAG}" ]; then
+            RANGE="${PREV_TAG}..HEAD"
+          else
+            RANGE="-20"
+          fi
+          git log ${RANGE} --pretty=format:'%s' > "${GITHUB_WORKSPACE}/changes.txt" 2>/dev/null || \
+            git log -20 --pretty=format:'%s' > "${GITHUB_WORKSPACE}/changes.txt"
 
           # ---- 汇总生成正文 ----
           export KV_FULL SUSFS_VERSION
@@ -824,66 +849,115 @@ jobs:
           ksu = env("KSU_VERSION"); susfs = env("SUSFS_VERSION")
           br = env("BRANCH"); kv = env("KV_FULL")
           os_support = env("OS_SUPPORT"); android = env("ANDROID_SUPPORT")
-          changes = open(os.path.join(env("GITHUB_WORKSPACE"), "changes.txt")).read()
+          raw_changes = open(os.path.join(env("GITHUB_WORKSPACE"), "changes.txt")).read()
+
+          # 把约定式提交（type(scope): 描述）翻译成中文分组条目。
+          # 已写成中文的描述原样保留；纯英文的老提交尽量归到对应分组。
+          GROUP_NAMES = [
+              ("feat",     "新增功能"),
+              ("fix",      "问题修复"),
+              ("kernelsu", "KernelSU / root 方案"),
+              ("susfs",    "SUSFS"),
+              ("config",   "机型配置"),
+              ("ci",       "构建与发布"),
+              ("chore",    "仓库维护"),
+              ("docs",     "文档"),
+              ("perf",     "性能优化"),
+              ("refactor", "重构"),
+          ]
+          ALIAS = {
+              "configs": "config", "kernel-su": "kernelsu", "ksu": "kernelsu",
+              "sus_fs": "susfs", "actions": "ci", "build": "ci", "release": "ci",
+              "revert": "fix", "hotfix": "fix", "style": "chore",
+          }
+
+          import re as _re
+          buckets = {}
+          seen = set()
+          for line in raw_changes.splitlines():
+              line = line.strip()
+              if not line:
+                  continue
+              m = _re.match(r"^([a-zA-Z]+)(\([^)]*\))?!?:\s*(.+)$", line)
+              if m:
+                  typ = m.group(1).lower()
+                  typ = ALIAS.get(typ, typ)
+                  desc = m.group(3).strip()
+              else:
+                  # 没有约定式前缀（例如上游同步的 UPSTREAM/BACKPORT），归类为其他
+                  typ, desc = "other", line
+              key = desc.lower()
+              if key in seen:
+                  continue
+              seen.add(key)
+              buckets.setdefault(typ, []).append(desc)
+
+          order = [g[0] for g in GROUP_NAMES] + ["other"]
+          name_of = dict(GROUP_NAMES)
+          name_of["other"] = "其他"
+
+          if buckets:
+              lines_changes = []
+              for typ in order:
+                  items = buckets.get(typ)
+                  if not items:
+                      continue
+                  lines_changes.append(f"**{name_of[typ]}**")
+                  lines_changes.append("")
+                  for it in items[:12]:
+                      lines_changes.append(f"- {it}")
+                  lines_changes.append("")
+              changes = "\n".join(lines_changes).rstrip()
+          else:
+              changes = "本次没有需要单独说明的改动。"
 
           device_names = " / ".join(d["label"] for d in devices)
 
           lines = []
-          lines.append("> **通用内核**：同一个包通刷 **LineageOS 21 / 22.0 / 22.1**（Android 14 / 15），")
-          lines.append("> 只需按机型下载，不必按系统版本区分。")
+          lines.append(f"OPPO MSM8937 / MSM8953 系列内核，基于 Linux {kv}，一个包通刷 {os_support}。")
           lines.append("")
-          lines.append("### 下载选择")
+          lines.append("## 下载")
           lines.append("")
-          lines.append("| 内核 | 特性 | 适用场景 | 管理器下载 |")
-          lines.append("|---|---|---|---|")
-          lines.append(f"| **{ROOT_NAME} + SUSFS** | {ROOT_NAME} {ROOT_VER} / KSU_VERSION {ksu} + SUSFS {susfs} | 需要 SUSFS 隐藏功能、sus mount、sus path 等 | [{ROOT_NAME} Manager]({MANAGER_URL}) |")
-          lines.append("")
-          lines.append("提供格式：")
-          lines.append("")
-          lines.append("- **.zip** — AnyKernel3 刷入包，通过 recovery (TWRP) 刷入")
-          lines.append(f"- **.apk** — {ROOT_NAME} 管理器（内核版本码与之一致），可选安装")
-          lines.append("")
-          lines.append("### 本次构建")
-          lines.append("")
-          lines.append("| 机型 | 下载 | 平台 | 内核版本 |")
-          lines.append("|---|---|---|---|")
+          lines.append("| 机型 | 平台 | 刷机包 |")
+          lines.append("|---|---|---|")
           for d in devices:
-              lines.append(f"| OPPO {d['label']} | `{ZIP_PREFIX}_{d['device']}_{date}.zip` | {d['soc']} / {d['snapdragon']} | {kv} |")
+              lines.append(f"| OPPO {d['label']} | {d['snapdragon']} | `{ZIP_PREFIX}_{d['device']}_{date}.zip` |")
           lines.append("")
-          lines.append("### 共同信息")
+          lines.append("## 管理器")
           lines.append("")
-          lines.append(f"- **设备**: OPPO {device_names}")
-          lines.append(f"- **系统**: {os_support} (Android {android})，无需按版本区分")
-          lines.append(f"- **内核版本**: {kv} (Non-GKI)")
-          lines.append("- **编译器**: ZyCromerZ Clang 13.0.1 + GCC (aarch64/arm)")
-          lines.append(f"- **分支**: {br}")
+          if IS_SUKISU:
+              lines.append("用 SukiSU-Nova 官方管理器，下载 [v3.0.0 发行版](https://github.com/SukiSU-Nova/SukiSU-Nova/releases/latest) 里的 `arm64-v8a` APK。")
+              lines.append(f"本页也附了一份，文件名 `{APK_PREFIX}_{ksu}_{date}.apk`，内容一样，装哪个都行。")
+          else:
+              lines.append(f"需要 versionCode 为 {ksu} 的 BakaSU 管理器。")
+              lines.append(f"本页有 `{APK_PREFIX}_{ksu}_{date}.apk` 就直接装，没有的话去 [BakaSU Manager]({MANAGER_URL}) 找。")
           lines.append("")
-          lines.append(f"### {ROOT_NAME} (含 SUSFS {susfs})")
+          lines.append("## 刷入")
           lines.append("")
-          lines.append(f"- root 方案: {ROOT_NAME} {ROOT_VER}")
-          lines.append(f"- KSU_VERSION (内核版本码): {ksu}，与所选管理器 APK 的 versionCode 一致")
-          lines.append("- hook 模式: SUSFS Inline Hook (`CONFIG_KSU_SUSFS=y`)")
-          lines.append(f"- SUSFS {susfs} (内核侧，保留)")
-          lines.append(f"- 管理器: 需要 versionCode 为 **{ksu}** 的 APK 与内核配套（对不上时 Manager 会提示版本不匹配）")
-          lines.append(f"  - 本页资产里**有** `{APK_PREFIX}_{ksu}_{date}.apk` 时可直接安装；")
-          lines.append(f"  - 若本页没有（跨仓库拉取 Artifacts 需要 PAT，未配置时会跳过），请到 [{ROOT_NAME} Manager 工作流]({MANAGER_URL}) 的 Artifacts 里取")
+          lines.append(f"1. 下好对应机型的 `{ZIP_PREFIX}_*.zip`")
+          lines.append("2. 装好管理器 APK")
+          lines.append("3. 重启进 recovery（TWRP）")
+          lines.append("4. 刷入 zip 后重启")
+          lines.append("5. 打开管理器，确认已识别到 root")
           lines.append("")
-          lines.append("### 刷入方法")
+          lines.append("## 信息")
           lines.append("")
-          lines.append("#### 通过 Recovery (TWRP)")
+          lines.append("| 项目 | 值 |")
+          lines.append("|---|---|")
+          lines.append(f"| 机型 | OPPO {' / '.join(d['label'] for d in devices)} |")
+          lines.append(f"| 内核 | {kv} |")
+          lines.append(f"| root 方案 | {ROOT_NAME} {ROOT_VER} |")
+          lines.append(f"| 版本码 | {ksu}（与管理器 APK 一致） |")
+          lines.append(f"| SUSFS | {susfs} |")
+          lines.append(f"| 编译器 | ZyCromerZ Clang 13.0.1 |")
           lines.append("")
-          lines.append(f"1. 下载对应机型的 `{ZIP_PREFIX}_*.zip`")
-          lines.append(f"2. 下载并安装 {ROOT_NAME} Manager APK（见本页资产或上面的入口链接）")
-          lines.append("3. 重启到 recovery (TWRP)")
-          lines.append("4. 刷入对应机型的 zip")
-          lines.append("5. 重启")
-          lines.append("6. 打开 Manager 验证驱动检测")
-          lines.append("")
-          lines.append("### Changes")
+          lines.append("## 更改")
           lines.append("")
           lines.append(changes)
           lines.append("")
-          lines.append("> 基于 [XuexGao/android_kernel_oppo_msm8937](https://github.com/XuexGao/android_kernel_oppo_msm8937) 自动构建")
+          lines.append("---")
+          lines.append("")
+          lines.append("由 GitHub Actions 自动构建。")
 
           with open(os.path.join(env("GITHUB_WORKSPACE"), "release-body.md"), "w") as f:
               f.write("\n".join(lines) + "\n")
@@ -892,23 +966,15 @@ jobs:
           echo "---- release-body.md ----"
           cat "${GITHUB_WORKSPACE}/release-body.md"
 
-      # 下载与内核 KSU_VERSION 对齐的 BakaSU 管理器 APK（尽力而为）。
-      # 上游目前没有带 APK 的正式 release（最新 tag 是 pre-release 的 v4.2.0-rc3，
-      # 且其资产名仍是旧项目名），因此与内核 KSU_VERSION=35257 对齐的管理器只能
-      # 从 Build Manager 工作流（main 分支）的 Artifacts 取 —— 也就是 README 里
-      # 对外给出的那个入口。
+      # 附上管理器 APK。
       #
-      # 实测（2026-10-05 运行 37348270589）：本仓库的 GITHUB_TOKEN 可以读取公开
-      # 仓库 Baka-SU/BakaSU 的 Artifacts，已成功取到
-      # BakaSU_v4.2.0-rc3_35257-universal-release.apk 并作为资产附上。
-      # 注意：完全不带认证的匿名请求是 403，所以这里必须有 token；GITHUB_TOKEN
-      # 足够。若哪天上游改为私有、或读取被限流，可另配 BAKASU_TOKEN（public_repo
-      # PAT）覆盖；两者都取不到时只发 notice，绝不影响内核产物与发布。
-      - name: 下载管理器 APK（尽力而为，按 root 方案选来源）
-        # 这一步是真正的"尽力而为"：管理器 APK 只是附加资产。
-        # 跨仓库查询（权限/限流）、上游没有成功构建、产物命名变化……
-        # 任何一种都可能让它查不到，但都不该阻断内核产物与 Release 本身。
-        # 具体失败原因仍会以 warning/notice 的形式留在日志里。
+      # SukiSU-Nova 的官方发行版直接提供管理器 APK（资产名形如
+      # SukiSU_Nova_v3.0.0_35000-arm64-v8a-release.apk，35000 是 versionCode），
+      # 所以从 release 页直接下 arm64-v8a 那个即可，不再需要跨仓库读 Artifacts。
+      #
+      # BakaSU 那边没有公开的 APK 资产，仍走它自己的 Build Manager 工作流
+      # Artifacts（需要 PAT，取不到就跳过，绝不阻断发布）。
+      - name: 附上管理器 APK（尽力而为）
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.BAKASU_TOKEN || secrets.GITHUB_TOKEN }}
@@ -917,64 +983,65 @@ jobs:
           set -euo pipefail
           rm -rf /tmp/apk && mkdir -p /tmp/apk
 
-          # 管理器来源按 root 方案区分：两条线都不在官方 release 里发 APK，
-          # 只能从各自的 manager 工作流 Artifacts 取。
           if [ "${BRANCH}" = "sukisu-susfs-bpf" ]; then
-            REPO="SukiSU-Ultra/SukiSU-Ultra"
-            WORKFLOW="manager.yml"
-            ARTIFACT="Manager-release"
-            APK_VER="${KSU_VERSION:-40900}"
             PREFIX="SukiSU"
+            APK_VER="${KSU_VERSION}"
+            OUT="${GITHUB_WORKSPACE}/${PREFIX}_${APK_VER}_${BUILD_DATE}.apk"
+
+            # 先问 release API 要 arm64-v8a 那个资产的下载地址，再直接下。
+            URL="$(curl -sf --max-time 30 \
+              https://api.github.com/repos/SukiSU-Nova/SukiSU-Nova/releases/latest 2>/dev/null \
+              | grep -oE '"browser_download_url": *"[^"]*arm64-v8a[^"]*\.apk"' \
+              | head -1 | sed 's/.*"browser_download_url": *"//; s/"$//' || true)"
+            if [ -n "${URL}" ]; then
+              echo "下载: ${URL}"
+              curl -fL --max-time 300 -o "${OUT}" "${URL}" || rm -f "${OUT}"
+            fi
+            if [ -f "${OUT}" ]; then
+              echo "✅ 管理器 APK: $(basename "${OUT}") ($(stat -c%s "${OUT}") bytes)"
+            else
+              echo "::warning::没能取到 SukiSU-Nova 的发行版 APK，本页将只发内核。"
+              echo "::notice::用户可从 https://github.com/SukiSU-Nova/SukiSU-Nova/releases/latest 自行下载。"
+            fi
           else
-            REPO="Baka-SU/BakaSU"
-            WORKFLOW="build-manager.yml"
-            ARTIFACT="Manager-release"
-            APK_VER="35257"
+            # ---- BakaSU：沿用 Build Manager Artifacts ----
             PREFIX="BakaSU"
-          fi
-          OUT="${GITHUB_WORKSPACE}/${PREFIX}_${APK_VER}_${BUILD_DATE}.apk"
+            APK_VER="35257"
+            OUT="${GITHUB_WORKSPACE}/${PREFIX}_${APK_VER}_${BUILD_DATE}.apk"
+            REPO="Baka-SU/BakaSU"
+            ARTIFACT="Manager-release"
 
-          # 取上游最近的 manager 构建。注意这里必须整体容错：
-          #   · 跨仓库查询在权限不足/限流时会非零退出（原写法靠 || true 兜底）
-          #   · jq 在空数组上会输出 "null" 字面量，不是空串
-          # 两者都会让 `set -euo pipefail` 下的整步失败。这里统一收敛成空串 +
-          # 非零退出视为"没有"，后面只在 RUN_ID 非空且非 null 时才去下载。
-          RUN_ID=""
-          if RAW_ID="$(gh run list --repo "${REPO}" \
-                        --workflow "${WORKFLOW}" --branch main \
-                        --status success --limit 1 \
-                        --json databaseId --jq '.[0].databaseId // empty' 2>/dev/null)"; then
-            case "${RAW_ID}" in
-              ""|null) RUN_ID="" ;;
-              *)       RUN_ID="${RAW_ID}" ;;
-            esac
-          fi
-          echo "${PREFIX} Manager 最近成功运行: ${RUN_ID:-未找到（将不附带 APK）}"
+            RUN_ID=""
+            if RAW_ID="$(gh run list --repo "${REPO}" \
+                          --workflow build-manager.yml --branch main \
+                          --status success --limit 1 \
+                          --json databaseId --jq '.[0].databaseId // empty' 2>/dev/null)"; then
+              case "${RAW_ID}" in
+                ""|null) RUN_ID="" ;;
+                *)       RUN_ID="${RAW_ID}" ;;
+              esac
+            fi
+            echo "${PREFIX} Manager 最近成功运行: ${RUN_ID:-未找到（将不附带 APK）}"
 
-          if [ -n "${RUN_ID}" ]; then
-            gh run download "${RUN_ID}" --repo "${REPO}" \
-              --name "${ARTIFACT}" --dir /tmp/apk 2>/dev/null || true
-          fi
+            if [ -n "${RUN_ID}" ]; then
+              gh run download "${RUN_ID}" --repo "${REPO}" \
+                --name "${ARTIFACT}" --dir /tmp/apk 2>/dev/null || true
+            fi
 
-          # APK 文件名的差异：BakaSU 产出 *universal-release.apk；
-          # SukiSU 的 manager.yml 产出可能是别的后缀，这里按「任意 apk」兜底。
-          # 注意：set -e + pipeline 下 `ls 不存在的通配` 会返回 2 并让整步失败
-          # （原写法在 BakaSU 总能取到 APK 时没暴露，SukiSU 取不到就炸）。
-          # 这里两种查找都显式吃掉落空的情况。
-          SRC=""
-          for cand in /tmp/apk/*universal-release.apk; do
-            [ -f "${cand}" ] && { SRC="${cand}"; break; }
-          done
-          if [ -z "${SRC}" ]; then
-            SRC="$(find /tmp/apk -type f -name '*.apk' 2>/dev/null | head -1 || true)"
-          fi
-          if [ -n "${SRC}" ]; then
-            cp -v "${SRC}" "${OUT}"
-            echo "✅ 管理器 APK 已就绪: $(basename "${OUT}") ($(stat -c%s "${OUT}") bytes)"
-          elif [ "${HAS_PAT}" = "true" ]; then
-            echo "::warning::已配置 BAKASU_TOKEN 但仍未取到管理器 APK（${PREFIX} 上游可能没有成功的构建）"
-          else
-            echo "::notice::未附带管理器 APK：跨仓库读取 Artifacts 需要 PAT。用户请从 Release 正文给出的 ${PREFIX} Manager 入口自行下载 versionCode=${APK_VER} 的 APK。"
+            SRC=""
+            for cand in /tmp/apk/*universal-release.apk; do
+              [ -f "${cand}" ] && { SRC="${cand}"; break; }
+            done
+            if [ -z "${SRC}" ]; then
+              SRC="$(find /tmp/apk -type f -name '*.apk' 2>/dev/null | head -1 || true)"
+            fi
+
+            if [ -n "${SRC}" ]; then
+              cp -v "${SRC}" "${OUT}"
+              echo "✅ 管理器 APK: $(basename "${OUT}") ($(stat -c%s "${OUT}") bytes)"
+            else
+              echo "::notice::未附带管理器 APK，用户请到 Release 正文给出的 BakaSU Manager 入口下载。"
+            fi
           fi
 
           ARTIFACTS="dist/*/*.zip"
@@ -982,6 +1049,7 @@ jobs:
             ARTIFACTS="${ARTIFACTS},$(basename "${OUT}")"
           fi
           echo "ARTIFACTS=${ARTIFACTS}" >> "$GITHUB_ENV"
+          echo "发布资产: ${ARTIFACTS}"
           echo "发布资产: ${ARTIFACTS}"
 
       # ncipollo/release-action 只会「创建」tag，不会移动已存在的 tag：
