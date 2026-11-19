@@ -905,6 +905,11 @@ jobs:
       # 足够。若哪天上游改为私有、或读取被限流，可另配 BAKASU_TOKEN（public_repo
       # PAT）覆盖；两者都取不到时只发 notice，绝不影响内核产物与发布。
       - name: 下载管理器 APK（尽力而为，按 root 方案选来源）
+        # 这一步是真正的"尽力而为"：管理器 APK 只是附加资产。
+        # 跨仓库查询（权限/限流）、上游没有成功构建、产物命名变化……
+        # 任何一种都可能让它查不到，但都不该阻断内核产物与 Release 本身。
+        # 具体失败原因仍会以 warning/notice 的形式留在日志里。
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.BAKASU_TOKEN || secrets.GITHUB_TOKEN }}
           HAS_PAT: ${{ secrets.BAKASU_TOKEN != '' }}
@@ -953,8 +958,16 @@ jobs:
 
           # APK 文件名的差异：BakaSU 产出 *universal-release.apk；
           # SukiSU 的 manager.yml 产出可能是别的后缀，这里按「任意 apk」兜底。
-          SRC="$(ls /tmp/apk/*universal-release.apk 2>/dev/null | head -1)"
-          [ -n "${SRC}" ] || SRC="$(find /tmp/apk -type f -name '*.apk' 2>/dev/null | head -1)"
+          # 注意：set -e + pipeline 下 `ls 不存在的通配` 会返回 2 并让整步失败
+          # （原写法在 BakaSU 总能取到 APK 时没暴露，SukiSU 取不到就炸）。
+          # 这里两种查找都显式吃掉落空的情况。
+          SRC=""
+          for cand in /tmp/apk/*universal-release.apk; do
+            [ -f "${cand}" ] && { SRC="${cand}"; break; }
+          done
+          if [ -z "${SRC}" ]; then
+            SRC="$(find /tmp/apk -type f -name '*.apk' 2>/dev/null | head -1 || true)"
+          fi
           if [ -n "${SRC}" ]; then
             cp -v "${SRC}" "${OUT}"
             echo "✅ 管理器 APK 已就绪: $(basename "${OUT}") ($(stat -c%s "${OUT}") bytes)"
