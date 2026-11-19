@@ -78,14 +78,26 @@ $(shell cd $(KSU_SRC) 2>/dev/null && [ -f ../.git/shallow ] && $(GIT_BIN) fetch 
 GITHUB_API_BASE  := https://api.github.com/repos/$(REPO_OWNER)/$(REPO_NAME)
 KSU_GITHUB_VER   := $(shell $(CURL_BIN) -s "$(GITHUB_API_BASE)/releases/latest" 2>/dev/null | grep '"tag_name":' | sed -E 's/.*"v?([^"]+)".*/\1/')
 GITHUB_COMMITS   := $(shell $(CURL_BIN) -sI "$(GITHUB_API_BASE)/commits?sha=$(REPO_BRANCH)&per_page=1" 2>/dev/null | grep -i "link:" | sed -n 's/.*page=\([0-9]*\)>; rel="last".*/\1/p')
+# 版本码以官方发行版管理器 APK 为准：上游资产名形如
+#   SukiSU_Nova_v3.0.0_35000-arm64-v8a-release.apk
+# 其中 35000 就是 manager 的 versionCode，也是内核必须报告的值，否则管理器会
+# 报版本不匹配。这里构建时现取，上游以后发新版会自动跟上，不用回来改数字。
+KSU_UPSTREAM_CODE := $(shell $(CURL_BIN) -s "$(GITHUB_API_BASE)/releases/latest" 2>/dev/null \
+          | grep -oE '_v[0-9.]+_[0-9]+-' | head -1 \
+          | grep -oE '[0-9]+-$$' | tr -d '-')
+
 LOCAL_COUNT     := $(if $(GITHUB_COMMITS),$(GITHUB_COMMITS),$(git_commit_count))
-KSU_VERSION     := $(if $(LOCAL_COUNT),$(shell expr $(VERSION_BASE) + $(LOCAL_COUNT) - $(VERSION_OFFSET)),13000)
+KSU_VERSION_LOCAL := $(if $(LOCAL_COUNT),$(shell expr $(VERSION_BASE) + $(LOCAL_COUNT) - $(VERSION_OFFSET)),13000)
+KSU_VERSION     := $(or $(KSU_UPSTREAM_CODE),$(KSU_VERSION_LOCAL))
 VERSION_TAG     := $(or $(KSU_GITHUB_VER),$(git_latest_tag),3.0.0)
 # 版本串里不带分支名：本仓库的构建分支就叫 sukisu-susfs-bpf，
 # 一旦拼进 KSU_VERSION_FULL 就会把 "sukisu-susfs" 写进 ksu.o，
 # CI 的隐藏性校验（grep 'sukisu-susfs|bakasu-susfs|SukiSU-Ultra|...'）会直接拦下。
 # 只保留 tag 与短哈希，既能对上 manager 版本，又不泄露工作分支。
 KSU_VERSION_FULL := $(if $(call git_short_sha),v$(VERSION_TAG)-$(call git_short_sha),v$(VERSION_TAG)-unknown)
+ifeq ($(KSU_UPSTREAM_CODE),)
+$(warning -- $(REPO_NAME): 取不到上游发行版 versionCode，回退本地公式 $(KSU_VERSION_LOCAL))
+endif
 $(info -- $(REPO_NAME) version: $(KSU_VERSION) [$(KSU_VERSION_FULL)])
 
 ccflags-y += -DKSU_VERSION=$(KSU_VERSION)
