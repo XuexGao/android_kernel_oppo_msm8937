@@ -414,6 +414,18 @@ jobs:
                           return txt[i:j + 1]
               return None
 
+          def own_props(blk):
+              """取节点自身的属性区：从节点名后的 '{' 到第一个嵌套子节点的 '{'。
+              用来把 GPU 自身属性和 opp-table 子节点的属性区分开。"""
+              b = blk.find('{')
+              if b == -1:
+                  return ''
+              rest = blk[b + 1:]
+              for idx, ch in enumerate(rest):
+                  if ch == '{':
+                      return rest[:idx]
+              return rest
+
           path, name = sys.argv[1], sys.argv[2]
           txt = open(path).read()
           bad = []
@@ -423,18 +435,29 @@ jobs:
               print(f'  FAIL {name}: 找不到 gpu@1c00000 节点')
               sys.exit(1)
 
-          if '"qcom,adreno-506.0"' not in blk:
+          # 只看节点**自身**的属性区（第一个嵌套 '{' 之前）。
+          # 不能在整个 blk 里查 —— 子节点 opp-table 自己也有
+          # compatible = "operating-points-v2" 和 opp-supported-hw，
+          # 用整块匹配会误报"有 OPP 表"，漏掉真正的缺失。
+          own = own_props(blk)
+
+          # 注意：多字符串 compatible 在 dtb 反编译后是
+          #     compatible = "qcom,adreno-506.0\0qcom,adreno";
+          # 用 NUL 分隔，**不是**两个独立引号对。所以不能查
+          # '"qcom,adreno-506.0"'（带闭合引号）—— 那样永远匹配不到。
+          if 'qcom,adreno-506.0' not in own:
               bad.append('compatible 不是 qcom,adreno-506.0')
-          if 'status = "disabled"' in blk:
+          if 'status = "disabled"' in own:
               bad.append('status 仍是 disabled')
-          if 'operating-points-v2' not in blk:
+          if 'operating-points-v2' not in own:
               bad.append('缺 operating-points-v2')
-          if 'iommus = <' not in blk:
+          if 'iommus = <' not in own:
               bad.append('缺 iommus（GPU 的 SMMU 绑定）')
 
           # opp-supported-hw 必须与 check_speed_bin() 的 fallback 0x80 有交集，
           # 否则整张 OPP 表会被过滤成空，GPU probe 直接失败。
           # （本机没有 speed_bin nvmem 单元，必然走 0x80 这条 fallback。）
+          # 这里查整块是对的：OPP 表在子节点里。
           for v in re.findall(r'opp-supported-hw = <(0x[0-9a-fA-F]+)>', blk):
               if int(v, 16) & 0x80 == 0:
                   bad.append(f'opp-supported-hw={v} 与 0x80 无交集，OPP 表会被清空')
