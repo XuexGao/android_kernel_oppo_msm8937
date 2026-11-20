@@ -643,7 +643,6 @@ ACK 给了 Android **内核接口**，主线给了 MSM8953 **平台**，
    **待真机验证** probe 是否成功。
 
    #### GPU OPP 电压档（已对齐上游）
-
    `gpu_opp_table` 里的 `required-opps` 必须和 rpmpd 的档位对应，
    否则频率和电压配错（轻则不稳，重则 hang）。本轮对齐了两处：
 
@@ -689,6 +688,30 @@ ACK 给了 Android **内核接口**，主线给了 MSM8953 **平台**，
    > `SECVID_TRUST_CNTL` fallback 并打印一行 warning，probe 不会失败。
    > （给了节点反而更糟：会去 `request_firmware("a506_zap.mdt")`，
    > 缺文件返回 `-ENOENT`，那是**致命**的。）
+
+   #### CI 自检（已生效）
+
+   `build-6.12.yml` 的 DTB 自检现在会断言两个机型的 GPU 节点：
+   compatible 是 `qcom,adreno-506.0`、status 非 disabled、
+   有 `operating-points-v2` 与 `iommus`、`opp-supported-hw` 与 `0x80`
+   有交集、且不存在 `kgsl-smmu` 节点。
+
+   run **44688267429** 全部通过：
+
+   ```
+   === GPU（Adreno 506 / DRM adreno）===
+     OK   r9s GPU 节点（adreno-506 / opp 表 / status）
+     OK   r9sk GPU 节点（adreno-506 / opp 表 / status）
+   ```
+
+   两个坑记一下（都踩过）：
+
+   | 坑 | 表现 | 修法 |
+   |---|---|---|
+   | 多字符串 compatible 是 NUL 分隔 | 查 `"qcom,adreno-506.0"`（带闭合引号）永远不命中，报假阳性 | 查不带引号的子串 |
+   | 子树属性污染 | 子节点 `opp-table` 自己也有 `compatible="operating-points-v2"`，整块查会漏掉 GPU 自身缺 OPP 表 | `own_props()` 只取节点自身属性区 |
+
+   同一轮产物：`text_offset=0x80000` ✅、Image 40 MiB、`Image.gz` 13.4 MB。
 
 
 2. **MDSS/DSI** ✅ 已完成（MDP5 + 两个面板驱动 + LM3697 背光）
