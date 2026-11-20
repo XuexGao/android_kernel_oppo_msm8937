@@ -135,9 +135,15 @@ jobs:
           # SELINUX 是 Android init 第一阶段的硬依赖：
           # 没有 selinuxfs 时 init 会 abort 并重启（实测过，
           # "logo 2 秒 → 黑屏 → 重启" 就是这个原因）。
+          #
+          # NET_CLS_BPF / NET_ACT_BPF / BPF_STREAM_PARSER 是 Android netd
+          # 的 bpfloader 挂 BPF 程序所必需的。缺了会在开机约 110s 时：
+          #   reboot: Restarting system with command 'netbpfload-missing'
+          # 然后无限重启（真机 log 实测，见 README 第 21 轮）。
           for sym in ARM64_VA_BITS_39 PSTORE PSTORE_RAM PSTORE_CONSOLE PSTORE_PMSG \
                      MAILBOX RPMSG_QCOM_SMD QCOM_SMP2P QCOM_SMSM QCOM_APCS_IPC \
                      SECURITY_NETWORK SECURITY_SELINUX \
+                     NET_CLS_BPF NET_ACT_BPF BPF_STREAM_PARSER \
                      SQUASHFS SQUASHFS_LZ4 BLK_DEV_DM DM_VERITY; do
             v="$(grep -E "^CONFIG_${sym}=" .config | head -1 || true)"
             case "$v" in
