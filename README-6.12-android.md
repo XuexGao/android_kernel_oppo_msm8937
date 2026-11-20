@@ -289,6 +289,60 @@ R9s **不用 PMI8950 内部的电量计**，而是外挂 **TI BQ27541**（i2c_5 
 
 ## 上机验证指南
 
+### 第 21 轮真机：内核起来了，但黑屏、无开机动画
+
+这次终于拿到了 **6.12 自己的 dmesg**（ramoops 生效），第一行就确认
+DTB 替换成功：
+
+```
+Linux version 6.12.52-gbf29269ed95a ...
+Machine model: OPPO R9sk          ← 我们的 DTS，不再是 CAF 的 MTP
+```
+
+现象：OPPO logo 显示几秒 → 黑屏 → 过很久自动重启。
+
+**根因只有一条，但会连锁出三个现象：**
+
+`CONFIG_REGULATOR_QCOM_LABIBB` 没开，驱动没编进内核。
+
+```
+mipi-dsi 1a94000.dsi.0: deferred probe pending:
+  mipi-dsi: wait for supplier /soc/spmi@200f000/pmic@3/labibb/ibb
+```
+
+整份日志里 labibb **没有任何 probe 记录**。而 `pmi8950.dtsi` 里的
+labibb 节点其实是对的（注释里甚至预判了这条报错），只是 defconfig
+漏了一行 —— 这类问题在 DTS 层完全看不出来。
+
+**连锁反应：**
+
+| 步骤 | 日志证据 |
+|---|---|
+| labibb 不存在 → 面板 `lab-supply`/`ibb-supply` 拿不到 | `wait for supplier .../labibb/ibb` |
+| mipi-dsi 永久 deferred | 同上，直到最后都没 probe 成功 |
+| `qcom,adreno` / mdp / dsi 是**同一个 component master**（`msm_drm`），DSI 不 bind → 整个 DRM 绑不上 | `adreno` 全程只有一行 `Adding to iommu group 0`，之后再无输出 |
+| GPU 拿不到 → SurfaceFlinger 没有可用 EGL 配置 → SIGABRT | `no suitable EGLConfig found, giving up`（反复 44s/93s/104s/108s） |
+| 没有开机动画、黑屏；用户态反复重启 surfaceflinger，最后主动重启 | `reboot: Restarting system with command 'netbpfload-missing'` |
+
+> 注意 `adreno_probe()` 本身只做 `component_add()`，真正初始化在
+> component bind 阶段。所以 **GPU 日志静默≠GPU 挂了** —— 要往上找
+> 是谁没 bind。这轮 GPU 的 OPP / iommu / GDSC 其实都是正常的
+> （`qcom-iommu iommu@1c48000` 注册成功、adreno 已进 iommu group 0）。
+
+修复：defconfig 加 `CONFIG_REGULATOR_QCOM_LABIBB=y`，并在 CI 的显示栈
+断言里加上这个符号（只查 DTS 是拦不住它的）。
+
+#### 同轮日志里其它已知问题（不阻塞开机）
+
+| 问题 | 日志 | 影响 |
+|---|---|---|
+| qpnp-fg probe 失败 | `fg_detect_pmic_type: Missing qcom,pmic-revid property` | 无影响：R9s 实际用外挂 bq27541，它 probe 成功（`DEVICE_TYPE 0x421`） |
+| GPIO98 pinctrl 冲突 | `error -EINVAL: pin-98 (7af8000.i2c)` | i2c_8 上的设备（AK4376）会失败，与显示无关 |
+| 音频 CPU DAI | `Quaternary MI2S RX: error getting cpu dai name` | 无声卡，属音频栈待办 |
+| dwc3 初始化失败 | `dwc3: failed to initialize core` | USB gadget 不可用，需另行排查 |
+| SELinux policy 缺 bpf 权限 | `Permission bpf in class capability2 not defined` | 配合 `netbpfload-missing`，是最后重启的直接触发点 |
+| ext4 参数不识别 | `Unknown parameter 'no_sehash_xattr'` | 6.12 已移除该挂载项，属 ROM 侧 fstab 问题 |
+
 ### 第 13 轮真机反馈：卡在一屏不动
 
 用户刷了当时最新的包，结果是**卡在一屏、进不了系统**。
