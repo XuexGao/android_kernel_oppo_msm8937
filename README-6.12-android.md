@@ -642,6 +642,55 @@ ACK 给了 Android **内核接口**，主线给了 MSM8953 **平台**，
    `gpu_iommu` 的 context 0）。
    **待真机验证** probe 是否成功。
 
+   #### GPU OPP 电压档（已对齐上游）
+
+   `gpu_opp_table` 里的 `required-opps` 必须和 rpmpd 的档位对应，
+   否则频率和电压配错（轻则不稳，重则 hang）。本轮对齐了两处：
+
+   | 频率 | 原值（错） | 现值（= 上游 6.12） |
+   |---|---|---|
+   | 400 MHz | `rpmpd_opp_svs` | `rpmpd_opp_svs_plus` |
+   | 560 MHz | `rpmpd_opp_turbo` | `rpmpd_opp_nom_plus` |
+
+   > `opp-supported-hw` 保持 `<0xff>`。本机 DTS 没有 `speed_bin` nvmem
+   > 单元，所以 `a5xx` 的 `check_speed_bin()` 会走 fallback `0x80`；
+   > `0x80 & 0xff = 0x80 ≠ 0`，整表能正常保留。
+   > **但如果以后把该值改成 `0x7f` 之类与 bit7 无交集的掩码，
+   > 整张 OPP 表会被过滤成空，GPU probe 直接失败** ——
+   > CI 已加断言拦这种情况。
+
+   #### ⚠️ GPU 需要两个固件文件（上机前必须确认）
+
+   a5xx 的微码是**硬依赖**，不是可选：
+
+   | 文件 | 用途 | 由谁加载 |
+   |---|---|---|
+   | `a530_pm4.fw` | PM4 微码 | `a5xx_ucode_load()` |
+   | `a530_pfp.fw` | PFP 微码 | `a5xx_ucode_load()` |
+
+   `adreno_load_fw()` 按 `qcom/a530_pm4.fw` → `a530_pm4.fw` 的顺序找，
+   找不到就返回 `-ENOENT`，`a5xx_ucode_load()` 随即失败 →
+   **GPU 起不来、整个 DRM 的 GPU 侧不可用**。
+
+   4.9/4.19 的 CAF 内核用的是另一套路径（`qcom,firmware-name = "a506_zap"`），
+   zap 固件在 `/vendor/firmware_mnt/image/` 里应该有，但
+   **`a530_pm4.fw` / `a530_pfp.fw` 不一定会跟着 ROM 带**。
+   上机前请在 TWRP 或已 root 的系统里确认：
+
+   ```bash
+   ls -l /vendor/firmware_mnt/image/ | grep -iE 'a530|a506'
+   ```
+
+   没有的话，需要从 Linux 固件包取对应文件（A506 复用 a530 的 PM4/PFP），
+   放到 `/vendor/firmware_mnt/image/` 或 `/lib/firmware/qcom/`。
+
+   > **zap-shader 反而不用管** —— A506 是非 secure 老 GPU，本 DTS 刻意
+   > 不给 `zap-shader` 子节点，驱动会走
+   > `SECVID_TRUST_CNTL` fallback 并打印一行 warning，probe 不会失败。
+   > （给了节点反而更糟：会去 `request_firmware("a506_zap.mdt")`，
+   > 缺文件返回 `-ENOENT`，那是**致命**的。）
+
+
 2. **MDSS/DSI** ✅ 已完成（MDP5 + 两个面板驱动 + LM3697 背光）
 
 3. **qpnp 充电/电量计** ✅ 已完成（含 OPPO 外挂 BQ27541 + VOOC）
