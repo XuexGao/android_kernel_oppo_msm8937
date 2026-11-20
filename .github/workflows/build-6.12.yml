@@ -202,9 +202,19 @@ jobs:
           # 注意这里**不查 BACKLIGHT_LED**：两个 OPPO 面板驱动都把亮度
           # 写死在初始化序列的 0x51/0x53 里，不导出 backlight 设备；
           # 背光是独立的 LM3697 LED 驱动（default-on）负责。
+          #
+          # REGULATOR_QCOM_LABIBB 也必须查 —— 这是真机上抓到的坑：
+          # 面板 DTS 里 lab-supply/ibb-supply 指向 pmi8950 的 labibb 节点，
+          # 驱动没编进去时 labibb 的 regulator 永远不存在，于是：
+          #   mipi-dsi 1a94000.dsi.0: deferred probe pending:
+          #     mipi-dsi: wait for supplier .../labibb/ibb
+          # 面板 probe 无限 deferred → 屏幕全黑（连开机动画都没有）。
+          # 而且这个缺失**在 DTS 层完全看不出来**，DTS 本身是对的，
+          # 所以只在 defconfig 里断言才拦得住。
           echo "--- 显示栈（必须全部 =y）："
           for sym in DRM_MSM DRM_MSM_DSI DRM_MSM_DSI_14NM_PHY DRM_MSM_MDP5 \
-                     DRM_PANEL_OPPO_EA8064 DRM_PANEL_JDI_R63452 LEDS_LM3697; do
+                     DRM_PANEL_OPPO_EA8064 DRM_PANEL_JDI_R63452 LEDS_LM3697 \
+                     REGULATOR_QCOM_LABIBB; do
             v="$(grep -E "^CONFIG_${sym}=" .config | head -1 || true)"
             case "$v" in
               "CONFIG_${sym}=y") echo "  OK   $v" ;;
