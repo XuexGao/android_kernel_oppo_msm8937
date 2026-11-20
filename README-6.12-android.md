@@ -343,6 +343,30 @@ labibb 节点其实是对的（注释里甚至预判了这条报错），只是 
 | SELinux policy 缺 bpf 权限 | `Permission bpf in class capability2 not defined` | 配合 `netbpfload-missing`，是最后重启的直接触发点 |
 | ext4 参数不识别 | `Unknown parameter 'no_sehash_xattr'` | 6.12 已移除该挂载项，属 ROM 侧 fstab 问题 |
 
+#### 重启的直接触发点：`netbpfload-missing`（已修）
+
+日志最后一行是内核重启命令，不是 panic：
+
+```
+reboot: Restarting system with command 'netbpfload-missing'
+```
+
+这是 **Android 用户态主动重启**：netd 的 `bpfloader` 要往 tc 挂 BPF 程序
+（clsact/ingress），内核缺对应选项时它加载失败，于是发起重启。
+缺的是这三个（defconfig 里原本都没有）：
+
+| 选项 | 作用 |
+|---|---|
+| `NET_CLS_BPF` | tc 的 BPF 分类器（netd 的 ebpf 程序就挂这里） |
+| `NET_ACT_BPF` | tc 的 BPF action |
+| `BPF_STREAM_PARSER` | sockmap 的 TCP 流解析（配合 cgroup BPF） |
+
+依赖已满足：`NET_CLS_ACT=y`、`INET`、`BPF_SYSCALL=y`、`CGROUP_BPF=y`。
+
+> 判断方法：`netbpfload-missing` 这类带自定义 command 的 `reboot:`
+> 都是用户态发起的，内核自身没有崩。真内核崩溃会是 `Kernel panic`
+> 或 `Unable to handle kernel ...`。
+
 ### 第 13 轮真机反馈：卡在一屏不动
 
 用户刷了当时最新的包，结果是**卡在一屏、进不了系统**。
