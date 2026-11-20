@@ -729,8 +729,9 @@
 };
 
 /*
- * GPU 节点现在直接写在 msm8953.dtsi 里，改用 KGSL 约定的
- * compatible "qcom,kgsl-3d0" 和私有属性（qcom,chipid /
- * qcom,gpu-pwrlevels / qcom,initial-pwrlevel 等），
- * status 已经是 okay，这里不再需要 &gpu 覆盖。
+ * GPU 节点直接写在 msm8953.dtsi 里，走**上游 DRM adreno** 路径：
+ * compatible "qcom,adreno-506.0" + 标准 operating-points-v2 /
+ * power-domains / iommus，status 已经是 okay，这里不需要 &gpu 覆盖。
+ *
+ * （曾经写过 KGSL 的 "qcom,kgsl-3d0" + qcom,gpu-pwrlevels 那套，已废弃。）
  */

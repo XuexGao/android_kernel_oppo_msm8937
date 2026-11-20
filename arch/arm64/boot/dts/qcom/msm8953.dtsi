@@ -1191,7 +1191,7 @@
 				opp-400000000 {
 					opp-hz = /bits/ 64 <400000000>;
 					opp-supported-hw = <0xff>;
-					required-opps = <&rpmpd_opp_svs>;
+					required-opps = <&rpmpd_opp_svs_plus>;
 				};
 
 				opp-510000000 {
@@ -1203,7 +1203,7 @@
 				opp-560000000 {
 					opp-hz = /bits/ 64 <560000000>;
 					opp-supported-hw = <0xff>;
-					required-opps = <&rpmpd_opp_turbo>;
+					required-opps = <&rpmpd_opp_nom_plus>;
 				};
 
 				opp-650000000 {

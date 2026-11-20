@@ -370,6 +370,88 @@ jobs:
             fi
           done
 
+          # ---- GPU（Adreno 506 / DRM adreno）自检 ----
+          #
+          # GPU 走的是上游 a5xx 驱动，几个"编译通过但上机不工作"的点：
+          #
+          # 1) compatible 必须是 "qcom,adreno-506.0" —— adreno_device.c 靠它
+          #    匹配 a5xx_catalog 里 chip_id 0x05000600 / revn 506 那一项。
+          #    写成 KGSL 的 "qcom,kgsl-3d0" 会匹配不上，probe 根本不会调用。
+          # 2) status 必须是 okay —— 上游 msm8953.dtsi 里本来就是 disabled，
+          #    是我们板级把它打开的；改回 disabled 就等于 GPU 不存在。
+          # 3) iommus 必须指向真正的 IOMMU provider（gpu_iommu@1c48000），
+          #    不能是 KGSL 时代的 gfx3d_user 子节点 —— 它不是 provider，
+          #    会报 "could not get #iommu-cells"。
+          # 4) operating-points-v2 必须在，否则 adreno_get_pwrlevels()
+          #    返回 -ENODEV，GPU probe 直接失败。
+          # 5) opp-supported-hw 里的值必须能被 check_speed_bin() 的
+          #    fallback 0x80 命中（0x80 & 0xff != 0 即可）——
+          #    这里确认没被改成 0x00/0x40 那种会清空整表的掩码。
+          echo "=== GPU（Adreno 506 / DRM adreno）==="
+          for d in r9s r9sk; do
+            gtxt="$(mktemp)"
+            dtc -I dtb -O dts "$D/msm8953-oppo-$d.dtb" 2>/dev/null > "$gtxt"
+            python3 - "$gtxt" "$d" <<'PYGPU' || fail=1
+          import re, sys
+
+          def node_block(txt, node):
+              """按花括号配对取出节点的完整块。
+              gpu@1c00000 里含 opp-table 子节点（两层嵌套），
+              用单层正则会匹配失败 —— 这里必须做配对计数。"""
+              i = txt.find(node)
+              if i == -1:
+                  return None
+              b = txt.find('{', i)
+              if b == -1:
+                  return None
+              depth = 0
+              for j in range(b, len(txt)):
+                  if txt[j] == '{':
+                      depth += 1
+                  elif txt[j] == '}':
+                      depth -= 1
+                      if depth == 0:
+                          return txt[i:j + 1]
+              return None
+
+          path, name = sys.argv[1], sys.argv[2]
+          txt = open(path).read()
+          bad = []
+
+          blk = node_block(txt, 'gpu@1c00000')
+          if not blk:
+              print(f'  FAIL {name}: 找不到 gpu@1c00000 节点')
+              sys.exit(1)
+
+          if '"qcom,adreno-506.0"' not in blk:
+              bad.append('compatible 不是 qcom,adreno-506.0')
+          if 'status = "disabled"' in blk:
+              bad.append('status 仍是 disabled')
+          if 'operating-points-v2' not in blk:
+              bad.append('缺 operating-points-v2')
+          if 'iommus = <' not in blk:
+              bad.append('缺 iommus（GPU 的 SMMU 绑定）')
+
+          # opp-supported-hw 必须与 check_speed_bin() 的 fallback 0x80 有交集，
+          # 否则整张 OPP 表会被过滤成空，GPU probe 直接失败。
+          # （本机没有 speed_bin nvmem 单元，必然走 0x80 这条 fallback。）
+          for v in re.findall(r'opp-supported-hw = <(0x[0-9a-fA-F]+)>', blk):
+              if int(v, 16) & 0x80 == 0:
+                  bad.append(f'opp-supported-hw={v} 与 0x80 无交集，OPP 表会被清空')
+
+          # 反向检查：KGSL 的 SMMU 包装节点不应存在 —— 它的 gfx3d_user 子节点
+          # 也声明了 iommus=<&gpu_iommu 0>，会和 GPU 抢同一个 context 0（-EBUSY）。
+          if 'kgsl-smmu' in txt:
+              bad.append('仍含 kgsl-smmu 节点（会抢 IOMMU context 0）')
+
+          if bad:
+              print(f'  FAIL {name}: ' + '; '.join(bad))
+              sys.exit(1)
+          print(f'  OK   {name} GPU 节点（adreno-506 / opp 表 / status）')
+          PYGPU
+            rm -f "$gtxt"
+          done
+
           exit $fail
 
       - name: 打包产物
