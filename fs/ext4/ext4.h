@@ -1257,6 +1257,12 @@ struct ext4_inode_info {
 						    * scanning in mballoc
 						    */
 #define EXT4_MOUNT2_ABORT		0x00000100 /* Abort filesystem */
+/*
+ * QCOM/CAF 扩展（从 4.9/4.19 下游前移）：忽略 security.sehash 扩展属性。
+ * Android 的 fstab 对 /mnt/vendor/persist 会带 no_sehash_xattr，
+ * 主线 ext4 不认识就直接 -EINVAL，导致该分区挂不上。
+ */
+#define EXT4_MOUNT2_NO_SEHASH_XATTR	0x00000200 /* Ignore security.sehash xattr */
 
 #define clear_opt(sb, opt)		EXT4_SB(sb)->s_mount_opt &= \
 						~EXT4_MOUNT_##opt
