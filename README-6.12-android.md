@@ -367,6 +367,83 @@ reboot: Restarting system with command 'netbpfload-missing'
 > 都是用户态发起的，内核自身没有崩。真内核崩溃会是 `Kernel panic`
 > 或 `Unable to handle kernel ...`。
 
+### 第 22 轮真机：labibb 修好了，但卡在 GPU 微码
+
+上一轮的 LAB/IBB 修复**确实生效了** —— `wait for supplier .../labibb/ibb`
+那条消失，DSI 不再卡住，GPU 也成功绑定了：
+
+```
+msm_mdp 1a01000.display-controller: bound 1c00000.gpu (ops a3xx_ops)
+msm_mdp 1a01000.display-controller: [drm:mdp5_kms_init] MDP5 version v1.16
+[drm] Initialized msm 1.12.0 for 1a01000.display-controller on minor 0
+```
+
+但紧接着：
+
+```
+[2.276526] Direct firmware load for qcom/a530_pm4.fw failed with error -2
+[2.276586] [drm:adreno_request_fw] *ERROR* failed to load a530_pm4.fw
+```
+
+`-2` = `-ENOENT`。**GPU 微码文件没找到。**
+
+> 注：`bound ... (ops a3xx_ops)` 里的 `a3xx_ops` 只是组件框架的
+> **操作结构体名字**（`adreno_probe()` 对所有 Adreno 都注册它），
+> 实际加载哪一代驱动由 `adreno_bind()` 里的 `find_chipid()` 决定。
+> 看到 `a3xx_ops` 不等于"加载了 a3xx 驱动"，别被它误导。
+
+#### 为什么文件"在设备上"却找不到
+
+时间差：
+
+| 事件 | 时间 |
+|---|---|
+| DRM adreno 加载 `qcom/a530_pm4.fw` | **2.276 s** |
+| init 挂载 `modem -> /vendor/firmware_mnt` | **74.203 s** |
+
+4.19 的 KGSL 是**懒加载**（开机挂载完成后才加载），所以没事；
+6.12 的 adreno 是 **eager load**，`-ENOENT` 后永久放弃，不重试。
+
+#### 修法：把微码编进内核
+
+```
+CONFIG_EXTRA_FIRMWARE="qcom/a530_pm4.fw qcom/a530_pfp.fw"
+CONFIG_EXTRA_FIRMWARE_DIR="firmware"
+```
+
+`EXTRA_FIRMWARE` 在 `_request_firmware_prepare()` 里**最先**被匹配
+（`firmware_request_builtin_buf`），完全不碰文件系统。
+这正是 Kconfig 里写的适用场景：
+"required early on in boot and cannot rely on the firmware being
+placed in an initrd or initramfs"。
+
+固件放在仓库 `firmware/qcom/`，来源与许可见那里的 README。
+
+#### 验证（run 44855700909）
+
+CI 新增「固件自检」步骤，三处断言全过：
+
+```
+OK   EXTRA_FIRMWARE 含两个 GPU 微码
+OK   drivers/base/firmware_loader/builtin/qcom/a530_pm4.fw.gen.o (20904 bytes)
+OK   drivers/base/firmware_loader/builtin/qcom/a530_pfp.fw.gen.o (17472 bytes)
+OK   _fw_qcom_a530_pm4_fw_bin
+OK   _fw_qcom_a530_pfp_fw_bin
+```
+
+另外把产物拉下来做了**字节级**核对：
+
+```
+a530_pm4.fw: 在 Image 中找到, 位置=21575816, 整份连续匹配=True
+a530_pfp.fw: 在 Image 中找到, 位置=21595400, 整份连续匹配=True
+```
+
+> 顺带解释一个容易误判的现象：加了 36 KB 固件后 `Image` 的**文件大小
+> 一点没变**（都是 42244104），只有 `Image.gz` 变大了。
+> 原因是固件填进了 `.rodata` 原有的对齐 padding，没有越过末尾。
+> 所以**不能拿 Image 大小不变来判断"没编进去"** ——
+> 要看 `nm vmlinux` 的符号，或者直接搜 Image 里的字节。
+
 ### 第 13 轮真机反馈：卡在一屏不动
 
 用户刷了当时最新的包，结果是**卡在一屏、进不了系统**。
