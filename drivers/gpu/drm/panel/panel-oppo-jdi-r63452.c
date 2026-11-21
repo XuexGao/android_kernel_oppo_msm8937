@@ -365,6 +365,29 @@ static int r63452_probe(struct mipi_dsi_device *dsi)
 	dsi->mode_flags = MIPI_DSI_CLOCK_NON_CONTINUOUS | MIPI_DSI_MODE_LPM;
 
 	drm_panel_init(&ctx->panel, dev, &r63452_funcs, DRM_MODE_CONNECTOR_DSI);
+	/*
+	 * 必须让 DSI host 先 prepare，再让面板 prepare。
+	 *
+	 * DRM 的 pre_enable 是**从桥链尾部往头部**调用的
+	 * （drm_atomic_bridge_chain_pre_enable 用 list_for_each_entry_reverse），
+	 * 而这里的链是 encoder -> dsi_bridge -> panel_bridge，
+	 * 所以默认会先跑面板的 prepare、后跑 DSI 的 pre_enable。
+	 *
+	 * 面板 prepare 里要发 DCS 初始化命令，走
+	 *   r63452_write -> mipi_dsi_dcs_write -> dsi_host_transfer
+	 * 而 dsi_host_transfer() 第一句就是：
+	 *   if (!msg || !msm_host->power_on)
+	 *       return -EINVAL;
+	 * 此时 DSI host 还没上电，power_on=false -> 每次都 -EINVAL，
+	 * 日志里就是 "panel write failed: -22"，随后 MDP ping-pong
+	 * 超时（pp done time out, lm=0），屏幕始终黑。
+	 *
+	 * prepare_prev_first 会让 panel_bridge 带上
+	 * pre_enable_prev_first 标志（drivers/gpu/drm/bridge/panel.c），
+	 * 从而把前一个桥（DSI）的 pre_enable 提到面板之前。
+	 * 上游 panel-jdi-fhd-r63452.c 同样设了这一行。
+	 */
+	ctx->panel.prepare_prev_first = true;
 	drm_panel_add(&ctx->panel);
 
 	ret = mipi_dsi_attach(dsi);

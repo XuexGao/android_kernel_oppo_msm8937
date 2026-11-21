@@ -245,6 +245,27 @@ jobs:
       - name: 编译内核与设备树
         run: |
           set -euo pipefail
+          # ---- 面板桥顺序断言（源码级）----
+          #
+          # DRM 的 pre_enable 从桥链尾部往头部调用。链是
+          #   encoder -> dsi_bridge -> panel_bridge
+          # 所以默认会先 prepare 面板、后给 DSI host 上电。
+          # 而面板 prepare 要发 DCS 命令，dsi_host_transfer() 里
+          #   if (!msm_host->power_on) return -EINVAL;
+          # 于是真机日志出现 "panel write failed: -22" + 黑屏。
+          #
+          # 面板驱动必须设 prepare_prev_first = true，
+          # panel_bridge 才会带上 pre_enable_prev_first 把 DSI 提前。
+          echo "--- 面板 prepare_prev_first："
+          for f in drivers/gpu/drm/panel/panel-oppo-jdi-r63452.c \
+                   drivers/gpu/drm/panel/panel-oppo-ea8064.c; do
+            if grep -q 'prepare_prev_first = true' "$f"; then
+              echo "  OK   $f"
+            else
+              echo "::error::$f 缺少 prepare_prev_first = true（面板会先于 DSI 上电 -> -EINVAL -> 黑屏）"
+              exit 1
+            fi
+          done
           # 关键：用 Image.gz-dtb，而不是 Image + dtbs 再手工拼。
           #
           # CAF 的 ABL/lk 不是从 x0 拿一份 DTB，而是在 Image.gz-dtb

@@ -317,6 +317,13 @@ static int ea8064_probe(struct mipi_dsi_device *dsi)
 			  MIPI_DSI_MODE_LPM;
 
 	drm_panel_init(&ctx->panel, dev, &ea8064_funcs, DRM_MODE_CONNECTOR_DSI);
+	/*
+	 * 同 panel-oppo-jdi-r63452.c 里的说明：必须让 DSI host 先 prepare，
+	 * 否则面板 prepare 发的 DCS 命令会撞上
+	 *   dsi_host_transfer(): !msm_host->power_on -> -EINVAL
+	 * 表现为 "panel write failed: -22" + 黑屏。
+	 */
+	ctx->panel.prepare_prev_first = true;
 	drm_panel_add(&ctx->panel);
 
 	ret = mipi_dsi_attach(dsi);
