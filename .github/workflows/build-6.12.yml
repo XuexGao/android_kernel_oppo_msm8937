@@ -177,6 +177,20 @@ jobs:
           # 同理加 || true：诊断内核没开 USB_DWC3，无匹配时 grep 返回 1，
           # 配合 set -e 会直接把 step 杀掉。
           grep -E '^CONFIG_(MSM_GCC_8953|PINCTRL_MSM8953|MMC_SDHCI_MSM|USB_DWC3|QCOM_SMD_RPM)=' .config || true
+          # USB 的 PHY 必须内置：原来 CONFIG_PHY_QCOM_QUSB2=m，
+          # bring-up 阶段没有 init 去 modprobe，于是 PHY 永远不 probe，
+          # dwc3 就一直 deferred：
+          #   platform 7000000.usb: deferred probe pending:
+          #     dwc3: failed to initialize core
+          # 结果 USB gadget（adb/fastboot）完全不可用。
+          echo "--- USB 栈（必须 =y）："
+          for sym in USB_DWC3 PHY_QCOM_QUSB2 USB_CONFIGFS USB_F_FS; do
+            v="$(grep -E "^CONFIG_${sym}=" .config | head -1 || true)"
+            case "$v" in
+              "CONFIG_${sym}=y") echo "  OK   $v" ;;
+              *) echo "::error::USB 栈未内置: ${sym} 实际为 '${v:-未设置}'"; exit 1 ;;
+            esac
+          done
           # 充电/电量计也要内置：bring-up 阶段没有 init 去 modprobe，
           # 而且 Android 的 health HAL 依赖开机就有 battery/charger 设备。
           # 诊断内核刻意关掉了音频/充电/显示，这些栈断言只在正常配置下跑。
