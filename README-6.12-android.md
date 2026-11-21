@@ -1158,3 +1158,71 @@ mdss-te-active-state: pins = "gpio24", function = "mdp_vsync"
 ```
 
 CI 新增 TE 断言（反例已验证：去掉 `pinctrl-0` 会 FAIL）。
+
+### 第 26 轮：修掉三个"系统起不来"的硬伤
+
+显示还在推进中，但排查日志时发现更底层的问题 —— **`/data` 根本挂不上**，
+这才是系统起不来的主因（`netbpfload-missing` 只是连带结果）。
+
+#### 1. `/data` 挂载失败：缺 `CONFIG_QFMT_V2`
+
+```
+EXT4-fs (mmcblk0p57): The kernel was not built with CONFIG_QUOTA and
+                      CONFIG_QFMT_V2
+```
+
+`fs/ext4/super.c: ext4_check_feature_compat()`：
+
+```c
+#if !IS_ENABLED(CONFIG_QUOTA) || !IS_ENABLED(CONFIG_QFMT_V2)
+	if (!readonly && (ext4_has_feature_quota(sb) ||
+			  ext4_has_feature_project(sb))) {
+		ext4_msg(sb, KERN_ERR, "...");
+		return 0;      /* ← RW 挂载直接失败 */
+	}
+#endif
+```
+
+Android 的 `/data` 带 `quota`/`project` 特性，缺 `QFMT_V2` 就必然挂不上。
+修：`CONFIG_QFMT_V2=y`（原来只开了 `CONFIG_QUOTA`）。
+
+#### 2. 两个 CAF ext4 挂载选项
+
+```
+ext4: Unknown parameter 'no_sehash_xattr'
+[libfs_mgr] Failed to mount ... /data options: fsync_mode=nobarrier: Invalid argument
+```
+
+| 选项 | 谁用 | 处理 |
+|---|---|---|
+| `no_sehash_xattr` | `/mnt/vendor/persist` | 新增 `EXT4_MOUNT2_NO_SEHASH_XATTR`，`security.sehash` 直接忽略 |
+| `fsync_mode=nobarrier` | `/data` | f2fs 风格选项但 fstab 写给了 ext4；映射到 barrier 开关 |
+
+三个文件（`ext4.h` / `xattr_security.c` / `super.c`），实现从 4.9/4.19 下游前移。
+
+#### 3. `i2c_8` 引脚被误保留
+
+```
+msm8953-pinctrl: could not request pin 98 (GPIO_98)
+i2c_qup 7af8000.i2c: Error applying setting
+```
+
+板级 `gpio-reserved-ranges` 原来是 `<1 2>, <96 4>, <111 1>, <126 1>`，
+把 **gpio96-99 全保留**了 —— 但 R9s 的 `i2c_8`（BLSP2 QUP4，接 AK4376
+音频 codec）用的正是 gpio98/99。
+
+而且这 4 项是从 potter 抄来的：**4.19 真机的 DTS 根本没有
+`gpio-reserved-ranges`**。改成 `<96 2>`，只保留 gpio96-97。
+
+#### 4. USB gadget 不可用：QUSB2 PHY 是模块
+
+```
+platform 7000000.usb: deferred probe pending: dwc3: failed to initialize core
+```
+
+`CONFIG_PHY_QCOM_QUSB2=m` —— bring-up 阶段没有 init 去 modprobe，
+PHY 永远不 probe，`dwc3_core_get_phy()` 拿不到 `usb2-phy` 就
+`-EPROBE_DEFER`，于是永远 deferred。
+
+改成 `=y` 内置。CI 加了 USB 栈断言
+（`USB_DWC3` / `PHY_QCOM_QUSB2` / `USB_CONFIGFS` / `USB_F_FS` 必须 `=y`）。
