@@ -442,9 +442,15 @@
 &tlmm {
 	/*
 	 * 保留引脚：这几个被 bootloader / TZ 占着，Linux 不能碰。
-	 * 具体范围沿用 potter，R9s 上如果出现 gpio 申请失败再逐条核对。
+	 *
+	 * 注意 <96 4> 原来是 potter 的范围（gpio96-99 全保留），
+	 * 但 R9s 的 i2c_8（BLSP2 QUP4，接 AK4376 音频codec）用的正是
+	 * gpio98/99 —— 保留它们会让 i2c_8 的 pinctrl 申请失败：
+	 *   msm8953-pinctrl: could not request pin 98 (GPIO_98)
+	 *   i2c_qup 7af8000.i2c: Error applying setting
+	 * 所以这里只保留 gpio96-97。
 	 */
-	gpio-reserved-ranges = <1 2>, <96 4>, <111 1>, <126 1>;
+	gpio-reserved-ranges = <1 2>, <96 2>, <111 1>, <126 1>;
 
 	/* 触摸屏复位脚 gpio16（4.19: msm8953-pinctrl.dtsi 的 ts_reset_active） */
 	ts_reset: ts-reset-state {

@@ -144,7 +144,8 @@ jobs:
                      MAILBOX RPMSG_QCOM_SMD QCOM_SMP2P QCOM_SMSM QCOM_APCS_IPC \
                      SECURITY_NETWORK SECURITY_SELINUX \
                      NET_CLS_BPF NET_ACT_BPF BPF_STREAM_PARSER \
-                     SQUASHFS SQUASHFS_LZ4 BLK_DEV_DM DM_VERITY; do
+                     SQUASHFS SQUASHFS_LZ4 BLK_DEV_DM DM_VERITY \
+                     QFMT_V2; do
             v="$(grep -E "^CONFIG_${sym}=" .config | head -1 || true)"
             case "$v" in
               "CONFIG_${sym}=y") echo "  OK   $v" ;;
@@ -266,6 +267,25 @@ jobs:
               exit 1
             fi
           done
+
+          # ---- CAF ext4 挂载选项断言（源码级）----
+          #
+          # Android 的 fstab 给 /mnt/vendor/persist 带 no_sehash_xattr、
+          # 给 /data 带 fsync_mode=nobarrier。这两个是 QCOM/CAF 下游扩展，
+          # 主线 ext4 不认识就直接 -EINVAL：
+          #   ext4: Unknown parameter 'no_sehash_xattr'
+          #   __mount(.../userdata, /data, ext4)=-1: Invalid argument
+          # 结果 /data 挂不上，系统根本起不来（真机实测）。
+          echo "--- CAF ext4 挂载选项："
+          for opt in no_sehash_xattr fsync_mode; do
+            if grep -q "\"$opt\"" fs/ext4/super.c; then
+              echo "  OK   ext4 支持 $opt"
+            else
+              echo "::error::fs/ext4/super.c 缺少 $opt（/data 或 persist 会挂不上）"
+              exit 1
+            fi
+          done
+
           # 关键：用 Image.gz-dtb，而不是 Image + dtbs 再手工拼。
           #
           # CAF 的 ABL/lk 不是从 x0 拿一份 DTB，而是在 Image.gz-dtb

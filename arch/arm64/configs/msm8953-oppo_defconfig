@@ -1655,6 +1655,11 @@ CONFIG_BTRFS_FS_POSIX_ACL=y
 CONFIG_FANOTIFY=y
 CONFIG_FANOTIFY_ACCESS_PERMISSIONS=y
 CONFIG_QUOTA=y
+# Android 的 /data 带有 ext4 的 quota/project 特性。缺 QFMT_V2 时
+# fs/ext4/super.c 的 ext4_check_feature_compat() 会直接 return 0：
+#   "The kernel was not built with CONFIG_QUOTA and CONFIG_QFMT_V2"
+# 结果 /data 的 RW 挂载失败（-EINVAL），系统根本起不来。
+CONFIG_QFMT_V2=y
 CONFIG_AUTOFS_FS=y
 CONFIG_FUSE_FS=m
 CONFIG_CUSE=m
