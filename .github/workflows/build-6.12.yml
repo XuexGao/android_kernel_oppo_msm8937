@@ -145,7 +145,8 @@ jobs:
                      SECURITY_NETWORK SECURITY_SELINUX \
                      NET_CLS_BPF NET_ACT_BPF BPF_STREAM_PARSER \
                      BPF_JIT_ALWAYS_ON BPF_EVENTS BPF_LSM \
-                     NETFILTER_XT_MATCH_BPF \
+                     NETFILTER_XT_MATCH_BPF NETFILTER_XTABLES \
+                     IP_NF_IPTABLES IP6_NF_IPTABLES NF_CONNTRACK \
                      SQUASHFS SQUASHFS_LZ4 BLK_DEV_DM DM_VERITY \
                      QFMT_V2; do
             v="$(grep -E "^CONFIG_${sym}=" .config | head -1 || true)"
