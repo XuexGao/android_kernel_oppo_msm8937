@@ -461,6 +461,24 @@
 		drive-strength = <2>;
 		bias-pull-up;
 	};
+
+	/*
+	 * DSI TE 引脚 —— gpio24，复用为 mdp_vsync。
+	 *
+	 * 参数逐字取自本仓库 4.19 的 msm8953-pinctrl.dtsi。
+	 *
+	 * 命令模式面板靠 TE 同步。主线 DSI 驱动在 dsi_ctrl_enable() 里
+	 * 写死了  data |= DSI_TRIG_CTRL_TE;（"Always assume dedicated
+	 * TE pin"），即永远等 TE 引脚。引脚没 mux 成 mdp_vsync 时 TE
+	 * 收不到 -> DSI 不触发 -> MDP ping-pong 永不 done ->
+	 *   "pp done time out, lm=0"  -> 黑屏。
+	 */
+	mdss_te_active: mdss-te-active-state {
+		pins = "gpio24";
+		function = "mdp_vsync";
+		drive-strength = <2>;
+		bias-pull-down;
+	};
 };
 
 &usb3 {
@@ -489,6 +507,15 @@
 
 &mdss_dsi0 {
 	status = "okay";
+
+	/*
+	 * TE 引脚（gpio24 -> mdp_vsync）。
+	 * 命令模式 DSI 必须靠 TE 同步；主线 DSI 驱动写死
+	 * DSI_TRIG_CTRL_TE，没有这个 mux 就收不到 TE，
+	 * 帧永远不触发（pp done time out）。
+	 */
+	pinctrl-names = "default";
+	pinctrl-0 = <&mdss_te_active>;
 
 	/*
 	 * DSI 控制器供电 —— 必须接真实调节器，不能用 dummy。

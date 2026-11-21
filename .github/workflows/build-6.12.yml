@@ -620,6 +620,55 @@ jobs:
             rm -f "$stxt"
           done
 
+          # ---- DSI TE 引脚必须复用成 mdp_vsync ----
+          #
+          # 命令模式面板靠 TE 同步。主线 DSI 驱动在 dsi_ctrl_enable() 里
+          # 写死了 data |= DSI_TRIG_CTRL_TE;（"Always assume dedicated
+          # TE pin"），即永远等 TE 引脚。引脚没 mux 成 mdp_vsync 时 TE
+          # 收不到 -> DSI 不触发 -> MDP ping-pong 永不 done ->
+          #   "pp done time out, lm=0" -> 黑屏。
+          echo "=== DSI TE 引脚（gpio24 必须复用成 mdp_vsync）==="
+          for d in r9s r9sk; do
+            ttxt="$(mktemp)"
+            dtc -I dtb -O dts "$D/msm8953-oppo-$d.dtb" 2>/dev/null > "$ttxt"
+            python3 - "$ttxt" "$d" <<'PYTE' || fail=1
+          import re, sys
+
+          path, name = sys.argv[1], sys.argv[2]
+          txt = open(path).read()
+          bad = []
+
+          m = re.search(r'mdss-te-active-state \{(?:[^{}]|\{[^{}]*\})*\}', txt)
+          if not m:
+              bad.append('没有 mdss-te-active-state 节点')
+          else:
+              blk = m.group(0)
+              if '"gpio24"' not in blk:
+                  bad.append('TE 状态没用 gpio24')
+              if '"mdp_vsync"' not in blk:
+                  bad.append('TE 状态没把引脚复用成 mdp_vsync')
+
+          i = txt.find('dsi@1a94000')
+          if i == -1:
+              bad.append('找不到 dsi@1a94000')
+          else:
+              b = txt.find('{', i)
+              rest = txt[b + 1:]
+              idx = rest.find('{')
+              own = rest[:idx] if idx > 0 else rest
+              if 'pinctrl-names = "default"' not in own:
+                  bad.append('DSI 缺 pinctrl-names = "default"')
+              if 'pinctrl-0' not in own:
+                  bad.append('DSI 缺 pinctrl-0（TE 不会生效）')
+
+          if bad:
+              print(f'  FAIL {name}: ' + '; '.join(bad))
+              sys.exit(1)
+          print(f'  OK   {name} DSI TE 引脚（gpio24 -> mdp_vsync）')
+          PYTE
+            rm -f "$ttxt"
+          done
+
           exit $fail
 
       - name: 打包产物
