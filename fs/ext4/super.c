@@ -1665,8 +1665,6 @@ enum {
 	Opt_resgid, Opt_resuid, Opt_sb,
 	Opt_nouid32, Opt_debug, Opt_removed,
 	Opt_user_xattr, Opt_acl,
-	/* QCOM/CAF 下游扩展的挂载选项（Android fstab 会用到） */
-	Opt_no_sehash_xattr, Opt_fsync_mode,
 	Opt_auto_da_alloc, Opt_noauto_da_alloc, Opt_noload,
 	Opt_commit, Opt_min_batch_time, Opt_max_batch_time, Opt_journal_dev,
 	Opt_journal_path, Opt_journal_checksum, Opt_journal_async_commit,
@@ -1748,14 +1746,6 @@ static const struct fs_parameter_spec ext4_param_specs[] = {
 	fsparam_flag	("oldalloc",		Opt_removed),
 	fsparam_flag	("orlov",		Opt_removed),
 	fsparam_flag	("user_xattr",		Opt_user_xattr),
-	/*
-	 * QCOM/CAF 挂载选项 —— Android 的 fstab 会给 /mnt/vendor/persist
-	 * 带 no_sehash_xattr、给 /data 带 fsync_mode=nobarrier。
-	 * 主线不认识这两个就会 -EINVAL，分区直接挂不上（实测 /data 与
-	 * /mnt/vendor/persist 都因此失败，系统起不来）。
-	 */
-	fsparam_flag	("no_sehash_xattr",	Opt_no_sehash_xattr),
-	fsparam_string	("fsync_mode",		Opt_fsync_mode),
 	fsparam_flag	("acl",			Opt_acl),
 	fsparam_flag	("norecovery",		Opt_noload),
 	fsparam_flag	("noload",		Opt_noload),
@@ -1902,8 +1892,6 @@ static const struct mount_opts {
 	{Opt_journal_ioprio, 0, MOPT_NO_EXT2},
 	{Opt_data, 0, MOPT_NO_EXT2},
 	{Opt_user_xattr, EXT4_MOUNT_XATTR_USER, MOPT_SET},
-	{Opt_no_sehash_xattr, EXT4_MOUNT2_NO_SEHASH_XATTR, MOPT_SET | MOPT_2},
-	{Opt_fsync_mode, 0, MOPT_NO_EXT2},
 #ifdef CONFIG_EXT4_FS_POSIX_ACL
 	{Opt_acl, EXT4_MOUNT_POSIX_ACL, MOPT_SET},
 #else
@@ -2212,23 +2200,6 @@ static int ext4_parse_param(struct fs_context *fc, struct fs_parameter *param)
 	case Opt_removed:
 		ext4_msg(NULL, KERN_WARNING, "Ignoring removed %s option",
 			 param->key);
-		return 0;
-	case Opt_fsync_mode:
-		/*
-		 * CAF 的 f2fs 风格选项，但 Android 的 fstab 也会把它写给
-		 * ext4 的 /data（真机实测：fsync_mode=nobarrier）。主线
-		 * ext4 不认识就 -EINVAL，/data 直接挂不上。这里接受它，
-		 * 语义上映射到 barrier 开关。
-		 */
-		if (!param->string)
-			return -EINVAL;
-		if (!strcmp(param->string, "nobarrier"))
-			ctx_clear_mount_opt(ctx, EXT4_MOUNT_BARRIER);
-		else if (!strcmp(param->string, "strict") ||
-			 !strcmp(param->string, "posix"))
-			ctx_set_mount_opt(ctx, EXT4_MOUNT_BARRIER);
-		else
-			return -EINVAL;
 		return 0;
 	case Opt_inlinecrypt:
 #ifdef CONFIG_FS_ENCRYPTION_INLINE_CRYPT
