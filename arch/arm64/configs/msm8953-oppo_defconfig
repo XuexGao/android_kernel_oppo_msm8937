@@ -5,6 +5,25 @@ CONFIG_NO_HZ_IDLE=y
 CONFIG_HIGH_RES_TIMERS=y
 CONFIG_BPF_SYSCALL=y
 CONFIG_BPF_JIT=y
+# 下面这几项对齐 Android 官方 GKI 的 BPF 配置：
+#   BPF_JIT_ALWAYS_ON             GKI 强制（关掉解释器，走 JIT）
+#   BPF_LSM                       Android 13+ 用 BPF LSM 做部分策略
+#   NETFILTER_XT_MATCH_BPF        iptables 的 bpf match（netd 会用到）
+#   BPF_UNPRIV_DEFAULT_OFF 不设   GKI 就是这么配的（默认允许非特权 BPF，
+#                                 实际由 SELinux 管）。设成 y 会让
+#                                 非特权 bpf() 直接 -EPERM。
+CONFIG_BPF_JIT_ALWAYS_ON=y
+CONFIG_BPF_EVENTS=y
+CONFIG_BPF_LSM=y
+CONFIG_NETFILTER_XT_MATCH_BPF=y
+# CONFIG_BPF_UNPRIV_DEFAULT_OFF is not set
+#   ↑ 显式关掉：Kconfig 默认是 y（把 unprivileged_bpf_disabled 置 2），
+#   而 GKI 明确不设。真机上 SELinux 的 policy 没有定义 capability2
+#   的 bpf 权限（日志里 "Permission bpf in class capability2 not
+#   defined in policy ... will be denied"），于是 CAP_BPF 的检查会被
+#   拒绝；再叠加 unprivileged_bpf_disabled=2，netbpfload 里的 bpf()
+#   调用就 -EPERM → 服务挂 → init 按 reboot_on_failure 重启，
+#   重启命令正是 'netbpfload-missing'。
 CONFIG_PREEMPT=y
 CONFIG_IRQ_TIME_ACCOUNTING=y
 CONFIG_BSD_PROCESS_ACCT=y

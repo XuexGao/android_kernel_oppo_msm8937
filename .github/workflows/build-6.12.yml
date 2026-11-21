@@ -144,6 +144,8 @@ jobs:
                      MAILBOX RPMSG_QCOM_SMD QCOM_SMP2P QCOM_SMSM QCOM_APCS_IPC \
                      SECURITY_NETWORK SECURITY_SELINUX \
                      NET_CLS_BPF NET_ACT_BPF BPF_STREAM_PARSER \
+                     BPF_JIT_ALWAYS_ON BPF_EVENTS BPF_LSM \
+                     NETFILTER_XT_MATCH_BPF \
                      SQUASHFS SQUASHFS_LZ4 BLK_DEV_DM DM_VERITY \
                      QFMT_V2; do
             v="$(grep -E "^CONFIG_${sym}=" .config | head -1 || true)"
@@ -152,6 +154,19 @@ jobs:
               *) echo "::error::关键配置缺失: ${sym} 实际为 '${v:-未设置}'"; exit 1 ;;
             esac
           done
+          # BPF_UNPRIV_DEFAULT_OFF 必须是 n（GKI 也是这么配的）。
+          # 若为 y，内核会把 unprivileged_bpf_disabled 置 2；而本机的
+          # SELinux policy 又没定义 capability2 的 bpf 权限
+          # （日志: "Permission bpf in class capability2 not defined
+          #  in policy ... will be denied"），CAP_BPF 检查会被拒，
+          # 两条路都堵死 -> netbpfload 的 bpf() 返回 -EPERM -> 服务挂
+          # -> init 按 reboot_on_failure 重启（netbpfload-missing）。
+          if grep -q '^CONFIG_BPF_UNPRIV_DEFAULT_OFF=y' .config; then
+            echo "::error::BPF_UNPRIV_DEFAULT_OFF=y 会让 netbpfload 的 bpf() 失败"
+            exit 1
+          else
+            echo "  OK   BPF_UNPRIV_DEFAULT_OFF 未启用（非特权 BPF 可用）"
+          fi
           # VA_BITS 必须真的是 39（上面的 ARM64_VA_BITS_39=y 只是选了
           # 选项，这里再确认算出来的生效值）。
           v="$(grep -E '^CONFIG_ARM64_VA_BITS=' .config | head -1 || true)"
