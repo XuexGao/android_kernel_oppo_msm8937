@@ -444,6 +444,97 @@ a530_pfp.fw: 在 Image 中找到, 位置=21595400, 整份连续匹配=True
 > 所以**不能拿 Image 大小不变来判断"没编进去"** ——
 > 要看 `nm vmlinux` 的符号，或者直接搜 Image 里的字节。
 
+### 第 23 轮真机：微码 OK 了，但 DSI 没供电
+
+这轮日志把上一轮的成果确认下来：
+
+```
+[drm:adreno_request_fw] loaded qcom/a530_pm4.fw from new location
+[drm:adreno_request_fw] loaded qcom/a530_pfp.fw from new location
+msm_mdp 1a01000.display-controller: bound 1c00000.gpu (ops a3xx_ops)
+msm_mdp 1a01000.display-controller: [drm:mdp5_kms_init] MDP5 version v1.16
+```
+
+GPU 这条路彻底通了。但屏幕还是黑，卡在**时钟**：
+
+```
+msm_dsi_phy 1a94400.phy: supply vcca not found, using dummy regulator
+...
+pclk0_clk_src: rcg didn't update its configuration.
+WARNING: ... update_config+0xd4
+  dsi_link_clk_set_rate_6g+0x44   ← dev_pm_opp_set_rate(byte)
+  dsi_link_clk_set_rate_6g+0x54   ← clk_set_rate(pixel)
+```
+
+**两个 RCG 都更新失败**，同一个调用栈都是 `-EBUSY`。
+
+#### 根因：DSI 一个 supply 都没接
+
+上游 6.12 的 `msm8953.dtsi` 里，DSI 相关节点**完全没有 supply 属性**：
+
+| 节点 | 缺的供电 | 驱动里的名字 |
+|---|---|---|
+| `dsi@1a94000` | `vdda` | `dsi_host.c` 的 `cfg->regulator_data` |
+| `dsi@1a94000` | `vddio` | 同上 |
+| `phy@1a94400` | `vcca` | `dsi_phy_14nm.c` 的 `dsi_phy_14nm_17mA_regulators` |
+
+驱动 `devm_regulator_bulk_get_const()` 拿不到就退化成 **dummy regulator**
+（日志里那句 `using dummy regulator`），也就是 **PHY/PLL 实际没上电**。
+
+因果链：
+
+```
+vcca 是 dummy → DSI PHY 的 PLL 锁不住
+  → pclk0_clk_src / byte0_clk_src 的父时钟没有输出
+  → RCG 的 CMD_UPDATE 位永远不清零
+  → update_config() 等 500us 超时，WARN + 返回 -EBUSY
+  → msm_dsi_host_power_on() 失败
+  → panel write failed (-22)、pp done time out
+  → 黑屏
+```
+
+> 为什么难查：这些节点 `status` 都是 `okay`、compatible 都对、
+> 节点也确实在 dtb 里 —— **只是 supply 属性空着**。
+> 之前的 DTB 自检（查节点名/status/compatible）一个都拦不住。
+
+#### 修法：按 4.19 真机接线
+
+来源是本仓库 4.19 的 `msm8953-mdss.dtsi`：
+
+```dts
+mdss_dsi: qcom,mdss_dsi@0 {
+	vdda-supply = <&pm8953_s3>;   /* 1.225 V */
+	vcca-supply = <&pm8953_l3>;   /* 0.925 V */
+};
+```
+
+电压对得上（我们板子 `pm8953_s3` = 1.224 V、`pm8953_l3` = 0.925 V）。
+`vddio` 用 `pm8953_l6`（1.8 V，本板已 `regulator-always-on`）。
+
+在板级 `msm8953-oppo-common.dtsi` 补：
+
+```dts
+&mdss_dsi0 {
+	vdda-supply  = <&pm8953_s3>;
+	vddio-supply = <&pm8953_l6>;
+};
+
+&mdss_dsi0_phy {
+	vcca-supply = <&pm8953_l3>;
+};
+```
+
+验证（本地 cpp+dtc，反编译查 phandle）：
+
+```
+vdda  -> 0x11 = s3   ✓
+vddio -> 0x22 = l6   ✓
+vcca  -> 0x16 = l3   ✓
+```
+
+CI 新增「DSI 供电」断言，按**节点自身属性**检查（反例已验证：
+删 vcca 或 vdda 都会 FAIL）。
+
 ### 第 13 轮真机反馈：卡在一屏不动
 
 用户刷了当时最新的包，结果是**卡在一屏、进不了系统**。
