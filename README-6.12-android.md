@@ -1280,3 +1280,23 @@ GKI 不设这个选项（默认允许非特权 BPF，改由 SELinux 管），
 > 打开那个会大幅增大镜像的选项 —— 这条排除了。
 
 CI 加了断言：上面三项必须 `=y`，且 `BPF_UNPRIV_DEFAULT_OFF` 不能 `=y`。
+
+#### 补充：netfilter 整套原来是模块
+
+修 BPF 时发现 `NETFILTER_XT_MATCH_BPF=y` 没生效 —— 它在
+`if NETFILTER_XTABLES` 块里，而 `NETFILTER_XTABLES` 默认是 `=m`，
+**Kconfig 的 tristate 上限规则把子项压成了 `m`**。
+
+而且整套 netfilter 原来全是 `=m`：
+
+```
+NETFILTER_XTABLES / NF_CONNTRACK / IP_NF_IPTABLES / IP6_NF_IPTABLES
+NETFILTER_XT_MARK / XT_MATCH_CONNTRACK / XT_MATCH_ADDRTYPE ...
+```
+
+Android 的 netd 开机就要用 iptables（防火墙 / UID 路由 / 热点），
+bring-up 阶段没有 init 去 modprobe，这些模块加载不上，
+iptables 规则会全部失败。
+
+所以把 netd 必需的那一小组成 `=y`（19 项），
+`IP_VS` / `BRIDGE_NETFILTER` 仍保持 `=m`（非必需）。

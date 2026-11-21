@@ -150,7 +150,9 @@ CONFIG_IP_MULTICAST=y
 CONFIG_IP_PNP=y
 CONFIG_IP_PNP_DHCP=y
 CONFIG_IP_PNP_BOOTP=y
-CONFIG_IPV6=m
+# IPv6 必须内置：Android 移动网络的默认承载就是 IPv6，
+# 而且 IP6_NF_IPTABLES(ip6tables) 依赖 IPV6 是 =y 才能 =y。
+CONFIG_IPV6=y
 CONFIG_NETFILTER=y
 # Android netd 的 iptables 开机就要用，整套 netfilter 必须内置
 # （原来是 =m，bring-up 阶段没人 modprobe，规则会全部失败）。
