@@ -1083,3 +1083,78 @@ CI 用 GCC 而不是 clang：ACK 的 GKI 配置面向 clang（LTO/CFI），
 
 **当前阶段：内核能编译出完整产物（ACK 6.12.52 + OPPO R9s 板级），
 但还没有任何 vendor 驱动，真机启动未验证。**
+
+### 第 25 轮真机：面板初始化过了，卡在 TE
+
+这轮确认上一轮 `prepare_prev_first` 的修复生效：
+
+| 之前的症状 | 这轮 |
+|---|---|
+| `panel write failed: -22` | **消失**（面板初始化序列全部成功）|
+| `supply vcca` / `rcg didn't update` | 仍然没有 |
+| `pp done time out, lm=0` | **仍在**（9.17s 起，97/101/102/104/108s 反复）|
+
+也就是：面板能通信了，但 MDP 始终出不来一帧。
+
+#### 根因：TE 引脚没有复用成 `mdp_vsync`
+
+主线 DSI 驱动在 `dsi_ctrl_enable()` 里写死了一句：
+
+```c
+/* Always assume dedicated TE pin */
+data |= DSI_TRIG_CTRL_TE;
+```
+
+**它永远等 TE 引脚上的同步信号。** 而两个机型的 DTS 里 DSI 节点
+完全没有 `pinctrl`，gpio24 也没被复用成 `mdp_vsync`
+（主线的 `pinctrl-msm8953.c` 是支持这个 function 的：
+`PINGROUP(24, mdp_vsync, ...)`）。
+
+结果：
+
+```
+TE 收不到 → DSI 不触发 → MDP 的 ping-pong 永不 done
+         → pp done time out → 黑屏
+```
+
+4.19 真机就是这么接的（`msm8953-pinctrl.dtsi`）：
+
+```dts
+mdss_te_active: mdss_te_active {
+	mux    { pins = "gpio24"; function = "mdp_vsync"; };
+	config { pins = "gpio24"; drive-strength = <2>; bias-pull-down; };
+};
+```
+
+以及 `msm8953-mdss.dtsi` 的 `pinctrl-0 = <&mdss_dsi_active &mdss_te_active>`。
+
+> 顺带排掉一个看似可行的绕法：`qcom,te-source` 这个属性
+> 只有 DPU（`dpu_kms.c`）读，**MDP5 完全不看它**，
+> 所以不能靠改它来切换 TE 来源，必须把引脚 mux 对。
+
+#### 改动
+
+```dts
+&tlmm {
+	mdss_te_active: mdss-te-active-state {
+		pins = "gpio24";
+		function = "mdp_vsync";
+		drive-strength = <2>;
+		bias-pull-down;
+	};
+};
+
+&mdss_dsi0 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&mdss_te_active>;
+};
+```
+
+验证（本地反编译 dtb）：
+
+```
+DSI pinctrl-names = "default", pinctrl-0 = <0x22>
+mdss-te-active-state: pins = "gpio24", function = "mdp_vsync"
+```
+
+CI 新增 TE 断言（反例已验证：去掉 `pinctrl-0` 会 FAIL）。
