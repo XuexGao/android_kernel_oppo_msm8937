@@ -491,6 +491,32 @@
 	status = "okay";
 
 	/*
+	 * DSI 控制器供电 —— 必须接真实调节器，不能用 dummy。
+	 *
+	 * 参数来自本仓库 4.19 的 msm8953-mdss.dtsi：
+	 *     vdda-supply = <&pm8953_s3>;   (1.225 V)
+	 *     vcca-supply = <&pm8953_l3>;   (0.925 V, PHY 用)
+	 *
+	 * 上游 6.12 的 msm8953.dtsi 这两个都没接（真空白），
+	 * 所以驱动拿到 dummy regulator —— **PHY/PLL 实际没上电**。
+	 *
+	 * 真机症状（dmesg 实测）：
+	 *   msm_dsi_phy 1a94400.phy: supply vcca not found, using dummy regulator
+	 *   ...
+	 *   pclk0_clk_src: rcg didn't update its configuration.
+	 *   [drm:adreno...] 之后 DSI 上电失败 -> 面板写失败 -> 黑屏
+	 *
+	 * 因为 RCG（byte0_clk_src / pclk0_clk_src）的父时钟是 DSI PHY 的
+	 * PLL，PLL 没供电就锁不住，RCG 的 CMD_UPDATE 位永远不清零，
+	 * update_config() 等 500us 后 WARN + 返回 -EBUSY，
+	 * dsi_link_clk_set_rate_6g() 失败 -> msm_dsi_host_power_on() 失败。
+	 *
+	 * vddio 用 l6（1.8 V，本板已 regulator-always-on）。
+	 */
+	vdda-supply = <&pm8953_s3>;
+	vddio-supply = <&pm8953_l6>;
+
+	/*
 	 * 具体面板节点放在各机型 dts 里（r9s 是 EA8064，r9sk 是 R63452），
 	 * 因为它们 compatile 不同。
 	 */
@@ -531,6 +557,16 @@
 
 &mdss_dsi0_phy {
 	status = "okay";
+
+	/*
+	 * DSI PHY 的 PLL 供电。4.19 真机接 pm8953_l3（0.925 V）。
+	 *
+	 * 缺了它 PHY 用的就是 dummy regulator，PLL 不工作，
+	 * 于是 byte/pixel 两个 RCG 的 update_config() 全部超时
+	 * （日志里的 "pclk0_clk_src: rcg didn't update its configuration"），
+	 * DSI 上电失败、屏幕黑掉。
+	 */
+	vcca-supply = <&pm8953_l3>;
 };
 
 /*

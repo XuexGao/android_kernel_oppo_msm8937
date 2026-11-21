@@ -532,6 +532,73 @@ jobs:
             rm -f "$gtxt"
           done
 
+          # ---- DSI 供电必须接真实 regulator ----
+          #
+          # 上游 6.12 的 msm8953.dtsi 没给 DSI 接任何 supply，驱动会退化成
+          # dummy regulator，PHY/PLL 实际没上电。真机后果（dmesg 实测）：
+          #
+          #   msm_dsi_phy 1a94400.phy: supply vcca not found, using dummy
+          #   pclk0_clk_src: rcg didn't update its configuration.
+          #   dsi_link_clk_set_rate_6g -> dev_pm_opp_set_rate 返回 -EBUSY
+          #   -> msm_dsi_host_power_on 失败 -> panel write failed -> 黑屏
+          #
+          # 根因链：RCG 的父时钟是 DSI PHY 的 PLL；PLL 没供电就锁不住，
+          # RCG 的 CMD_UPDATE 位永远不清零，update_config() 等 500us 超时。
+          #
+          # 这个缺失在 dtb 里"看不出错"（节点都在、compatible 都对），
+          # 只能靠断言 supply 属性来拦。
+          echo "=== DSI 供电（必须是真实 regulator，不能 dummy）==="
+          for d in r9s r9sk; do
+            stxt="$(mktemp)"
+            dtc -I dtb -O dts "$D/msm8953-oppo-$d.dtb" 2>/dev/null > "$stxt"
+            python3 - "$stxt" "$d" <<'PYDSIPWR' || fail=1
+          import re, sys
+
+          def own_props(txt, node):
+              i = txt.find(node)
+              if i == -1:
+                  return None
+              b = txt.find('{', i)
+              if b == -1:
+                  return None
+              rest = txt[b + 1:]
+              for idx, ch in enumerate(rest):
+                  if ch == '{':
+                      return rest[:idx]
+              return rest
+
+          path, name = sys.argv[1], sys.argv[2]
+          txt = open(path).read()
+          bad = []
+
+          host = own_props(txt, 'dsi@1a94000')
+          phy = own_props(txt, 'phy@1a94400')
+
+          if not host:
+              bad.append('找不到 dsi@1a94000')
+          else:
+              for p in ('vdda-supply', 'vddio-supply'):
+                  if p not in host:
+                      bad.append(f'DSI host 缺 {p}')
+
+          if not phy:
+              bad.append('找不到 phy@1a94400')
+          else:
+              if 'vcca-supply' not in phy:
+                  bad.append('DSI PHY 缺 vcca-supply（PLL 不上电 -> RCG 更新失败）')
+
+          # 反向检查：不能还残留 dummy 的痕迹（status 是 okay 才对）
+          if 'status = "disabled"' in (phy or ''):
+              bad.append('DSI PHY 仍是 disabled')
+
+          if bad:
+              print(f'  FAIL {name}: ' + '; '.join(bad))
+              sys.exit(1)
+          print(f'  OK   {name} DSI 供电（vdda/vddio/vcca）')
+          PYDSIPWR
+            rm -f "$stxt"
+          done
+
           exit $fail
 
       - name: 打包产物
