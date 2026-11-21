@@ -247,6 +247,23 @@ CONFIG_PCI_EPF_TEST=m
 CONFIG_DEVTMPFS=y
 CONFIG_DEVTMPFS_MOUNT=y
 CONFIG_FW_LOADER_USER_HELPER=y
+# GPU 微码编进内核本体 —— 这不是"优化"，是**必需**。
+#
+# DRM adreno 的 a5xx 驱动在 probe 阶段（开机 ~2.3s）就急着加载
+# a530_pm4.fw / a530_pfp.fw；而 Android 的 /vendor/firmware_mnt
+# 要到 ~74s 才被 init 挂上（实测 dmesg）。两者时间差导致：
+#   Direct firmware load for qcom/a530_pm4.fw failed with error -2
+#   [drm:adreno_request_fw] *ERROR* failed to load a530_pm4.fw
+# GPU 初始化失败 -> SurfaceFlinger 拿不到 EGLConfig -> 黑屏。
+#
+# 4.19 的 KGSL 是懒加载（开机后、挂载完成后才加载），所以不受影响；
+# 6.12 的 adreno 是 eager load，失败即永久放弃，不会重试。
+#
+# EXTRA_FIRMWARE 会在 _request_firmware_prepare() 里被**最先**匹配
+# （firmware_request_builtin_buf），完全不碰文件系统。
+# 文件在仓库的 firmware/qcom/ 下。
+CONFIG_EXTRA_FIRMWARE="qcom/a530_pm4.fw qcom/a530_pfp.fw"
+CONFIG_EXTRA_FIRMWARE_DIR="firmware"
 CONFIG_HISILICON_LPC=y
 CONFIG_TEGRA_ACONNECT=m
 CONFIG_MHI_BUS_PCI_GENERIC=m

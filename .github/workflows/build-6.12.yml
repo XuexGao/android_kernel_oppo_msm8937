@@ -289,6 +289,47 @@ jobs:
           ccache -s || true
           echo "::endgroup::"
 
+      # GPU 微码必须是内置的（EXTRA_FIRMWARE），不能依赖文件系统。
+      #
+      # 实测真机：DRM adreno 在开机 2.3s 就去加载 qcom/a530_pm4.fw，
+      # 而 Android 的 /vendor/firmware_mnt 到 74s 才挂上，于是
+      #   Direct firmware load for qcom/a530_pm4.fw failed with error -2
+      #   [drm:adreno_request_fw] *ERROR* failed to load a530_pm4.fw
+      # GPU 起不来 -> SurfaceFlinger 无 EGLConfig -> 黑屏。
+      #
+      # 这里同时查两件事：.config 里选项生效、vmlinux 里符号真的链进去。
+      - name: 固件自检（GPU 微码必须内置）
+        run: |
+          set -euo pipefail
+          echo "=== .config ==="
+          grep -E '^CONFIG_EXTRA_FIRMWARE' .config || true
+          v="$(grep -E '^CONFIG_EXTRA_FIRMWARE=' .config | head -1 || true)"
+          case "$v" in
+            *a530_pm4.fw*a530_pfp.fw*) echo "  OK   EXTRA_FIRMWARE 含两个 GPU 微码" ;;
+            *) echo "::error::EXTRA_FIRMWARE 未包含 GPU 微码，实际: '${v:-未设置}'"; exit 1 ;;
+          esac
+
+          echo "=== 生成的 .gen.o ==="
+          B=drivers/base/firmware_loader/builtin
+          for fw in qcom/a530_pm4.fw qcom/a530_pfp.fw; do
+            if [ -f "$B/$fw.gen.o" ]; then
+              echo "  OK   $B/$fw.gen.o ($(stat -c %s "$B/$fw.gen.o") bytes)"
+            else
+              echo "::error::内置固件对象缺失: $B/$fw.gen.o"; exit 1
+            fi
+          done
+
+          echo "=== vmlinux 符号 ==="
+          NM="aarch64-linux-gnu-nm"
+          command -v "$NM" >/dev/null 2>&1 || NM=nm
+          for sym in _fw_qcom_a530_pm4_fw_bin _fw_qcom_a530_pfp_fw_bin; do
+            if "$NM" vmlinux 2>/dev/null | grep -q "$sym"; then
+              echo "  OK   $sym"
+            else
+              echo "::error::vmlinux 里没有 $sym（固件没进内核）"; exit 1
+            fi
+          done
+
       # 反编译 dtb 做静态自检：显示链路/面板/偏压必须真的进了 dtb，
       # 否则一旦有人把 status 改回 disabled 或删了面板节点，CI 会直接失败，
       # 而不是等到刷机才发现屏不亮。
