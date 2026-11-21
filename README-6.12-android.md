@@ -535,6 +535,74 @@ vcca  -> 0x16 = l3   ✓
 CI 新增「DSI 供电」断言，按**节点自身属性**检查（反例已验证：
 删 vcca 或 vdda 都会 FAIL）。
 
+### 第 24 轮真机：供电 OK 了，但面板抢跑
+
+这轮日志把上一轮的供电修复确认下来，三处关键变化：
+
+| 之前的症状 | 这轮 |
+|---|---|
+| `supply vcca not found, using dummy regulator` | **消失** |
+| `pclk0_clk_src: rcg didn't update its configuration` | **消失** |
+| `fb0: msmdrmfb frame buffer device` | **出现了**（DRM fbdev 注册成功）|
+
+也就是说：PLL 锁上了、时钟能更新了、DRM 也起来了。但屏幕还黑，剩下：
+
+```
+panel-oppo-jdi-r63452 1a94000.dsi.0: panel write failed: -22
+msm_mdp 1a01000.display-controller: pp done time out, lm=0
+```
+
+#### 根因：面板的 prepare 跑在 DSI 上电之前
+
+`-22`（`-EINVAL`）只有一处来源 —— `dsi_host_transfer()`：
+
+```c
+if (!msg || !msm_host->power_on)
+	return -EINVAL;
+```
+
+**面板发 DCS 初始化命令时，DSI host 还没上电。**
+
+为什么？DRM 的 `pre_enable` 是**从桥链尾部往头部**调用的
+（`drm_atomic_bridge_chain_pre_enable` 用 `list_for_each_entry_reverse`），
+而这条链的顺序是：
+
+```
+encoder → dsi_bridge → panel_bridge
+```
+
+反向遍历 = 先 `panel_bridge.pre_enable`（发面板初始化序列），
+后 `dsi_bridge.pre_enable`（给 host 上电）。顺序正好反了。
+
+#### 修法：`prepare_prev_first`
+
+面板驱动设一个标志即可，`panel_bridge` 会把它转成
+`pre_enable_prev_first`（`drivers/gpu/drm/bridge/panel.c:417`）：
+
+```c
+bridge->pre_enable_prev_first = panel->prepare_prev_first;
+```
+
+于是链上"前一个桥"（DSI）的 `pre_enable` 会被提到面板之前。
+
+```c
+drm_panel_init(&ctx->panel, dev, &r63452_funcs, DRM_MODE_CONNECTOR_DSI);
+ctx->panel.prepare_prev_first = true;
+```
+
+字段注释把原因写得很直白：
+
+> The previous controller should be prepared first, before the prepare
+> for the panel is called. This is largely required for DSI panels where
+> the DSI host controller should be initialised to LP-11 before the panel
+> is powered up.
+
+**上游 `panel-jdi-fhd-r63452.c:197` 本来就有这一行** ——
+我们的 `panel-oppo-jdi-r63452.c` 是从它改的，漏掉了。
+`panel-oppo-ea8064.c` 同样补上。
+
+CI 新增源码级断言：两个面板驱动必须含 `prepare_prev_first = true`。
+
 ### 第 13 轮真机反馈：卡在一屏不动
 
 用户刷了当时最新的包，结果是**卡在一屏、进不了系统**。
